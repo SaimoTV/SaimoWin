@@ -1281,20 +1281,20 @@ fn selo(ui: &mut egui::Ui, texto: &str, ponto: Option<Color32>, dica: &str) {
 }
 
 fn selo_da_fonte(app: &App, ui: &mut egui::Ui) {
-    let (atual, total, url, pronto) = if let Some(t) = app.tocando.as_ref() {
+    let (atual, total, url, pronto, nome) = if let Some(t) = app.tocando.as_ref() {
         let Some(canal) = app.canais.get(t.canal) else { return };
-        (t.fonte, canal.fontes.len(), canal.fontes.get(t.fonte).map(|f| f.url.clone()).unwrap_or_default(), t.confirmado)
+        let fonte = canal.fontes.get(t.fonte);
+        (t.fonte, canal.fontes.len(), fonte.map(|f| f.url.clone()).unwrap_or_default(), t.confirmado,
+         fonte.and_then(|f| f.nome.clone()))
     } else if let Some(f) = app.tocando_vod.as_ref() {
-        (f.fonte, f.urls.len(), f.urls.get(f.fonte).cloned().unwrap_or_default(), f.confirmado)
+        (f.fonte, f.urls.len(), f.urls.get(f.fonte).cloned().unwrap_or_default(), f.confirmado, None)
     } else {
         return;
     };
-    let host = url.split("://").nth(1).and_then(|r| r.split('/').next()).unwrap_or("").to_string();
-    let texto = if pronto {
-        format!("fonte {}/{} · {host}", atual + 1, total)
-    } else {
-        format!("carregando fonte {}/{} · {host}", atual + 1, total)
-    };
+    let host = servidor(&url);
+    // Canal 24h: a temporada no ar no lugar do número da fonte.
+    let qual = nome.unwrap_or_else(|| format!("fonte {}/{}", atual + 1, total));
+    let texto = if pronto { format!("{qual} · {host}") } else { format!("carregando {qual} · {host}") };
     let estado = if pronto { "No ar" } else { "Carregando" };
     selo(ui, &texto, Some(if pronto { VERDE } else { AMARELO }), &format!("{estado} pela fonte {} de {total}\n{url}\nSeta direita troca a fonte", atual + 1));
 }
@@ -1318,13 +1318,21 @@ fn menu_de_fontes(app: &mut App, ui: &mut egui::Ui) {
         ui.set_min_width(160.0);
         ui.label(egui::RichText::new("Fontes").font(forte(11.0)).color(SECUNDARIO));
         for i in 0..total {
-            let rotulo = if i == atual { format!("✓ Fonte {}", i + 1) } else { format!("   Fonte {}", i + 1) };
-            let qualidade = app.tocando.as_ref()
+            // Como no TV Box: o nome da fonte (a temporada, nos canais 24h) ou o
+            // número, a qualidade quando informada e o servidor.
+            let fonte = app.tocando.as_ref()
                 .and_then(|t| app.canais.get(t.canal))
-                .and_then(|c| c.fontes.get(i))
-                .and_then(|f| f.qualidade.as_deref())
-                .unwrap_or("Qualidade não informada");
-            let rotulo = format!("{rotulo} · {qualidade}");
+                .and_then(|c| c.fontes.get(i));
+            let nome = fonte.and_then(|f| f.nome.clone()).unwrap_or_else(|| format!("Fonte {}", i + 1));
+            let mut partes = vec![nome];
+            if let Some(q) = fonte.and_then(|f| f.qualidade.as_deref()).filter(|q| *q != "Qualidade não informada") {
+                partes.push(q.to_string());
+            }
+            if let Some(f) = fonte {
+                partes.push(servidor(&f.url));
+            }
+            let marca = if i == atual { "✓ " } else { "   " };
+            let rotulo = format!("{marca}{}", partes.join(" · "));
             if ui.selectable_label(i == atual, rotulo).clicked() {
                 app.escolher_fonte(i);
             }
@@ -2703,4 +2711,11 @@ fn atualizacao_na_tela(app: &mut App, ctx: &egui::Context) {
         atualizacao::adiar(&versao);
         app.nova_versao = None;
     }
+}
+
+/// O servidor de onde vem um endereço ("cdn.exemplo.com"), sem porta nem "www.".
+fn servidor(url: &str) -> String {
+    let resto = url.split("://").nth(1).unwrap_or(url);
+    let host = resto.split(['/', ':', '?']).next().unwrap_or("");
+    host.strip_prefix("www.").unwrap_or(host).to_string()
 }

@@ -19,6 +19,9 @@ pub const ORDEM: [&str; 10] = [
 pub struct Fonte {
     pub url: String,
     pub qualidade: Option<String>,
+    /// O que diferencia a fonte das outras do canal ("Temporada 3"), quando o
+    /// catálogo sabe; senão aparece o número.
+    pub nome: Option<String>,
     pub referer: Option<String>,
     pub agente: Option<String>,
     /// Par KID:chave do ClearKey. O mpv não monta licença: a fonte é descartada.
@@ -102,18 +105,20 @@ pub fn parse(texto: &str) -> Vec<Canal> {
                     c.fontes.push(Fonte {
                         url: valor.to_string(),
                         qualidade: None,
+                        nome: None,
                         referer: None,
                         agente: None,
                         chave: None,
                     });
                 }
             }
-            "referer" | "agente" | "chave" | "qualidade" => {
+            "referer" | "agente" | "chave" | "qualidade" | "nome" => {
                 if let Some(f) = canais.last_mut().and_then(|c| c.fontes.last_mut()) {
                     match campo.as_str() {
                         "referer" => f.referer = Some(valor.to_string()),
                         "agente" => f.agente = Some(valor.to_string()),
                         "qualidade" => f.qualidade = Some(valor.to_string()),
+                        "nome" => f.nome = Some(valor.to_string()),
                         _ => f.chave = Some(valor.to_string()),
                     }
                 }
