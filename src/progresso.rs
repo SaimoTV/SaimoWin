@@ -20,6 +20,13 @@ pub struct Marca {
 }
 
 static MARCAS: Mutex<Option<HashMap<String, (f64, f64)>>> = Mutex::new(None);
+/// Sobe a cada marca gravada ou apagada: quem guarda uma lista montada com
+/// as marcas (a fileira "Continue assistindo") sabe quando refazê-la.
+static VERSAO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn versao() -> u64 {
+    VERSAO.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 fn arquivo() -> std::path::PathBuf {
     crate::catalogo::pasta().join("progresso.json")
@@ -38,6 +45,7 @@ fn marcas() -> std::sync::MutexGuard<'static, Option<HashMap<String, (f64, f64)>
 }
 
 fn gravar() {
+    VERSAO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let guarda = marcas();
     if let Some(mapa) = guarda.as_ref() {
         if let Ok(texto) = serde_json::to_string(mapa) {

@@ -60,6 +60,8 @@ enum Recado {
     Restritos(Vec<Canal>),
     Eventos(Vec<eventos::Evento>),
     Logo(String, egui::ColorImage),
+    /// O pedido da imagem saiu da fila antes de ser baixado: pode ser pedido de novo.
+    LogoEsquecido(String),
     Atualizacao(atualizacao::Versao),
     Guia,
     Gavetas(Vec<vod::Gaveta>),
@@ -286,7 +288,59 @@ struct App {
     pub filmografia_carregando: bool,
     pub eventos: Vec<eventos::Evento>,
     pub eventos_carregados: bool,
+    /// Sobe a cada recado com dados novos (acervo, letra, gêneros, fileiras):
+    /// é parte da chave dos caches da grade e das fileiras.
+    pub versao_dados: u64,
+    /// A grade montada da última vez e a chave com que foi montada. Montar
+    /// filtra e ordena o acervo inteiro (trinta mil nomes); feito a cada
+    /// quadro, deixava o acervo arrastado, e com um canal tocando por trás
+    /// eram sessenta vezes por segundo.
+    cache_itens: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<ItemNaTela>>)>>,
+    /// As capas pedidas e ainda não baixadas, as mais novas no fim.
+    fila_de_imagens: std::sync::Arc<FilaDeImagens>,
+    /// O canal que estava no ar quando a pessoa foi para o acervo: o acervo
+    /// cobre a tela inteira e o canal parava de tocar por trás; na volta ao
+    /// "Ao vivo" ele recomeça.
+    canal_parado: Option<String>,
+    /// Multi tela: a tela que não está em foco. A em foco é sempre `mpv` e
+    /// `tocando`, então teclado, lista, fontes e faixa valem para ela sem
+    /// mudar nada; trocar o foco é trocar as duas de lugar.
+    pub outra_tela: Option<OutraTela>,
+    /// Na multi tela, a tela em foco é a da direita.
+    pub foco_a_direita: bool,
+    /// O mpv da segunda tela entre um uso e outro: subir um mpv custa.
+    mpv_reserva: Option<std::sync::Arc<mpv::Mpv>>,
+    /// Animes e doramas já baixados nesta abertura: voltar à seção não
+    /// baixa a coleção de novo.
+    colecoes: HashMap<u8, Vec<(vod::Serie, Vec<vod::Episodio>)>>,
+    /// As séries da letra, guardadas enquanto uma coleção ocupa `series`.
+    /// Sem isto, ir a Animes e voltar a Séries deixava a lista da coleção no
+    /// lugar, e abrir uma série ficava esperando uma letra que nunca vinha.
+    series_da_letra: Option<Vec<vod::Serie>>,
 }
+
+/// A segunda tela da multi tela: outro mpv, outro canal, sem som.
+pub struct OutraTela {
+    pub mpv: std::sync::Arc<mpv::Mpv>,
+    pub tocando: Option<Tocando>,
+}
+
+/// Os pedidos de imagem esperando um dos poucos baixadores.
+///
+/// Era uma thread por capa: rolando a grade, centenas baixavam e
+/// decodificavam ao mesmo tempo e a interface engasgava. Agora são poucas, e
+/// a última capa pedida sai primeiro — é a que está na tela; a que ficou para
+/// trás na rolagem é esquecida e volta a ser pedida se reaparecer.
+#[derive(Default)]
+struct FilaDeImagens {
+    pedidos: std::sync::Mutex<std::collections::VecDeque<(String, String, u32)>>,
+    chegou: std::sync::Condvar,
+}
+
+/// Quantas imagens baixam e decodificam ao mesmo tempo.
+const BAIXADORES_DE_IMAGEM: usize = 6;
+/// Pedidos além disto são os mais velhos, de capas que já saíram da tela.
+const MAXIMO_NA_FILA_DE_IMAGENS: usize = 120;
 
 impl App {
     fn novo(cc: &eframe::CreationContext<'_>) -> Self {
@@ -428,7 +482,17 @@ impl App {
             filmografia_carregando: false,
             eventos: Vec::new(),
             eventos_carregados: false,
+            versao_dados: 0,
+            cache_itens: std::cell::RefCell::new(None),
+            fila_de_imagens: std::sync::Arc::new(FilaDeImagens::default()),
+            canal_parado: None,
+            outra_tela: None,
+            foco_a_direita: false,
+            mpv_reserva: None,
+            colecoes: HashMap::new(),
+            series_da_letra: None,
         };
+        app.ligar_baixadores_de_imagem(&cc.egui_ctx);
         app.reordenar();
         // Só para conferir telas fora do Windows: SAIMO_ABA=inicio|filmes|series.
         if let Ok(aba) = std::env::var("SAIMO_ABA") {
@@ -562,6 +626,14 @@ impl App {
         }
     }
 
+    fn mostrar_colecao(&mut self, lista: Vec<(vod::Serie, Vec<vod::Episodio>)>) {
+        self.episodios_colecao = lista.iter()
+            .map(|(serie, episodios)| (serie.titulo.clone(), episodios.clone()))
+            .collect();
+        self.series = lista.into_iter().map(|(serie, _)| serie).collect();
+        self.carregando_vod = false;
+    }
+
     fn abrir_serie(&mut self, serie: vod::Serie) {
         self.serie_aberta = Some(serie.clone());
         self.episodios.clear();
@@ -582,6 +654,10 @@ impl App {
     fn tocar_vod(&mut self, titulo: String, urls: Vec<String>, fonte: usize, nova: bool) {
         // Trocar de filme fecha a conta do anterior antes de perder a posição.
         self.guardar_progresso(true);
+        // Filme ocupa a janela inteira e tem som próprio; o canal parado
+        // para ir ao acervo não volta por cima dele.
+        self.sair_da_multi_tela();
+        self.canal_parado = None;
         let Some(mpv) = self.mpv.as_ref() else { return };
         let Some(url) = urls.get(fonte).cloned() else {
             telemetria::caiu("vod", &titulo, urls.len());
@@ -1040,7 +1116,7 @@ impl App {
                             let (canal, fonte) = (t.canal, t.fonte);
                             self.retomou_canal = true;
                             if let Some(c) = self.canais.get(canal) {
-                                gravar_lista("ultimo-canal.txt", &[c.nome.clone()]);
+                                gravar_lista("ultimo-canal.txt", std::slice::from_ref(&c.nome));
                                 let url = c.fontes.get(fonte).map(|f| f.url.clone()).unwrap_or_default();
                                 telemetria::tocou("live", &c.nome, &url, fonte + 1, ms);
                             }
@@ -1068,7 +1144,9 @@ impl App {
         if estourou_vod {
             self.proxima_fonte_vod("a fonte não abriu em 14 s");
         }
-        if self.tocando.is_some() || self.tocando_vod.is_some() {
+        self.cuidar_da_outra_tela();
+        let outra_no_ar = self.outra_tela.as_ref().is_some_and(|o| o.tocando.is_some());
+        if self.tocando.is_some() || self.tocando_vod.is_some() || outra_no_ar {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
         self.acompanhar_vod();
@@ -1088,7 +1166,7 @@ impl App {
                 }
                 let carregando = pulando || mpv.ler("paused-for-cache").as_deref() == Some("yes");
                 // A altura só muda quando troca a variante: não precisa ler todo quadro.
-                let qualidade = if self.quadro % 120 == 0 {
+                let qualidade = if self.quadro.is_multiple_of(120) {
                     mpv.ler("height").and_then(|h| h.parse::<u32>().ok()).filter(|h| *h > 0).map(|h| format!("{h}p"))
                 } else {
                     None
@@ -1110,7 +1188,15 @@ impl App {
         let mut chegou_algo = false;
         while let Ok(recado) = self.recados.try_recv() {
             chegou_algo = true;
+            if !matches!(recado, Recado::Logo(..) | Recado::LogoEsquecido(_)) {
+                self.versao_dados = self.versao_dados.wrapping_add(1);
+            }
             match recado {
+                Recado::LogoEsquecido(chave) => {
+                    if matches!(self.logos.get(&chave), Some(None)) {
+                        self.logos.remove(&chave);
+                    }
+                }
                 Recado::Catalogo(lista) => self.trocar_lista(lista, false),
                 Recado::Restritos(lista) => self.trocar_lista(lista, true),
                 Recado::Eventos(eventos) => {
@@ -1205,7 +1291,10 @@ impl App {
                     }
                 }
                 Recado::Series(letra, lista) => {
-                    if letra == self.letra {
+                    if letra == self.letra && matches!(self.aba, Aba::Animes | Aba::Doramas) {
+                        // A letra chegou com uma coleção na tela: fica para a volta.
+                        self.series_da_letra = Some(lista);
+                    } else if letra == self.letra {
                         self.series = lista;
                         self.carregando_vod = false;
                         self.abrir_o_que_esperava();
@@ -1222,12 +1311,12 @@ impl App {
                     }
                 }
                 Recado::Colecao(aba, lista) => {
+                    // Lista vazia é falha de rede: não fica guardada.
+                    if !lista.is_empty() {
+                        self.colecoes.insert(aba as u8, lista.clone());
+                    }
                     if self.aba == aba {
-                        self.episodios_colecao = lista.iter()
-                            .map(|(serie, episodios)| (serie.titulo.clone(), episodios.clone()))
-                            .collect();
-                        self.series = lista.into_iter().map(|(serie, _)| serie).collect();
-                        self.carregando_vod = false;
+                        self.mostrar_colecao(lista);
                     }
                 }
                 Recado::Episodios(serie, lista) => {
@@ -1275,15 +1364,52 @@ impl App {
     }
 
     fn baixar_logos_pendentes(&mut self) {
-        for (chave, url, lado) in std::mem::take(&mut self.pedidos_de_logo) {
+        let novos = std::mem::take(&mut self.pedidos_de_logo);
+        if novos.is_empty() {
+            return;
+        }
+        let mut pedidos = self.fila_de_imagens.pedidos.lock().unwrap();
+        pedidos.extend(novos);
+        while pedidos.len() > MAXIMO_NA_FILA_DE_IMAGENS {
+            if let Some((chave, _, _)) = pedidos.pop_front() {
+                let _ = self.emissor.send(Recado::LogoEsquecido(chave));
+            }
+        }
+        drop(pedidos);
+        self.fila_de_imagens.chegou.notify_all();
+    }
+
+    /// Sobe os baixadores de imagem, que vivem enquanto o programa viver.
+    fn ligar_baixadores_de_imagem(&self, ctx: &egui::Context) {
+        for _ in 0..BAIXADORES_DE_IMAGEM {
+            let fila = self.fila_de_imagens.clone();
             let emissor = self.emissor.clone();
-            std::thread::spawn(move || {
-                let Some(bytes) = rede::bytes(&url, 8 * 1024 * 1024) else { return };
-                let Ok(imagem) = image::load_from_memory(&bytes) else { return };
-                let imagem = imagem.thumbnail(lado, lado).to_rgba8();
-                let tamanho = [imagem.width() as usize, imagem.height() as usize];
-                let cores = egui::ColorImage::from_rgba_unmultiplied(tamanho, imagem.as_raw());
-                let _ = emissor.send(Recado::Logo(chave, cores));
+            let ctx = ctx.clone();
+            std::thread::spawn(move || loop {
+                let (chave, url, lado) = {
+                    let mut pedidos = fila.pedidos.lock().unwrap();
+                    loop {
+                        // A mais nova primeiro: é a que está na tela agora.
+                        if let Some(pedido) = pedidos.pop_back() {
+                            break pedido;
+                        }
+                        pedidos = fila.chegou.wait(pedidos).unwrap();
+                    }
+                };
+                let cores = rede::bytes(&url, 8 * 1024 * 1024)
+                    .and_then(|bytes| image::load_from_memory(&bytes).ok())
+                    .map(|imagem| {
+                        let imagem = imagem.thumbnail(lado, lado).to_rgba8();
+                        let tamanho = [imagem.width() as usize, imagem.height() as usize];
+                        egui::ColorImage::from_rgba_unmultiplied(tamanho, imagem.as_raw())
+                    });
+                // A que não veio fica sem imagem, como antes: pedir de novo a
+                // cada quadro só martelaria um endereço quebrado.
+                let Some(cores) = cores else { continue };
+                if emissor.send(Recado::Logo(chave, cores)).is_err() {
+                    return;
+                }
+                ctx.request_repaint();
             });
         }
     }
@@ -1385,7 +1511,17 @@ impl App {
                 egui::Key::Minus => self.mudar_volume(-5),
                 egui::Key::PageUp => self.pular_canal(-1),
                 egui::Key::PageDown => self.pular_canal(1),
+                egui::Key::D if self.aba == Aba::Canais => {
+                    if self.outra_tela.is_some() {
+                        self.sair_da_multi_tela();
+                    } else {
+                        self.entrar_na_multi_tela();
+                    }
+                }
+                egui::Key::T if self.outra_tela.is_some() => self.trocar_tela_em_foco(),
                 egui::Key::P => {
+                    // A janelinha por cima de tudo é de uma tela só.
+                    self.sair_da_multi_tela();
                     self.pip = !self.pip;
                     let nivel = if self.pip { egui::viewport::WindowLevel::AlwaysOnTop } else { egui::viewport::WindowLevel::Normal };
                     ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(nivel));
@@ -1561,7 +1697,34 @@ impl App {
     /// tem os trinta mil nomes em 800 KB — então a grade lista tudo a partir
     /// dele e só baixa a letra quando alguém abre um título. O 18+ fica de
     /// fora: ele não entra no índice, e continua vindo uma letra por vez.
-    pub fn itens_na_tela(&self) -> Vec<ItemNaTela> {
+    pub fn itens_na_tela(&self) -> std::rc::Rc<Vec<ItemNaTela>> {
+        let chave = self.chave_da_grade();
+        if let Some((guardada, itens)) = self.cache_itens.borrow().as_ref() {
+            if *guardada == chave {
+                return itens.clone();
+            }
+        }
+        let itens = std::rc::Rc::new(self.montar_itens());
+        *self.cache_itens.borrow_mut() = Some((chave, itens.clone()));
+        itens
+    }
+
+    /// Tudo de que a grade depende, resumido num número: mudou um, remonta.
+    fn chave_da_grade(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.versao_dados.hash(&mut h);
+        (self.aba as u8).hash(&mut h);
+        self.busca_vod.hash(&mut h);
+        self.genero.hash(&mut h);
+        self.letra.hash(&mut h);
+        self.liberado.hash(&mut h);
+        self.favoritos_vod.hash(&mut h);
+        (self.acervo.len(), self.filmes.len(), self.series.len()).hash(&mut h);
+        h.finish()
+    }
+
+    fn montar_itens(&self) -> Vec<ItemNaTela> {
         let busca = catalogo::chave_de_ordem(self.busca_vod.trim());
         let serie = matches!(self.aba, Aba::Series | Aba::Animes | Aba::Doramas);
 
@@ -1600,7 +1763,7 @@ impl App {
             // Nome sem nenhuma letra nem número ("(2024)") é lixo da lista de
             // origem: abria a grade como primeiro cartão, sem capa.
             .filter(|a| tem_nome(&a.titulo))
-            .filter(|a| self.aba != Aba::Favoritos || self.favoritos_vod.iter().any(|t| *t == a.titulo))
+            .filter(|a| self.aba != Aba::Favoritos || self.favoritos_vod.contains(&a.titulo))
             .filter(|a| busca.is_empty() || catalogo::chave_de_ordem(&a.titulo).contains(&busca))
             .filter(|a| self.generos.tem(&a.titulo, a.serie, &self.genero))
             .map(|a| ItemNaTela {
@@ -1616,17 +1779,17 @@ impl App {
             let ano = |i: &ItemNaTela| {
                 i.detalhe.get(..4).and_then(|a| a.parse::<u32>().ok()).or_else(|| {
                     let t = i.titulo.trim_end();
-                    t.ends_with(')').then(|| t.len()).filter(|n| *n >= 6).and_then(|n| t.get(n - 5..n - 1)?.parse().ok())
+                    t.ends_with(')').then_some(t.len()).filter(|n| *n >= 6).and_then(|n| t.get(n - 5..n - 1)?.parse().ok())
                 })
                 // "Blade Runner 2049" não é de 2049.
                 .filter(|a| (1900..=2027).contains(a))
                 .unwrap_or(0)
             };
             let simbolo = |i: &ItemNaTela| !i.titulo.chars().next().is_some_and(|c| c.is_alphanumeric());
-            itens.sort_by(|a, b| {
-                simbolo(a).cmp(&simbolo(b))
-                    .then_with(|| ano(b).cmp(&ano(a)))
-                    .then_with(|| catalogo::chave_de_ordem(&a.titulo).cmp(&catalogo::chave_de_ordem(&b.titulo)))
+            // A chave de cada um calculada uma vez só: no sort_by ela era
+            // refeita a cada comparação, centenas de milhares de vezes.
+            itens.sort_by_cached_key(|i| {
+                (simbolo(i), std::cmp::Reverse(ano(i)), catalogo::chave_de_ordem(&i.titulo))
             });
         }
         itens
@@ -1681,7 +1844,7 @@ impl App {
         self.filmes
             .iter()
             .filter(|f| match self.aba {
-                Aba::Favoritos => self.favoritos_vod.iter().any(|t| *t == f.titulo),
+                Aba::Favoritos => self.favoritos_vod.contains(&f.titulo),
                 Aba::Extras => f.reservado,
                 _ => !f.reservado || self.liberado,
             })
@@ -1695,7 +1858,7 @@ impl App {
         let busca = catalogo::chave_de_ordem(self.busca_vod.trim());
         self.series
             .iter()
-            .filter(|s| self.aba != Aba::Favoritos || self.favoritos_vod.iter().any(|t| *t == s.titulo))
+            .filter(|s| self.aba != Aba::Favoritos || self.favoritos_vod.contains(&s.titulo))
             .filter(|s| busca.is_empty() || catalogo::chave_de_ordem(&s.titulo).contains(&busca))
             .filter(|s| self.generos.tem(&s.titulo, true, &self.genero))
             .cloned()
@@ -1832,6 +1995,20 @@ impl App {
         if self.aba == aba {
             return;
         }
+        if aba == Aba::Canais {
+            self.retomar_canal_parado();
+        } else if self.aba == Aba::Canais {
+            self.parar_o_que_toca();
+        }
+        let colecao = |a: Aba| matches!(a, Aba::Animes | Aba::Doramas);
+        if colecao(aba) && !colecao(self.aba) {
+            self.series_da_letra = Some(std::mem::take(&mut self.series));
+        } else if !colecao(aba) && colecao(self.aba) {
+            if let Some(series) = self.series_da_letra.take() {
+                self.series = series;
+            }
+            self.episodios_colecao.clear();
+        }
         self.aba = aba;
         self.busca_vod.clear();
         self.foco_vod = 0;
@@ -1852,6 +2029,10 @@ impl App {
             return;
         }
         if matches!(aba, Aba::Animes | Aba::Doramas) {
+            if let Some(lista) = self.colecoes.get(&(aba as u8)).cloned() {
+                self.mostrar_colecao(lista);
+                return;
+            }
             self.series.clear();
             self.episodios_colecao.clear();
             self.carregando_vod = true;
@@ -1879,6 +2060,138 @@ impl App {
             let letra = self.letra.clone();
             self.letra.clear();
             self.abrir_letra(letra);
+        }
+    }
+
+    /// O acervo cobre a tela inteira: o que estava tocando para de vez, em
+    /// vez de seguir por trás gastando rede, processador e som.
+    fn parar_o_que_toca(&mut self) {
+        self.sair_da_multi_tela();
+        if self.tocando_vod.is_some() {
+            self.guardar_progresso(true);
+            self.tocando_vod = None;
+        } else if let Some(t) = self.tocando.take() {
+            self.canal_parado = self.canais.get(t.canal).map(|c| c.nome.clone());
+        } else {
+            return;
+        }
+        telemetria::parou();
+        if let Some(mpv) = self.mpv.as_ref() {
+            mpv.parar();
+        }
+    }
+
+    /// Volta ao canal que `parar_o_que_toca` parou, se nada mais começou.
+    fn retomar_canal_parado(&mut self) {
+        let Some(nome) = self.canal_parado.take() else { return };
+        if self.tocando.is_some() || self.tocando_vod.is_some() {
+            return;
+        }
+        if let Some(indice) = self.canais.iter().position(|c| c.nome == nome) {
+            self.foco = indice;
+            self.tocar(indice, 0, true);
+        }
+    }
+
+    // MARK: - Multi tela
+
+    /// Abre a segunda tela. A tela nova fica em foco, vazia, com a lista
+    /// aberta: o próximo canal escolhido vai para ela. A que já tocava segue
+    /// à esquerda, sem som.
+    pub fn entrar_na_multi_tela(&mut self) {
+        if self.outra_tela.is_some() || self.mpv.is_none() {
+            return;
+        }
+        if self.tocando_vod.is_some() {
+            self.aviso = Some(("A multi tela é para os canais ao vivo".into(), Instant::now()));
+            return;
+        }
+        let nova = match self.mpv_reserva.take() {
+            Some(mpv) => mpv,
+            None => match mpv::Mpv::novo(&caminho_do_mpv()) {
+                Ok(mpv) => std::sync::Arc::new(mpv),
+                Err(erro) => {
+                    telemetria::erro(erro);
+                    self.aviso = Some(("Não deu para abrir a segunda tela".into(), Instant::now()));
+                    return;
+                }
+            },
+        };
+        let Some(antiga) = self.mpv.replace(nova) else { return };
+        let tocando = self.tocando.take();
+        self.outra_tela = Some(OutraTela { mpv: antiga, tocando });
+        self.foco_a_direita = true;
+        self.ajustar_som_das_telas();
+        self.aba = Aba::Canais;
+        self.lista_aberta = true;
+        self.guia_aberto = false;
+        self.aviso = Some(("Multi tela: escolha o canal da segunda tela".into(), Instant::now()));
+    }
+
+    /// Fecha a tela que não está em foco; a em foco ocupa a janela de novo.
+    pub fn sair_da_multi_tela(&mut self) {
+        let Some(outra) = self.outra_tela.take() else { return };
+        outra.mpv.parar();
+        self.mpv_reserva = Some(outra.mpv);
+        self.foco_a_direita = false;
+        self.ajustar_som_das_telas();
+    }
+
+    /// Põe em foco a outra tela: o som, o teclado e a lista passam para ela.
+    pub fn trocar_tela_em_foco(&mut self) {
+        let Some(outra) = self.outra_tela.as_mut() else { return };
+        let Some(atual) = self.mpv.as_mut() else { return };
+        std::mem::swap(atual, &mut outra.mpv);
+        std::mem::swap(&mut self.tocando, &mut outra.tocando);
+        self.foco_a_direita = !self.foco_a_direita;
+        if let Some(t) = self.tocando.as_ref() {
+            self.foco = t.canal;
+        }
+        self.ajustar_som_das_telas();
+        self.letreiro_ate = Instant::now() + SUMIR_LETREIRO;
+    }
+
+    /// Só a tela em foco tem som: duas transmissões falando juntas não
+    /// servem a ninguém.
+    fn ajustar_som_das_telas(&self) {
+        if let Some(mpv) = self.mpv.as_ref() {
+            mpv.volume(self.volume);
+            mpv.mudo(self.mudo);
+        }
+        if let Some(outra) = self.outra_tela.as_ref() {
+            outra.mpv.mudo(true);
+        }
+    }
+
+    /// A tela fora de foco cuida das fontes dela como a principal: a que não
+    /// abre ou cai dá lugar à seguinte do mesmo canal.
+    fn cuidar_da_outra_tela(&mut self) {
+        let Some(outra) = self.outra_tela.as_mut() else { return };
+        let avisos: Vec<mpv::Aviso> = outra.mpv.avisos().collect();
+        let mut trocar = avisos.iter().any(|a| matches!(a, mpv::Aviso::Falhou | mpv::Aviso::Fim));
+        if avisos.contains(&mpv::Aviso::Tocando) {
+            if let Some(t) = outra.tocando.as_mut() {
+                t.confirmado = true;
+            }
+        }
+        if let Some(t) = outra.tocando.as_ref() {
+            trocar |= !t.confirmado && t.desde.elapsed() > ESPERA_DA_FONTE;
+        }
+        if !trocar {
+            return;
+        }
+        let Some(t) = outra.tocando.take() else { return };
+        let Some(canal) = self.canais.get(t.canal) else { return };
+        match canal.fontes.get(t.fonte + 1) {
+            Some(fonte) => {
+                outra.mpv.tocar(&fonte.url, fonte.referer.as_deref(), fonte.agente.as_deref());
+                outra.mpv.mudo(true);
+                outra.tocando = Some(Tocando { canal: t.canal, fonte: t.fonte + 1, desde: Instant::now(), confirmado: false });
+            }
+            None => {
+                outra.mpv.parar();
+                self.aviso = Some((format!("{}: nenhuma fonte abriu na outra tela", canal.nome), Instant::now()));
+            }
         }
     }
 
@@ -2033,13 +2346,11 @@ impl eframe::App for App {
         foto_de_teste(self, ctx);
         tela::desenhar(self, ui);
 
-        if self.pip {
-            if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.primary_down()) {
-                if !ctx.egui_wants_pointer_input() {
+        if self.pip
+            && ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.primary_down())
+                && !ctx.egui_wants_pointer_input() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
-            }
-        }
 
         // Capa e logo pedidos durante o desenho só chegam no quadro seguinte:
         // sem este pedido de redesenho, a lista ficaria parada até alguém mexer.

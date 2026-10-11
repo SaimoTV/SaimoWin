@@ -515,7 +515,7 @@ fn percorrer(
         let mut consumido = 0;
         while let Some((inicio, fim, elemento)) = proximo_elemento(&buffer[consumido..]) {
             let absoluto = consumido + inicio;
-            consumido = consumido + fim;
+            consumido += fim;
             let _ = absoluto;
             if elemento.starts_with("<channel") {
                 if de_id.is_some() {

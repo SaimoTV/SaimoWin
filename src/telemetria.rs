@@ -102,7 +102,7 @@ fn sistema() -> String {
 
 fn host(url: &str) -> Option<String> {
     let sem_esquema = url.split("://").nth(1)?;
-    let host = sem_esquema.split('/').next()?.split('@').last()?;
+    let host = sem_esquema.split('/').next()?.split('@').next_back()?;
     Some(host.split(':').next()?.trim_start_matches("www.").to_string())
 }
 

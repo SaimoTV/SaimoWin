@@ -137,7 +137,7 @@ pub fn parse(texto: &str) -> Vec<Canal> {
 
 /// Ordena por seção e nome, como nos outros aplicativos, com os favoritos na
 /// frente para não precisar procurar.
-pub fn ordenar(canais: &mut Vec<Canal>, favoritos: &[String]) {
+pub fn ordenar(canais: &mut [Canal], favoritos: &[String]) {
     canais.sort_by(|a, b| {
         let fav = |c: &Canal| !favoritos.iter().any(|f| f == &c.nome);
         let pos = |c: &Canal| ORDEM.iter().position(|o| *o == c.secao()).unwrap_or(ORDEM.len());

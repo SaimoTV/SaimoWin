@@ -162,6 +162,7 @@ enum Icone {
     Preencher,
     Voltar,
     Fechar,
+    MultiTela,
 }
 
 fn pintar_icone(pintor: &egui::Painter, icone: Icone, centro: Pos2, tamanho: f32, cor: Color32) {
@@ -208,6 +209,10 @@ fn pintar_icone(pintor: &egui::Painter, icone: Icone, centro: Pos2, tamanho: f32
                 pintor.line_segment([p(a.0, a.1), p(b.0, b.1)], traco);
                 pintor.line_segment([p(b.0, b.1), p(c.0, c.1)], traco);
             }
+        }
+        Icone::MultiTela => {
+            pintor.rect_stroke(Rect::from_min_max(p(-0.9, -0.6), p(-0.08, 0.6)), 2.0, traco, egui::StrokeKind::Middle);
+            pintor.rect_filled(Rect::from_min_max(p(0.08, -0.6), p(0.9, 0.6)), 2.0, cor);
         }
         Icone::Preencher => {
             pintor.rect_stroke(Rect::from_min_max(p(-0.85, -0.6), p(0.85, 0.6)), 2.0, traco, egui::StrokeKind::Middle);
@@ -369,6 +374,12 @@ fn video(app: &mut App, ctx: &egui::Context) {
     let rect = ctx.content_rect();
     let pintor = ctx.layer_painter(egui::LayerId::background());
     pintor.rect_filled(rect, 0.0, Color32::BLACK);
+    if let Some(outra) = app.outra_tela.as_ref() {
+        let (em_foco, fora) = telas_da_multi_tela(rect, app.foco_a_direita);
+        video_numa_parte(&pintor, mpv, em_foco);
+        video_numa_parte(&pintor, outra.mpv.clone(), fora);
+        return;
+    }
     pintor.add(egui::PaintCallback {
         rect,
         callback: Arc::new(eframe::egui_glow::CallbackFn::new(move |info, pintor| {
@@ -383,6 +394,105 @@ fn video(app: &mut App, ctx: &egui::Context) {
             mpv.desenhar(fbo, largura as i32, altura as i32);
         })),
     });
+}
+
+/// As duas metades da janela na multi tela: (a em foco, a outra).
+pub fn telas_da_multi_tela(janela: Rect, foco_a_direita: bool) -> (Rect, Rect) {
+    let meio = janela.center().x;
+    let esquerda = Rect::from_min_max(janela.min, Pos2::new(meio - 1.0, janela.max.y));
+    let direita = Rect::from_min_max(Pos2::new(meio + 1.0, janela.min.y), janela.max);
+    if foco_a_direita { (direita, esquerda) } else { (esquerda, direita) }
+}
+
+/// O alvo próprio de cada mpv na multi tela: textura e framebuffer do
+/// tamanho da metade dele.
+struct Alvo {
+    fbo: eframe::glow::Framebuffer,
+    textura: eframe::glow::Texture,
+    largura: i32,
+    altura: i32,
+}
+
+thread_local! {
+    /// Os alvos por mpv (pelo endereço dele). O desenho é sempre na thread
+    /// da janela, então não precisa de trava.
+    static ALVOS: std::cell::RefCell<std::collections::HashMap<usize, Alvo>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Desenha um mpv só numa parte da janela.
+///
+/// A API de render do mpv desenha sempre o framebuffer inteiro que recebe, a
+/// partir do canto. Para pôr duas imagens lado a lado, cada mpv desenha num
+/// framebuffer próprio, do tamanho da metade dele, que depois é copiado
+/// (`glBlitFramebuffer`) para o lugar certo da janela.
+fn video_numa_parte(pintor: &egui::Painter, mpv: Arc<crate::mpv::Mpv>, parte: Rect) {
+    pintor.add(egui::PaintCallback {
+        rect: parte,
+        callback: Arc::new(eframe::egui_glow::CallbackFn::new(move |info, pintor| {
+            if let Err(erro) = mpv.ligar_video() {
+                crate::telemetria::erro(erro);
+                return;
+            }
+            let gl = pintor.gl();
+            let vista = info.viewport_in_pixels();
+            let (largura, altura) = (vista.width_px, vista.height_px);
+            if largura <= 0 || altura <= 0 {
+                return;
+            }
+            unsafe {
+                let janela = gl.get_parameter_i32(eframe::glow::DRAW_FRAMEBUFFER_BINDING);
+                let janela = std::num::NonZeroU32::new(janela as u32).map(eframe::glow::NativeFramebuffer);
+                let chave = Arc::as_ptr(&mpv) as usize;
+                let Some(fbo) = ALVOS.with_borrow_mut(|alvos| alvo(gl, alvos, chave, largura, altura)) else { return };
+                estado_padrao_de_opengl(gl);
+                mpv.desenhar(fbo.0.get() as i32, largura, altura);
+                // A cópia obedece à tesoura, e o mpv não promete deixá-la desligada.
+                gl.disable(eframe::glow::SCISSOR_TEST);
+                gl.bind_framebuffer(eframe::glow::READ_FRAMEBUFFER, Some(fbo));
+                gl.bind_framebuffer(eframe::glow::DRAW_FRAMEBUFFER, janela);
+                gl.blit_framebuffer(
+                    0, 0, largura, altura,
+                    vista.left_px, vista.from_bottom_px, vista.left_px + largura, vista.from_bottom_px + altura,
+                    eframe::glow::COLOR_BUFFER_BIT, eframe::glow::LINEAR,
+                );
+                gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, janela);
+            }
+        })),
+    });
+}
+
+/// O framebuffer do mpv `chave`, criado ou refeito no tamanho pedido.
+unsafe fn alvo(
+    gl: &eframe::glow::Context,
+    alvos: &mut std::collections::HashMap<usize, Alvo>,
+    chave: usize,
+    largura: i32,
+    altura: i32,
+) -> Option<eframe::glow::Framebuffer> {
+    use eframe::glow;
+    if let Some(a) = alvos.get(&chave) {
+        if a.largura == largura && a.altura == altura {
+            return Some(a.fbo);
+        }
+    }
+    if let Some(velho) = alvos.remove(&chave) {
+        gl.delete_framebuffer(velho.fbo);
+        gl.delete_texture(velho.textura);
+    }
+    let textura = gl.create_texture().ok()?;
+    gl.bind_texture(glow::TEXTURE_2D, Some(textura));
+    gl.tex_image_2d(
+        glow::TEXTURE_2D, 0, glow::RGBA8 as i32, largura, altura, 0,
+        glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None),
+    );
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+    gl.bind_texture(glow::TEXTURE_2D, None);
+    let fbo = gl.create_framebuffer().ok()?;
+    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+    gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(textura), 0);
+    alvos.insert(chave, Alvo { fbo, textura, largura, altura });
+    Some(fbo)
 }
 
 /// Devolve o OpenGL ao estado padrão antes de entregar o quadro ao mpv.
@@ -566,7 +676,7 @@ fn barra_lateral(app: &mut App, ui_pai: &mut egui::Ui) {
             let mut secao_atual = String::new();
             for indice in &visiveis {
                 let canal = &app.canais[*indice];
-                let secao = if app.favoritos.iter().any(|f| *f == canal.nome) {
+                let secao = if app.favoritos.contains(&canal.nome) {
                     "Favoritos".to_string()
                 } else {
                     canal.secao().to_string()
@@ -636,7 +746,7 @@ fn barra_lateral(app: &mut App, ui_pai: &mut egui::Ui) {
                                     let c = &app.canais[*indice];
                                     (c.nome.clone(), c.logo.clone(), c.fontes.len())
                                 };
-                                let favorito = app.favoritos.iter().any(|f| *f == nome);
+                                let favorito = app.favoritos.contains(&nome);
                                 let textura = logo.as_ref().and_then(|url| app.logo(url));
                                 let no_ar = epg::agora_e_depois(&nome).map(|(p, _)| p);
                                 let (resposta, estrela) = linha_do_canal(
@@ -875,8 +985,14 @@ fn palco(app: &mut App, ui_pai: &mut egui::Ui) {
                 return;
             }
 
+            if app.outra_tela.is_some() {
+                multi_tela(app, ui);
+            }
             if app.tocando.is_none() && app.tocando_vod.is_none() {
-                estado_vazio(app, ui, area);
+                // Na multi tela a vazia é a recém-aberta, esperando o canal.
+                if app.outra_tela.is_none() {
+                    estado_vazio(app, ui, area);
+                }
                 return;
             }
 
@@ -907,6 +1023,54 @@ fn palco(app: &mut App, ui_pai: &mut egui::Ui) {
                     faixa_no_ar(app, ui);
                 });
         });
+}
+
+/// O que a multi tela põe sobre os vídeos: a moldura da tela em foco, o nome
+/// do canal de cada uma, e o botão de fechar a segunda.
+fn multi_tela(app: &mut App, ui: &mut egui::Ui) {
+    let janela = ui.ctx().content_rect();
+    let (em_foco, fora) = telas_da_multi_tela(janela, app.foco_a_direita);
+    let nome_de = |tocando: Option<&crate::Tocando>| {
+        tocando.and_then(|t| app.canais.get(t.canal)).map(|c| c.nome.clone())
+    };
+    let nome_em_foco = nome_de(app.tocando.as_ref()).unwrap_or_else(|| "Escolha um canal na lista".into());
+    let nome_fora = nome_de(app.outra_tela.as_ref().and_then(|o| o.tocando.as_ref())).unwrap_or_default();
+    let pintor = ui.painter().clone();
+    pintor.rect_stroke(em_foco.shrink(1.5), 0.0, Stroke::new(3.0, ACENTO), egui::StrokeKind::Inside);
+
+    // O nome embaixo, à esquerda de cada tela: em cima fica o menu.
+    let etiqueta = |parte: Rect, texto: &str, em_foco: bool| {
+        if texto.is_empty() {
+            return;
+        }
+        let galeria = pintor.layout_no_wrap(texto.to_string(), forte(13.0), TEXTO);
+        let caixa = Rect::from_min_size(
+            Pos2::new(parte.left() + 14.0, parte.bottom() - 14.0 - galeria.size().y - 10.0),
+            galeria.size() + egui::vec2(20.0 + if em_foco { 14.0 } else { 0.0 }, 10.0),
+        );
+        pintor.rect_filled(caixa, 8.0, VIDRO);
+        let mut x = caixa.left() + 10.0;
+        if em_foco {
+            pintar_icone(&pintor, Icone::Som, Pos2::new(x + 5.0, caixa.center().y), 11.0, ACENTO);
+            x += 14.0;
+        }
+        pintor.galley(Pos2::new(x, caixa.top() + 5.0), galeria, TEXTO);
+    };
+    etiqueta(em_foco, &nome_em_foco, true);
+    etiqueta(fora, &nome_fora, false);
+
+    // Clicar na outra tela põe ela em foco: som, lista e teclado vão junto.
+    let clique = ui.interact(fora, egui::Id::new("multi-tela-outra"), Sense::click());
+    if clique.on_hover_text("Clique para ouvir e controlar esta tela (T)").clicked() {
+        app.trocar_tela_em_foco();
+    }
+
+    let botao = Rect::from_min_size(Pos2::new(janela.right() - 196.0, janela.top() + 70.0), egui::vec2(180.0, 34.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(botao), |ui| {
+        if botao_rotulo(ui, Icone::Fechar, "Fechar segunda tela", "Volta a uma tela só, com a que está em foco (D)").clicked() {
+            app.sair_da_multi_tela();
+        }
+    });
 }
 
 /// "Pular abertura" e o cartão do próximo episódio, no canto de baixo.
@@ -1169,6 +1333,16 @@ fn barra_de_controles(app: &mut App, ui: &mut egui::Ui) {
                     }
                     if !filme && botao_icone(ui, Icone::Guia, 14.0, "Guia de programação (G)").clicked() {
                         app.guia_aberto = !app.guia_aberto;
+                    }
+                    if !filme {
+                        let dica = if app.outra_tela.is_some() { "Fechar a segunda tela (D)" } else { "Multi tela: dois canais lado a lado (D)" };
+                        if botao_icone(ui, Icone::MultiTela, 15.0, dica).clicked() {
+                            if app.outra_tela.is_some() {
+                                app.sair_da_multi_tela();
+                            } else {
+                                app.entrar_na_multi_tela();
+                            }
+                        }
                     }
                     let dica = if app.preencher { "Ajustar à tela" } else { "Preencher a tela" };
                     if larga && botao_icone(ui, Icone::Preencher, 15.0, dica).clicked() {
@@ -1595,7 +1769,7 @@ fn destaques_da_secao(app: &mut App, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.x = 14.0;
             for item in itens.iter().take(20) {
                 let capa = app.capa(&item.titulo, item.serie());
-                let favorito = app.favoritos_vod.iter().any(|t| *t == item.titulo);
+                let favorito = app.favoritos_vod.contains(&item.titulo);
                 let resposta = cartao(ui, &item.titulo, &item.ano, capa, favorito, false, None, 132.0, 238.0);
                 if resposta.clicked() {
                     aberto = Some(item.clone());
@@ -1688,16 +1862,43 @@ fn fileiras(app: &mut App, ui: &mut egui::Ui) {
 
     let mut escolhido: Option<(usize, usize)> = None;
     let mut favoritar: Option<String> = None;
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        for (indice_fila, (nome, cartoes)) in visiveis.iter().enumerate() {
-            ui.label(egui::RichText::new(nome).font(forte(15.0)));
-            ui.add_space(5.0);
-            egui::ScrollArea::horizontal()
-                .id_salt(format!("fila-{indice_fila}"))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = espaco;
-                        for (indice, item) in cartoes.iter().enumerate() {
+    // Fileira por fileira, só as à vista: as de baixo nem pedem capa antes
+    // de aparecer, e as da tela chegam primeiro.
+    let altura_da_fila = 30.0 + altura + espaco;
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show_viewport(ui, |ui, vista_vertical| {
+        let largura_util = ui.available_width();
+        ui.set_min_size(egui::vec2(largura_util, visiveis.len() as f32 * altura_da_fila));
+        let topo = ui.min_rect().min;
+        let lugar_da_fila = |indice: usize| {
+            Rect::from_min_size(topo + egui::vec2(0.0, indice as f32 * altura_da_fila), egui::vec2(largura_util, altura_da_fila))
+        };
+        if andou && app.foco_fila < visiveis.len() {
+            ui.scroll_to_rect(lugar_da_fila(app.foco_fila), None);
+        }
+        let primeira = (vista_vertical.min.y / altura_da_fila).floor().max(0.0) as usize;
+        let ultima = ((vista_vertical.max.y / altura_da_fila).ceil().max(0.0) as usize + 1).min(visiveis.len());
+        for (indice_fila, (nome, cartoes)) in visiveis.iter().enumerate().take(ultima).skip(primeira) {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(lugar_da_fila(indice_fila)), |ui| {
+                ui.label(egui::RichText::new(nome).font(forte(15.0)));
+                ui.add_space(5.0);
+                // Só os cartões à vista são desenhados: com uma dúzia de fileiras
+                // de vinte capas, desenhar todas a cada quadro pesava na rolagem.
+                let passo = largura + espaco;
+                let total = (cartoes.len() as f32 * passo - espaco).max(0.0);
+                egui::ScrollArea::horizontal()
+                    .id_salt(format!("fila-{indice_fila}"))
+                    .show_viewport(ui, |ui, vista| {
+                        ui.set_min_size(egui::vec2(total, altura));
+                        let origem = ui.min_rect().min;
+                        let lugar = |indice: usize| {
+                            Rect::from_min_size(origem + egui::vec2(indice as f32 * passo, 0.0), egui::vec2(largura, altura))
+                        };
+                        if indice_fila == app.foco_fila && andou && foco < cartoes.len() {
+                            ui.scroll_to_rect(lugar(foco), None);
+                        }
+                        let primeiro = (vista.min.x / passo).floor().max(0.0) as usize;
+                        let ultimo = ((vista.max.x / passo).ceil().max(0.0) as usize + 1).min(cartoes.len());
+                        for (indice, item) in cartoes.iter().enumerate().take(ultimo).skip(primeiro) {
                             let focado = indice_fila == app.foco_fila && indice == foco;
                             let capa = app.capa(&item.titulo, item.serie);
                             let marca = if item.serie {
@@ -1705,12 +1906,11 @@ fn fileiras(app: &mut App, ui: &mut egui::Ui) {
                             } else {
                                 progresso::onde_parou(&item.titulo)
                             };
-                            let resposta = cartao(
-                                ui, &item.rotulo, &item.detalhe, capa, item.favorito,
-                                focado, marca, largura, altura);
-                            if focado && andou {
-                                resposta.scroll_to_me(None);
-                            }
+                            let resposta = ui
+                                .scope_builder(egui::UiBuilder::new().max_rect(lugar(indice)), |ui| {
+                                    cartao(ui, &item.rotulo, &item.detalhe, capa, item.favorito, focado, marca, largura, altura)
+                                })
+                                .inner;
                             if resposta.clicked() {
                                 escolhido = Some((indice_fila, indice));
                             }
@@ -1719,8 +1919,7 @@ fn fileiras(app: &mut App, ui: &mut egui::Ui) {
                             }
                         }
                     });
-                });
-            ui.add_space(espaco);
+            });
         }
     });
 
@@ -1769,7 +1968,33 @@ pub fn abrir_em_foco_na_fileira(app: &mut App) {
 
 /// As fileiras já filtradas pela busca: digitar procura dentro do que está à
 /// vista, e a fileira que ficou sem nada sai da tela.
-fn filas_na_tela(app: &App) -> Vec<(String, Vec<CartaoDaFila>)> {
+type Filas = std::rc::Rc<Vec<(String, Vec<CartaoDaFila>)>>;
+
+thread_local! {
+    /// As fileiras montadas da última vez e a chave com que foram montadas:
+    /// montar varre o acervo inteiro para cada título pela metade.
+    static FILAS: std::cell::RefCell<Option<(u64, Filas)>> = const { std::cell::RefCell::new(None) };
+}
+
+fn filas_na_tela(app: &App) -> Filas {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    app.versao_dados.hash(&mut h);
+    progresso::versao().hash(&mut h);
+    app.busca_vod.hash(&mut h);
+    app.genero.hash(&mut h);
+    app.favoritos_vod.hash(&mut h);
+    (app.filas.len(), app.acervo.len()).hash(&mut h);
+    let chave = h.finish();
+    if let Some(filas) = FILAS.with_borrow(|f| f.as_ref().filter(|(c, _)| *c == chave).map(|(_, filas)| filas.clone())) {
+        return filas;
+    }
+    let filas = std::rc::Rc::new(montar_filas(app));
+    FILAS.with_borrow_mut(|f| *f = Some((chave, filas.clone())));
+    filas
+}
+
+fn montar_filas(app: &App) -> Vec<(String, Vec<CartaoDaFila>)> {
     let mut out: Vec<(String, Vec<CartaoDaFila>)> = Vec::new();
 
     // Só o que existe no acervo comum. Os extras ficam de fora do índice de
@@ -1778,12 +2003,10 @@ fn filas_na_tela(app: &App) -> Vec<(String, Vec<CartaoDaFila>)> {
     // abre sem código nenhum e não pode ser por onde um título reservado
     // reaparece. Enquanto o índice não chegou, a fileira fica vazia: mostrar
     // de menos é o erro certo a cometer.
+    let no_acervo: std::collections::HashSet<&str> = app.acervo.iter().map(|a| a.titulo.as_str()).collect();
     let pendentes: Vec<_> = progresso::pendentes()
         .into_iter()
-        .filter(|(titulo, _)| {
-            let nome = titulo.split(" · ").next().unwrap_or(titulo);
-            app.acervo.iter().any(|a| a.titulo == nome)
-        })
+        .filter(|(titulo, _)| no_acervo.contains(titulo.split(" · ").next().unwrap_or(titulo)))
         .collect();
     if !pendentes.is_empty() {
         let cartoes = pendentes
@@ -1792,7 +2015,7 @@ fn filas_na_tela(app: &App) -> Vec<(String, Vec<CartaoDaFila>)> {
             .map(|(titulo, _)| {
                 let nome = titulo.split(" · ").next().unwrap_or(titulo).to_string();
                 CartaoDaFila {
-                    favorito: app.favoritos_vod.iter().any(|t| *t == nome),
+                    favorito: app.favoritos_vod.contains(&nome),
                     rotulo: titulo.clone(),
                     detalhe: String::new(),
                     serie: titulo.contains(" · "),
@@ -1827,7 +2050,7 @@ fn filas_na_tela(app: &App) -> Vec<(String, Vec<CartaoDaFila>)> {
             .enumerate()
             .filter(|(_, item)| app.generos.tem(&item.titulo, item.serie(), &app.genero))
             .map(|(indice, item)| CartaoDaFila {
-                favorito: app.favoritos_vod.iter().any(|t| *t == item.titulo),
+                favorito: app.favoritos_vod.contains(&item.titulo),
                 rotulo: item.titulo.clone(),
                 detalhe: if item.serie() { "Série".into() } else { "Filme".into() },
                 serie: item.serie(),
@@ -1946,7 +2169,7 @@ fn grade(app: &mut App, ui: &mut egui::Ui) {
                         break;
                     }
                     let item = &itens[indice];
-                    let favorito = app.favoritos_vod.iter().any(|t| *t == item.titulo);
+                    let favorito = app.favoritos_vod.contains(&item.titulo);
                     let capa = app.capa(&item.titulo, item.serie);
                     let marca = if item.serie {
                         progresso::onde_parou_na_serie(&item.titulo).map(|(_, m)| m)
@@ -2094,7 +2317,7 @@ fn grade_eventos(app: &mut App, ui: &mut egui::Ui) {
                 ui.painter().text(
                     egui::Pos2::new(rect.left() + 10.0, centro_y),
                     egui::Align2::LEFT_CENTER,
-                    &evento.horario(),
+                    evento.horario(),
                     forte(12.0),
                     Color32::from_rgb(0, 255, 0),
                 );
@@ -2222,7 +2445,7 @@ fn avisos(app: &mut App, ctx: &egui::Context) {
 
 /// Todos os comandos numa tela só.
 fn atalhos(app: &mut App, ctx: &egui::Context) {
-    let linhas: [(&str, &str); 19] = [
+    let linhas: [(&str, &str); 21] = [
         ("Espaço", "tocar ou pausar"),
         ("Seta cima / baixo", "andar pela lista"),
         ("Enter", "assistir o escolhido"),
@@ -2237,6 +2460,8 @@ fn atalhos(app: &mut App, ctx: &egui::Context) {
         ("Ctrl + F", "buscar canal"),
         ("F  ou  F11", "tela cheia"),
         ("M", "sem som"),
+        ("D", "multi tela: dois canais lado a lado"),
+        ("T", "na multi tela, trocar a tela em foco"),
         ("+  −", "volume"),
         ("H  ou  F1", "esta tela"),
         ("Esc", "voltar / fechar / sair da tela cheia"),
@@ -2373,7 +2598,7 @@ fn ficha_tela(app: &mut App, ui: &mut egui::Ui) {
                             acao = Some(AcaoDaFicha::Assistir);
                         }
                         ui.add_space(10.0);
-                        let marcado = app.favoritos_vod.iter().any(|t| *t == titulo);
+                        let marcado = app.favoritos_vod.contains(&titulo);
                         if botao_ficha(ui, if marcado { "★  Nos favoritos" } else { "☆  Favoritar" }, false).clicked() {
                             acao = Some(AcaoDaFicha::Favoritar);
                         }

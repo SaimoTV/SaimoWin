@@ -19,6 +19,21 @@ em todas as telas, lista de canais com seções em chips e número do canal, e o
 acervo sobre a imagem de fundo do app (`assets/fundo.jpg`). Filmes e Séries
 abrem com a fileira "Em alta" e a grade vem dos lançamentos para trás.
 
+## Novidades da 2.1.2
+
+- **Multi tela**: dois canais ao vivo lado a lado (botão da barra ou tecla D).
+  A tela em foco tem a borda colorida, o som, a lista e o teclado; clicar na
+  outra (ou T) troca. Cada tela troca de fonte sozinha quando a dela cai. Cada
+  mpv desenha num framebuffer próprio, copiado para a metade dele da janela.
+- **Acervo leve**: a grade e as fileiras são montadas uma vez e guardadas até
+  algo mudar (antes, filtrar e ordenar trinta mil títulos a cada quadro);
+  as fileiras do Início só desenham os cartões à vista; as capas baixam por
+  seis baixadores, a mais recente primeiro, em vez de uma thread por capa.
+- Abrir filmes, séries ou qualquer seção do acervo para o que está tocando;
+  voltar ao "Ao vivo" retoma o canal.
+- Ir a Animes ou Doramas e voltar a Séries não deixa mais a série esperando
+  para abrir; as coleções ficam guardadas e não são baixadas de novo.
+
 ## Novidades da 2.0
 
 - **Legendas do OpenSubtitles** em filmes e séries (pt-BR, pt-PT, inglês, espanhol), com
@@ -68,7 +83,7 @@ Para ver as telas no Mac sem o mpv: `SAIMO_DEMO=1 SAIMO_ABA=filmes cargo run`.
 
 egui/eframe 0.36 (os painéis agora são desenhados dentro do `Ui` que o
 `eframe::App::ui` recebe), ureq 3 para a rede e libloading 0.9 para carregar a
-libmpv. Compila sem nenhum aviso.
+libmpv. Compila sem nenhum aviso, e o `cargo clippy` também passa limpo.
 
 ## Montar o pacote
 

@@ -209,10 +209,9 @@ pub fn colecao(tipo: &str) -> Vec<(Serie, Vec<Episodio>)> {
     }
     let nome = format!("redeflix/links-{tipo}.txt");
     let local = pasta().join(&nome);
-    let texto = crate::rede::texto(&format!("{BASE}{nome}")).map(|texto| {
+    let texto = crate::rede::texto(&format!("{BASE}{nome}")).inspect(|texto| {
         if let Some(pai) = local.parent() { let _ = std::fs::create_dir_all(pai); }
-        let _ = std::fs::write(&local, &texto);
-        texto
+        let _ = std::fs::write(&local, texto);
     }).or_else(|| std::fs::read_to_string(&local).ok());
     let Some(texto) = texto else {
         return Vec::new();
