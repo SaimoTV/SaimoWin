@@ -78,7 +78,14 @@ pub fn indice() -> Vec<Gaveta> {
         // Bases novas invalidam as fatias guardadas: elas apontam por número.
         let marca = pasta().join("bases.txt");
         let atual = bases.join("\n");
-        if std::fs::read_to_string(&marca).map(|a| a != atual).unwrap_or(false) {
+        let bases_mudaram = std::fs::read_to_string(&marca).map(|a| a != atual).unwrap_or(false);
+        // O índice muda a cada atualização do acervo (as contagens de cada
+        // letra): as fatias e as fichas guardadas são de antes, e sem isto o
+        // título novo nunca aparecia, nem a capa dele.
+        let indice_mudou = std::fs::read_to_string(pasta().join("indice.txt"))
+            .map(|a| a != texto)
+            .unwrap_or(false);
+        if bases_mudaram || indice_mudou {
             limpar_fatias();
         }
         let _ = std::fs::write(&marca, &atual);
