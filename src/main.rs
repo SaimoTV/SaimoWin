@@ -58,7 +58,8 @@ fn main() -> eframe::Result<()> {
 enum Recado {
     Catalogo(Vec<Canal>),
     Restritos(Vec<Canal>),
-    Eventos(Vec<eventos::Evento>),
+    /// A agenda com os placares; `None` quando a agenda não veio.
+    Eventos(Option<Vec<eventos::Jogo>>),
     Logo(String, egui::ColorImage),
     /// O pedido da imagem saiu da fila antes de ser baixado: pode ser pedido de novo.
     LogoEsquecido(String),
@@ -125,6 +126,9 @@ pub struct ItemNaTela {
 /// Quantas capas grandes ficam na memória: bem mais que as de uma tela
 /// cheia, e ainda assim uns 200 MB no máximo.
 const MAXIMO_DE_CAPAS: usize = 280;
+
+/// De quanto em quanto tempo a tela de Eventos busca a agenda de novo.
+const ATUALIZAR_EVENTOS: Duration = Duration::from_secs(60);
 
 /// Para onde o "Assistir" da ficha leva.
 ///
@@ -286,8 +290,13 @@ struct App {
     pub perfil: Option<ficha::Perfil>,
     pub filmografia: Vec<ficha::Trabalho>,
     pub filmografia_carregando: bool,
-    pub eventos: Vec<eventos::Evento>,
+    pub eventos: Vec<eventos::Jogo>,
     pub eventos_carregados: bool,
+    /// A última busca da agenda falhou: a tela diz, e tenta de novo.
+    pub eventos_erro: bool,
+    /// Quando a agenda foi pedida da última vez, e se ainda está a caminho.
+    eventos_pedidos: Option<Instant>,
+    buscando_eventos: bool,
     /// Sobe a cada recado com dados novos (acervo, letra, gêneros, fileiras):
     /// é parte da chave dos caches da grade e das fileiras.
     pub versao_dados: u64,
@@ -482,6 +491,9 @@ impl App {
             filmografia_carregando: false,
             eventos: Vec::new(),
             eventos_carregados: false,
+            eventos_erro: false,
+            eventos_pedidos: None,
+            buscando_eventos: false,
             versao_dados: 0,
             cache_itens: std::cell::RefCell::new(None),
             fila_de_imagens: std::sync::Arc::new(FilaDeImagens::default()),
@@ -1199,9 +1211,14 @@ impl App {
                 }
                 Recado::Catalogo(lista) => self.trocar_lista(lista, false),
                 Recado::Restritos(lista) => self.trocar_lista(lista, true),
-                Recado::Eventos(eventos) => {
-                    self.eventos = eventos;
+                Recado::Eventos(lidos) => {
+                    self.buscando_eventos = false;
                     self.eventos_carregados = true;
+                    // Falha de rede não apaga a agenda que já estava na tela.
+                    self.eventos_erro = lidos.is_none();
+                    if let Some(jogos) = lidos {
+                        self.eventos = jogos;
+                    }
                 }
                 Recado::Logo(url, imagem) => {
                     let textura = ctx.load_texture(&url, imagem, egui::TextureOptions::LINEAR);
@@ -1540,6 +1557,7 @@ impl App {
                         Aba::Filmes => Aba::Series,
                         Aba::Series => Aba::Animes,
                         Aba::Animes => Aba::Doramas,
+                        Aba::Doramas => Aba::Eventos,
                         _ => Aba::Canais,
                     };
                     self.abrir_secao(proxima);
@@ -1658,6 +1676,10 @@ impl App {
     fn tecla_no_acervo(&mut self, key: egui::Key) {
         if self.aba == Aba::Inicio {
             self.tecla_nas_fileiras(key);
+            return;
+        }
+        if self.aba == Aba::Eventos {
+            self.tecla_nos_eventos(key);
             return;
         }
         let colunas = self.colunas_vod.max(1);
@@ -1895,6 +1917,79 @@ impl App {
         }
     }
 
+    // MARK: - Eventos
+
+    /// Com a tela de Eventos aberta, a agenda é buscada na hora e de novo a
+    /// cada minuto: o placar anda.
+    fn cuidar_dos_eventos(&mut self, ctx: &egui::Context) {
+        if self.aba != Aba::Eventos {
+            return;
+        }
+        let falta = self
+            .eventos_pedidos
+            .map(|quando| ATUALIZAR_EVENTOS.saturating_sub(quando.elapsed()))
+            .unwrap_or(Duration::ZERO);
+        // Sem isto, a próxima busca (e a troca de grupo de quem começou) só
+        // aconteceria no próximo movimento do mouse.
+        ctx.request_repaint_after(falta.max(Duration::from_secs(1)));
+        if !falta.is_zero() || self.buscando_eventos {
+            return;
+        }
+        // Canal adulto não entra na agenda.
+        let canais: Vec<(String, Option<String>)> = self
+            .canais
+            .iter()
+            .filter(|c| c.secao() != "Adulto")
+            .map(|c| (c.nome.clone(), c.logo.clone()))
+            .collect();
+        // A lista de canais ainda não chegou: sem ela não há jogo para mostrar.
+        if canais.is_empty() {
+            return;
+        }
+        self.eventos_pedidos = Some(Instant::now());
+        self.buscando_eventos = true;
+        let emissor = self.emissor.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = emissor.send(Recado::Eventos(eventos::buscar(&canais)));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Os jogos da tela de Eventos, na ordem em que aparecem.
+    pub fn jogos_na_tela(&self) -> Vec<(usize, Vec<eventos::Jogo>)> {
+        eventos::agrupar(&self.eventos, eventos::agora(), &self.busca_vod)
+    }
+
+    fn tecla_nos_eventos(&mut self, key: egui::Key) {
+        let jogos: Vec<eventos::Jogo> = self.jogos_na_tela().into_iter().flat_map(|(_, l)| l).collect();
+        let total = jogos.len();
+        let colunas = self.colunas_vod.max(1);
+        match key {
+            egui::Key::ArrowRight => self.foco_vod = (self.foco_vod + 1).min(total.saturating_sub(1)),
+            egui::Key::ArrowLeft => self.foco_vod = self.foco_vod.saturating_sub(1),
+            egui::Key::ArrowDown => self.foco_vod = (self.foco_vod + colunas).min(total.saturating_sub(1)),
+            egui::Key::ArrowUp => self.foco_vod = self.foco_vod.saturating_sub(colunas),
+            egui::Key::Enter => {
+                if let Some(jogo) = jogos.get(self.foco_vod) {
+                    self.abrir_jogo(&jogo.canal);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// O cartão do jogo abre o canal ao vivo, como a lista de canais.
+    pub fn abrir_jogo(&mut self, canal: &str) {
+        let Some(indice) = self.canais.iter().position(|c| c.nome == canal) else {
+            self.aviso = Some((format!("{canal} não está na lista agora"), Instant::now()));
+            return;
+        };
+        self.foco = indice;
+        self.tocar(indice, 0, true);
+        self.abrir_secao(Aba::Canais);
+    }
+
     // MARK: - Comandos da barra
 
     pub fn mostrar_controles(&mut self) {
@@ -2044,16 +2139,8 @@ impl App {
             return;
         }
         if aba == Aba::Eventos {
-            if !self.eventos_carregados {
-                let emissor = self.emissor.clone();
-                std::thread::spawn(move || {
-                    if let Some(eventos) = eventos::baixar() {
-                        let _ = emissor.send(Recado::Eventos(eventos));
-                    } else {
-                        let _ = emissor.send(Recado::Eventos(Vec::new()));
-                    }
-                });
-            }
+            // Volta para a tela: a agenda é buscada de novo na hora.
+            self.eventos_pedidos = None;
             return;
         }
         if aba != Aba::Canais && self.filmes.is_empty() && self.series.is_empty() {
@@ -2271,7 +2358,7 @@ fn caminho_do_mpv() -> std::path::PathBuf {
 
 /// Conferência visual sem depender de quem está na frente da tela:
 /// `SAIMO_FOTO=arquivo.png` salva a própria janela depois de alguns segundos e
-/// fecha. `SAIMO_FOTO_TELA` escolhe o que mostrar (filmes, series, guia,
+/// fecha. `SAIMO_FOTO_TELA` escolhe o que mostrar (filmes, series, eventos, guia,
 /// atalhos). Não faz nada sem a variável.
 fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
     let Ok(destino) = std::env::var("SAIMO_FOTO") else { return };
@@ -2286,6 +2373,7 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
             "inicio" => app.abrir_secao(Aba::Inicio),
             "filmes" => app.abrir_secao(Aba::Filmes),
             "series" => app.abrir_secao(Aba::Series),
+            "eventos" => app.abrir_secao(Aba::Eventos),
             "guia" => app.guia_aberto = true,
             "atalhos" => app.ajuda_aberta = true,
             _ => {}
@@ -2339,6 +2427,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
         self.cuidar_dos_recados(ctx);
+        self.cuidar_dos_eventos(ctx);
         self.cuidar_do_mpv(ctx);
         self.teclado(ctx);
         self.baixar_logos_pendentes();

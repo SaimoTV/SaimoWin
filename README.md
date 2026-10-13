@@ -14,7 +14,7 @@ programa avisa quando há versão nova.
 ## Visual
 
 Mesma identidade da TV Box: azul-marinho com acento ciano, menu do topo com
-todas as seções (Início, Ao vivo, Filmes, Séries, Animes, Doramas, Favoritos)
+todas as seções (Início, Ao vivo, Eventos, Filmes, Séries, Animes, Doramas, Favoritos)
 em todas as telas, lista de canais com seções em chips e número do canal, e o
 acervo sobre a imagem de fundo do app (`assets/fundo.jpg`). Filmes e Séries
 abrem com a fileira "Em alta" e a grade vem dos lançamentos para trás.
@@ -78,6 +78,7 @@ Para ver as telas no Mac sem o mpv: `SAIMO_DEMO=1 SAIMO_ABA=filmes cargo run`.
 | `src/pulos.rs` | TheIntroDB: abertura, recapitulação e créditos |
 | `src/legendas.rs` | OpenSubtitles pelo id do TMDB (via `vod/imdb/`) |
 | `src/vod.rs`, `src/progresso.rs` | acervo e onde cada título parou |
+| `src/eventos.rs` | agenda da embedtv com os placares da ESPN |
 
 ## Versões
 
@@ -115,6 +116,29 @@ cargo check --target x86_64-pc-windows-gnu   # confere o alvo de verdade
 
 `SAIMO_MPV` aponta para outra biblioteca do mpv e `SAIMO_SEM_TELEMETRIA=1`
 impede que o teste vire aparelho no painel.
+
+## Eventos
+
+A mesma tela de Eventos da TV Box e do celular (menu do topo ou Tab depois de
+Doramas). Duas fontes, buscadas juntas fora da thread do desenho: a agenda da
+embedtv diz em que canal cada jogo passa, e os placares da ESPN (23 ligas)
+dizem se já começou, o placar e o tempo de jogo, e trazem escudos melhores.
+
+- Só entra jogo cujo canal está na lista (o fim do endereço do player, sem
+  hífen, contra o nome do canal sem espaço; igual primeiro, depois "contém").
+  Canal adulto fica de fora; jogo sem canal ou encerrado sai.
+- O jogo da ESPN é o dos mesmos times, em qualquer ordem (nome sem acento e sem
+  siglas como FC, EC, SP), começando a menos de quatro horas.
+- Escudos e logos do 365scores são pedidos em 256 px e qualidade máxima, em vez
+  dos 24/34 px borrados que a agenda manda.
+- Grupos: Ao vivo agora, Começa em breve (até 2 h), Hoje mais tarde, Amanhã e
+  Próximos dias, com o resumo "N jogos nos canais da lista · M ao vivo".
+- O cartão mostra a liga, o selo "AO VIVO" com o tempo de jogo (ou "21:30",
+  "amanhã 16:00", "sáb 16:00"), os escudos (a inicial quando falta), o placar
+  ou o X, e o canal. Clique ou Enter abre o canal ao vivo.
+- Com a tela aberta, a agenda é buscada de novo a cada minuto.
+
+Para conferir contra a rede: `cargo test agenda_com -- --ignored --nocapture`.
 
 ## Guia e acervo
 

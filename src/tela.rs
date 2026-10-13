@@ -163,6 +163,7 @@ enum Icone {
     Voltar,
     Fechar,
     MultiTela,
+    Relogio,
 }
 
 fn pintar_icone(pintor: &egui::Painter, icone: Icone, centro: Pos2, tamanho: f32, cor: Color32) {
@@ -274,6 +275,11 @@ fn pintar_icone(pintor: &egui::Painter, icone: Icone, centro: Pos2, tamanho: f32
         Icone::Fechar => {
             pintor.line_segment([p(-0.6, -0.6), p(0.6, 0.6)], traco);
             pintor.line_segment([p(-0.6, 0.6), p(0.6, -0.6)], traco);
+        }
+        Icone::Relogio => {
+            pintor.circle_stroke(centro, s * 0.85, traco);
+            pintor.line_segment([p(0.0, 0.0), p(0.0, -0.5)], traco);
+            pintor.line_segment([p(0.0, 0.0), p(0.38, 0.2)], traco);
         }
     }
 }
@@ -541,6 +547,7 @@ fn abas_do_topo(app: &App) -> Vec<(Aba, &'static str)> {
     let mut abas = vec![
         (Aba::Inicio, "Início"),
         (Aba::Canais, "Ao vivo"),
+        (Aba::Eventos, "Eventos"),
         (Aba::Filmes, "Filmes"),
         (Aba::Series, "Séries"),
         (Aba::Animes, "Animes"),
@@ -1695,7 +1702,7 @@ fn acervo(app: &mut App, ui_pai: &mut egui::Ui) {
             // A régua de gêneros, logo abaixo das letras. Só existe depois
             // que o arquivo publicado chega: oferecer um filtro que devolve
             // vazio é pior que não oferecer.
-            if !app.generos.todos.is_empty() {
+            if !app.generos.todos.is_empty() && app.aba != Aba::Eventos {
                 ui.add_space(6.0);
                 let mut escolhido: Option<String> = None;
                 egui::ScrollArea::horizontal().id_salt("generos").show(ui, |ui| {
@@ -1717,8 +1724,13 @@ fn acervo(app: &mut App, ui_pai: &mut egui::Ui) {
                 }
             }
             ui.add_space(6.0);
+            let dica = if app.aba == Aba::Eventos {
+                "Setas escolhem · Enter abre o canal do jogo · a agenda se atualiza a cada minuto"
+            } else {
+                "Setas escolhem · Enter abre · I mostra a ficha · S favorita · botão direito também favorita"
+            };
             ui.label(
-                egui::RichText::new("Setas escolhem · Enter abre · I mostra a ficha · S favorita · botão direito também favorita")
+                egui::RichText::new(dica)
                     .font(normal(11.0))
                     .color(TERCIARIO),
             );
@@ -2273,77 +2285,190 @@ fn grade_eventos(app: &mut App, ui: &mut egui::Ui) {
     if !app.eventos_carregados {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(egui::RichText::new("Buscando eventos…").color(SECUNDARIO));
+            ui.label(egui::RichText::new("Buscando a agenda e os placares…").color(SECUNDARIO));
         });
         return;
     }
-    if app.eventos.is_empty() {
-        ui.label(egui::RichText::new("Nenhum evento encontrado.").color(SECUNDARIO));
+    let agora = crate::eventos::agora();
+    let grupos = app.jogos_na_tela();
+    ui.label(egui::RichText::new(crate::eventos::resumo(&grupos)).font(normal(13.0)).color(SECUNDARIO));
+    ui.add_space(8.0);
+    if grupos.is_empty() {
+        let texto = if app.eventos_erro {
+            "Não deu para carregar a agenda agora. Tentando de novo em um minuto."
+        } else if !app.busca_vod.trim().is_empty() {
+            "Nenhum jogo com esse nome."
+        } else {
+            "Nenhum jogo nos canais da lista agora. A agenda se atualiza sozinha."
+        };
+        ui.label(egui::RichText::new(texto).color(SECUNDARIO));
         return;
     }
 
-    let foco = app.foco_vod;
-    let colunas = (ui.available_width() / 320.0).max(1.0) as usize;
-    app.colunas_vod = colunas;
-
-    let mut abrir_evento = None;
+    let total: usize = grupos.iter().map(|(_, l)| l.len()).sum();
+    let foco = app.foco_vod.min(total - 1);
+    let rolar = ui.input(|i| {
+        i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp)
+            || i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowRight)
+    });
+    let espaco = 16.0;
+    let mut abrir: Option<String> = None;
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        egui::Grid::new("grade_eventos").num_columns(colunas).spacing(egui::vec2(16.0, 16.0)).show(ui, |ui| {
-            for (posicao, evento) in app.eventos.iter().enumerate() {
-                let largura = (ui.available_width() - ((colunas - 1) as f32 * 16.0)) / colunas as f32;
-                let altura = 80.0;
-                let (rect, resposta) = ui.allocate_exact_size(egui::vec2(largura, altura), egui::Sense::click());
-
-                let fundo = if posicao == foco {
-                    AZUL.gamma_multiply(0.35)
-                } else if resposta.hovered() {
-                    Color32::from_white_alpha(20)
-                } else {
-                    Color32::from_white_alpha(8)
-                };
-
-                ui.painter().rect_filled(rect, 8.0, fundo);
-                let centro_y = rect.center().y;
-
-                ui.painter().text(
-                    egui::Pos2::new(rect.left() + 10.0, centro_y - 20.0),
-                    egui::Align2::LEFT_CENTER,
-                    &evento.title,
-                    forte(14.0),
-                    TEXTO,
-                );
-
-                ui.painter().text(
-                    egui::Pos2::new(rect.left() + 10.0, centro_y),
-                    egui::Align2::LEFT_CENTER,
-                    evento.horario(),
-                    forte(12.0),
-                    Color32::from_rgb(0, 255, 0),
-                );
-
-                ui.painter().text(
-                    egui::Pos2::new(rect.left() + 10.0, centro_y + 20.0),
-                    egui::Align2::LEFT_CENTER,
-                    &evento.league.name,
-                    normal(12.0),
-                    SECUNDARIO,
-                );
-
-                if resposta.clicked() || (posicao == foco && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                    abrir_evento = Some(evento.clone());
+        let colunas = (((ui.available_width() + espaco) / (340.0 + espaco)).floor() as usize).max(1);
+        app.colunas_vod = colunas;
+        let largura = (ui.available_width() - (colunas - 1) as f32 * espaco) / colunas as f32;
+        // A posição do cartão contando todos os grupos: é a do foco do teclado.
+        let mut posicao = 0;
+        for (grupo, jogos) in &grupos {
+            ui.horizontal(|ui| {
+                if *grupo == 0 {
+                    let (ponto, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
+                    ui.painter().circle_filled(ponto.center(), 4.5, VERMELHO);
                 }
-
-                if (posicao + 1) % colunas == 0 {
-                    ui.end_row();
-                }
+                ui.label(egui::RichText::new(crate::eventos::GRUPOS[*grupo]).font(forte(16.0)).color(TEXTO));
+            });
+            ui.add_space(6.0);
+            for linha in jogos.chunks(colunas) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = espaco;
+                    for jogo in linha {
+                        let resposta = cartao_do_jogo(app, ui, jogo, agora, largura, posicao == foco);
+                        if posicao == foco && rolar {
+                            resposta.scroll_to_me(None);
+                        }
+                        if resposta.clicked() {
+                            app.foco_vod = posicao;
+                            abrir = Some(jogo.canal.clone());
+                        }
+                        posicao += 1;
+                    }
+                });
+                ui.add_space(espaco);
             }
-        });
+            ui.add_space(6.0);
+        }
     });
 
-    if let Some(evento) = abrir_evento {
-        app.tocar_vod(evento.title.clone(), evento.players.clone(), 0, true);
+    if let Some(canal) = abrir {
+        app.abrir_jogo(&canal);
     }
+}
+
+/// O cartão de um jogo: a liga e quando (ou o tempo de jogo), os dois times
+/// com o placar entre eles e, embaixo, o canal onde passa.
+fn cartao_do_jogo(app: &mut App, ui: &mut egui::Ui, jogo: &crate::eventos::Jogo, agora: i64, largura: f32, focado: bool) -> egui::Response {
+    let (rect, resposta) = ui.allocate_exact_size(egui::vec2(largura, 176.0), Sense::click());
+    let vivo = jogo.ao_vivo(agora);
+    let pintor = ui.painter().clone();
+    let fundo = if resposta.hovered() { Color32::from_white_alpha(20) } else { Color32::from_white_alpha(10) };
+    pintor.rect_filled(rect, 10.0, fundo);
+    if focado {
+        pintor.rect_stroke(rect.expand(2.0), 12.0, Stroke::new(2.5, AZUL), egui::StrokeKind::Middle);
+    } else if vivo {
+        pintor.rect_stroke(rect, 10.0, Stroke::new(1.5, VERMELHO.gamma_multiply(0.7)), egui::StrokeKind::Inside);
+    }
+    let esquerda = rect.left() + 14.0;
+    let direita = rect.right() - 14.0;
+
+    // Topo: o selo do lado direito primeiro, para a liga saber quanto espaço sobra.
+    let y = rect.top() + 20.0;
+    let selo = if vivo {
+        ["AO VIVO", jogo.tempo.as_str()].iter().filter(|t| !t.is_empty()).copied().collect::<Vec<_>>().join("  ")
+    } else {
+        crate::eventos::quando(jogo.inicio, agora)
+    };
+    let galeria = pintor.layout_no_wrap(selo, forte(11.0), TEXTO);
+    let caixa = Rect::from_min_max(
+        Pos2::new(direita - galeria.size().x - 30.0, y - 11.0),
+        Pos2::new(direita, y + 11.0),
+    );
+    pintor.rect_filled(caixa, 11.0, if vivo { VERMELHO } else { Color32::from_white_alpha(16) });
+    let marca = Pos2::new(caixa.left() + 13.0, y);
+    if vivo {
+        pintor.circle_filled(marca, 3.5, TEXTO);
+    } else {
+        pintar_icone(&pintor, Icone::Relogio, marca, 12.0, SECUNDARIO);
+    }
+    pintor.galley(Pos2::new(caixa.left() + 22.0, y - galeria.size().y / 2.0), galeria, TEXTO);
+
+    let mut x = esquerda;
+    if !jogo.liga_logo.is_empty() {
+        if let Some(textura) = app.imagem(&jogo.liga_logo, 64) {
+            pintar_contido(ui, &textura, Rect::from_center_size(Pos2::new(x + 9.0, y), egui::vec2(18.0, 18.0)));
+        }
+        x += 24.0;
+    }
+    texto_numa_linha(&pintor, &jogo.liga, normal(12.0), SECUNDARIO, Pos2::new(x, y), caixa.left() - 10.0 - x);
+
+    // Os times, cada um num terço, com o placar (ou o X) no meio.
+    let centro_y = rect.top() + 70.0;
+    for (nome, logo, cx) in [
+        (&jogo.casa, &jogo.casa_logo, rect.left() + largura * 0.22),
+        (&jogo.fora, &jogo.fora_logo, rect.right() - largura * 0.22),
+    ] {
+        let area = Rect::from_center_size(Pos2::new(cx, centro_y), egui::vec2(52.0, 52.0));
+        match (!logo.is_empty()).then(|| app.imagem(logo, 128)).flatten() {
+            Some(textura) => pintar_contido(ui, &textura, area),
+            None => {
+                pintor.circle_filled(area.center(), 24.0, Color32::from_white_alpha(22));
+                let inicial = nome.chars().next().unwrap_or(' ').to_uppercase().to_string();
+                pintor.text(area.center(), Align2::CENTER_CENTER, inicial, forte(20.0), SECUNDARIO);
+            }
+        }
+        let mut job = egui::text::LayoutJob::simple(nome.to_string(), forte(12.5), TEXTO, largura * 0.4);
+        job.wrap.max_rows = 2;
+        job.wrap.break_anywhere = false;
+        job.wrap.overflow_character = Some('…');
+        job.halign = egui::Align::Center;
+        let galeria = pintor.layout_job(job);
+        pintor.galley(Pos2::new(cx, centro_y + 32.0), galeria, TEXTO);
+    }
+    if jogo.placar.is_empty() {
+        pintor.text(Pos2::new(rect.center().x, centro_y), Align2::CENTER_CENTER, "X", forte(18.0), TERCIARIO);
+    } else {
+        let cor = if vivo { AZUL } else { TEXTO };
+        pintor.text(Pos2::new(rect.center().x, centro_y), Align2::CENTER_CENTER, &jogo.placar, forte(22.0), cor);
+    }
+
+    // Embaixo: o canal, e o convite para assistir.
+    let linha_y = rect.bottom() - 40.0;
+    pintor.line_segment([Pos2::new(esquerda, linha_y), Pos2::new(direita, linha_y)], Stroke::new(1.0, Color32::from_white_alpha(14)));
+    let y = rect.bottom() - 20.0;
+    let mut x = esquerda;
+    if let Some(textura) = jogo.canal_logo.as_deref().and_then(|url| app.imagem(url, 96)) {
+        pintar_contido(ui, &textura, Rect::from_min_size(Pos2::new(x, y - 11.0), egui::vec2(34.0, 22.0)));
+        x += 42.0;
+    }
+    let pilula = Rect::from_min_max(Pos2::new(direita - 84.0, y - 12.0), Pos2::new(direita, y + 12.0));
+    texto_numa_linha(&pintor, &jogo.canal, forte(12.5), TEXTO, Pos2::new(x, y), pilula.left() - 10.0 - x);
+    pintor.rect_filled(pilula, 12.0, if focado || resposta.hovered() { AZUL } else { AZUL.gamma_multiply(0.8) });
+    pintar_icone(&pintor, Icone::Tocar, Pos2::new(pilula.left() + 16.0, y), 10.0, PAINEL);
+    pintor.text(Pos2::new(pilula.left() + 27.0, y), Align2::LEFT_CENTER, "Assistir", forte(12.0), PAINEL);
+
+    resposta
+        .on_hover_text(format!("{} x {}, no canal {} · Enter assiste", jogo.casa, jogo.fora, jogo.canal))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Uma linha de texto que acaba em reticências se não couber em `largura`.
+fn texto_numa_linha(pintor: &egui::Painter, texto: &str, fonte: FontId, cor: Color32, esquerda_meio: Pos2, largura: f32) {
+    let mut job = egui::text::LayoutJob::simple(texto.to_string(), fonte, cor, largura.max(10.0));
+    job.wrap.max_rows = 1;
+    job.wrap.overflow_character = Some('…');
+    let galeria = pintor.layout_job(job);
+    pintor.galley(Pos2::new(esquerda_meio.x, esquerda_meio.y - galeria.size().y / 2.0), galeria, cor);
+}
+
+/// A imagem inteira dentro de `area`, sem esticar: escudo e logo não são quadrados.
+fn pintar_contido(ui: &egui::Ui, textura: &egui::TextureHandle, area: Rect) {
+    let tamanho = textura.size_vec2();
+    if tamanho.x <= 0.0 || tamanho.y <= 0.0 {
+        return;
+    }
+    let escala = (area.width() / tamanho.x).min(area.height() / tamanho.y);
+    let alvo = Rect::from_center_size(area.center(), tamanho * escala);
+    egui::Image::new(textura).fit_to_exact_size(alvo.size()).paint_at(ui, alvo);
 }
 
 fn episodios(app: &mut App, ui: &mut egui::Ui, serie: &vod::Serie) {
