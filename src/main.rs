@@ -19,6 +19,7 @@ mod mpv;
 mod progresso;
 mod pulos;
 mod legendas;
+mod midia;
 mod bateria;
 mod rede;
 mod telemetria;
@@ -326,6 +327,8 @@ struct App {
     /// Sem isto, ir a Animes e voltar a Séries deixava a lista da coleção no
     /// lugar, e abrir uma série ficava esperando uma letra que nunca vinha.
     series_da_letra: Option<Vec<vod::Serie>>,
+    /// O quadro de "tocando agora" do Windows.
+    midia: midia::Midia,
 }
 
 /// A segunda tela da multi tela: outro mpv, outro canal, sem som.
@@ -503,6 +506,7 @@ impl App {
             mpv_reserva: None,
             colecoes: HashMap::new(),
             series_da_letra: None,
+            midia: midia::Midia::nova(cc),
         };
         app.ligar_baixadores_de_imagem(&cc.egui_ctx);
         app.reordenar();
@@ -987,22 +991,63 @@ impl App {
     /// igual. Quem não tem ficha fica sem capa, e a tela põe uma marca no
     /// lugar.
     fn capa(&mut self, titulo: &str, serie: bool) -> Option<egui::TextureHandle> {
-        // A ficha publicada primeiro; sem ela, a capa que veio com a fileira
-        // de destaque (animes e doramas quase nunca têm ficha).
-        let endereco = match self.generos.capa(titulo, serie) {
-            Some(url) => url.to_string(),
-            None => self
-                .filas
-                .iter()
-                .flat_map(|f| &f.itens)
-                .find(|i| i.titulo == titulo && i.serie() == serie && !i.capa.is_empty())?
-                .capa
-                .clone(),
-        };
+        let endereco = self.endereco_da_capa(titulo, serie)?;
         // 342 pixels, o tamanho que o arquivo de fichas publica: a capa era
         // reduzida a 96, o tamanho das logos de canal, e ficava borrada num
         // cartão de 150x225 — pior ainda em tela com escala de 150%.
         self.imagem(&endereco, 342)
+    }
+
+    /// A ficha publicada primeiro; sem ela, a capa que veio com a fileira de
+    /// destaque (animes e doramas quase nunca têm ficha).
+    fn endereco_da_capa(&self, titulo: &str, serie: bool) -> Option<String> {
+        match self.generos.capa(titulo, serie) {
+            Some(url) => Some(url.to_string()),
+            None => self
+                .filas
+                .iter()
+                .flat_map(|f| &f.itens)
+                .find(|i| i.titulo == titulo && i.serie() == serie && !i.capa.is_empty())
+                .map(|i| i.capa.clone()),
+        }
+    }
+
+    /// O quadro de "tocando agora" do Windows: canal com a logo e o programa
+    /// do guia, filme e série com a capa. Os botões dele só pausam filme e
+    /// série — o `alternar_pausa` já recusa pausar o ao vivo.
+    fn cuidar_da_midia(&mut self) {
+        for botao in self.midia.botoes() {
+            let querer_pausa = botao == midia::Botao::Pausar;
+            if self.tocando_vod.is_some() && self.pausado != querer_pausa {
+                self.alternar_pausa();
+            }
+        }
+        let canal = self.tocando.as_ref().and_then(|t| self.canais.get(t.canal));
+        let titulo = match (self.tocando_vod.as_ref(), canal) {
+            (Some(t), _) => Some(t.titulo.as_str()),
+            (None, Some(c)) => Some(c.nome.as_str()),
+            _ => None,
+        };
+        if self.midia.em_dia(titulo, self.pausado) {
+            return;
+        }
+        let no_ar = match (self.tocando_vod.as_ref(), canal) {
+            (Some(t), _) => {
+                let imagem = match t.episodio.as_ref() {
+                    Some(e) => self.endereco_da_capa(&e.serie, true),
+                    None => self.endereco_da_capa(&t.titulo, false),
+                };
+                Some(midia::NoAr { titulo: t.titulo.clone(), subtitulo: "Saimo TV".into(), imagem, ao_vivo: false })
+            }
+            (None, Some(c)) => Some(midia::NoAr {
+                titulo: c.nome.clone(),
+                subtitulo: epg::agora_e_depois(&c.nome).map(|(p, _)| p.titulo).unwrap_or_else(|| "Saimo TV".into()),
+                imagem: c.logo.clone(),
+                ao_vivo: true,
+            }),
+            _ => None,
+        };
+        self.midia.mostrar(no_ar, self.pausado);
     }
 
     fn proxima_fonte_vod(&mut self, motivo: &str) {
@@ -2429,6 +2474,7 @@ impl eframe::App for App {
         self.cuidar_dos_recados(ctx);
         self.cuidar_dos_eventos(ctx);
         self.cuidar_do_mpv(ctx);
+        self.cuidar_da_midia();
         self.teclado(ctx);
         self.baixar_logos_pendentes();
 

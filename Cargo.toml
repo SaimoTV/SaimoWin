@@ -14,6 +14,11 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 serde = { version = "1.0.229", features = ["derive"] }
 chrono = "0.4.45"
 
+# Os controles de mídia do Windows (o quadro de "tocando agora" do sistema).
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+windows = { version = "0.62", features = ["Foundation", "Media", "Storage_Streams", "Win32_Foundation", "Win32_System_WinRT"] }
+
 [profile.release]
 opt-level = "s"
 lto = true

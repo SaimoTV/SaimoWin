@@ -271,6 +271,9 @@ impl Mpv {
             ("osc", "no"),
             ("input-default-bindings", "no"),
             ("terminal", "no"),
+            // O quadro de "tocando agora" do Windows é do app (`midia.rs`),
+            // com a logo e o nome do canal; o do mpv só saberia o endereço.
+            ("media-controls", "no"),
         ];
         for (nome, valor) in opcoes {
             let n = CString::new(nome).unwrap();
