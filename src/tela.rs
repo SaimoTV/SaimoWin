@@ -402,6 +402,44 @@ fn video(app: &mut App, ctx: &egui::Context) {
     });
 }
 
+/// A abertura cobrindo a janela: o azul-marinho e, assim que o mpv dela tem
+/// quadro, o vídeo por cima; `veu` é o azul que dissolve a marca no fim.
+pub fn abertura(ctx: &egui::Context, mpv: Option<Arc<crate::mpv::Mpv>>, veu: f32) {
+    let rect = ctx.content_rect();
+    let pintor = ctx.layer_painter(egui::LayerId::background());
+    pintor.rect_filled(rect, 0.0, marinho(1.0));
+    if let Some(mpv) = mpv {
+        pintor.add(egui::PaintCallback {
+            rect,
+            callback: Arc::new(eframe::egui_glow::CallbackFn::new(move |info, pintor| {
+                if mpv.ligar_video().is_err() {
+                    return;
+                }
+                let gl = pintor.gl();
+                let fbo = unsafe { gl.get_parameter_i32(eframe::glow::DRAW_FRAMEBUFFER_BINDING) };
+                let [largura, altura] = info.screen_size_px;
+                unsafe { estado_padrao_de_opengl(gl) };
+                mpv.desenhar(fbo, largura as i32, altura as i32);
+            })),
+        });
+    }
+    veu_da_abertura(ctx, veu);
+}
+
+/// O azul da abertura por cima de tudo, com a opacidade pedida.
+pub fn veu_da_abertura(ctx: &egui::Context, veu: f32) {
+    if veu <= 0.0 {
+        return;
+    }
+    let pintor = ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::new("veu-da-abertura")));
+    pintor.rect_filled(ctx.content_rect(), 0.0, marinho(veu));
+}
+
+fn marinho(opacidade: f32) -> Color32 {
+    let [r, g, b] = crate::abertura::MARINHO;
+    Color32::from_rgb(r, g, b).gamma_multiply(opacidade.clamp(0.0, 1.0))
+}
+
 /// As duas metades da janela na multi tela: (a em foco, a outra).
 pub fn telas_da_multi_tela(janela: Rect, foco_a_direita: bool) -> (Rect, Rect) {
     let meio = janela.center().x;

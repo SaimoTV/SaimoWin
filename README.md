@@ -19,6 +19,17 @@ em todas as telas, lista de canais com seções em chips e número do canal, e o
 acervo sobre a imagem de fundo do app (`assets/fundo.jpg`). Filmes e Séries
 abrem com a fileira "Em alta" e a grade vem dos lançamentos para trás.
 
+## Abertura
+
+Ao abrir, a marca animada (a mesma abertura aprovada, `assets/abertura.mp4`,
+1920x1080, 4,6 s) toca na janela inteira pelo mpv do app, sem som e cobrindo
+a tela, sobre o azul-marinho do fundo do vídeo; no fim a marca se dissolve no
+azul e o app aparece por baixo. Clique ou qualquer tecla pula. O vídeo vai
+dentro do executável e é gravado no Temp na primeira vez, então não há arquivo
+para o pacote esquecer; se o mpv não começar em 1,5 s a abertura sai sozinha,
+e o último canal só volta a tocar depois dela (`src/abertura.rs`).
+`SAIMO_SEM_ABERTURA=1` abre sem ela.
+
 ## Tocando agora no Windows
 
 O que está no ar aparece no quadro de mídia do Windows (junto do volume, na
@@ -81,6 +92,7 @@ Para ver as telas no Mac sem o mpv: `SAIMO_DEMO=1 SAIMO_ABA=filmes cargo run`.
 | `src/main.rs` | estado do app, teclado, troca de fonte |
 | `src/tela.rs` | desenho: vídeo no fundo, lista e letreiro por cima |
 | `src/mpv.rs` | ponte com o libmpv, carregado da DLL em tempo de execução |
+| `src/abertura.rs` | a abertura animada ao abrir o programa |
 | `src/midia.rs` | quadro de "tocando agora" do Windows: título e logo |
 | `src/catalogo.rs` | a mesma lista publicada dos outros aplicativos |
 | `src/telemetria.rs` | Saimo Monitor, plataforma `windows` |

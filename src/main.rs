@@ -9,6 +9,7 @@
 // Sem console preto atrás da janela quando alguém abre pelo Explorer.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod abertura;
 mod atualizacao;
 mod fontes_desativadas;
 mod destaques;
@@ -329,6 +330,8 @@ struct App {
     series_da_letra: Option<Vec<vod::Serie>>,
     /// O quadro de "tocando agora" do Windows.
     midia: midia::Midia,
+    /// A abertura animada, enquanto está na tela.
+    abertura: Option<abertura::Abertura>,
 }
 
 /// A segunda tela da multi tela: outro mpv, outro canal, sem som.
@@ -507,6 +510,7 @@ impl App {
             colecoes: HashMap::new(),
             series_da_letra: None,
             midia: midia::Midia::nova(cc),
+            abertura: abertura::Abertura::nova(&caminho_do_mpv()),
         };
         app.ligar_baixadores_de_imagem(&cc.egui_ctx);
         app.reordenar();
@@ -592,6 +596,11 @@ impl App {
     /// Abre no canal que estava no ar quando o programa fechou, como a TV.
     fn voltar_ao_ultimo_canal(&mut self) {
         if self.retomou_canal || self.tocando.is_some() || self.tocando_vod.is_some() || self.mpv.is_none() {
+            return;
+        }
+        // Com a abertura na frente o canal esperaria por trás dela, com som:
+        // volta quando ela sair (`cuidar_da_abertura`).
+        if self.abertura.as_ref().is_some_and(|a| a.cobrindo()) {
             return;
         }
         let Some(nome) = ler_lista("ultimo-canal.txt").into_iter().next() else {
@@ -2364,6 +2373,40 @@ impl App {
     }
 }
 
+impl App {
+    /// A abertura animada. Devolve `true` enquanto ela cobre a janela: aí o
+    /// app não é desenhado nem ouve o teclado — a tecla que pula a abertura
+    /// não pode, de quebra, trocar de canal.
+    fn cuidar_da_abertura(&mut self, ctx: &egui::Context) -> bool {
+        let Some(a) = self.abertura.as_mut() else { return false };
+        let cobria = a.cobrindo();
+        if cobria {
+            let pulou = ctx.input(|i| {
+                i.pointer.any_click()
+                    || i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))
+            });
+            if pulou {
+                a.pular();
+            }
+        }
+        let segue = a.andar();
+        let cobrindo = a.cobrindo();
+        ctx.request_repaint();
+        if cobrindo {
+            tela::abertura(ctx, a.mpv.clone().filter(|_| a.com_quadro()), a.veu());
+            return true;
+        }
+        if !segue {
+            self.abertura = None;
+        }
+        if cobria {
+            // Saiu da frente agora: o último canal, que esperava, entra.
+            self.voltar_ao_ultimo_canal();
+        }
+        false
+    }
+}
+
 /// Se o programa foi aberto de dentro do ZIP, sem descompactar.
 ///
 /// Clicando no executável dentro da janela do compactador, o Windows copia só
@@ -2484,6 +2527,10 @@ fn gravar_lista(nome: &str, itens: &[String]) {
 
 impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        if self.abertura.is_some() {
+            let [r, g, b] = abertura::MARINHO;
+            return [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0];
+        }
         [0.0, 0.0, 0.0, 1.0]
     }
 
@@ -2493,11 +2540,18 @@ impl eframe::App for App {
         self.cuidar_dos_eventos(ctx);
         self.cuidar_do_mpv(ctx);
         self.cuidar_da_midia();
+        if self.cuidar_da_abertura(ctx) {
+            self.baixar_logos_pendentes();
+            return;
+        }
         self.teclado(ctx);
         self.baixar_logos_pendentes();
 
         foto_de_teste(self, ctx);
         tela::desenhar(self, ui);
+        if let Some(a) = self.abertura.as_ref() {
+            tela::veu_da_abertura(ctx, a.veu());
+        }
 
         if self.pip
             && ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.primary_down())
