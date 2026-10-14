@@ -1,15 +1,18 @@
 //! Os jogos de hoje e dos próximos dias que passam em algum canal da lista,
 //! com a mesma lógica da tela de Eventos da TV Box e do celular.
 //!
-//! Duas fontes: a agenda da embedtv diz em que canal cada jogo passa; os
-//! placares da ESPN dizem se já começou, o placar e o tempo de jogo, e trazem
-//! escudos melhores. Só entra jogo que tem canal (sem canal não há o que
+//! Três fontes: a agenda da embedtv diz em que canal cada jogo passa; a do
+//! monitor traz os jogos dos canais de streaming (CazéTV, Disney+, Prime,
+//! Paramount+, GOAT, ge tv, N Sports, SportyNet) que a embedtv não tem, no
+//! mesmo formato e com placar; os placares da ESPN dizem se já começou, o
+//! placar e o tempo de jogo, e trazem escudos melhores. Só entra jogo que tem canal (sem canal não há o que
 //! assistir), e jogo encerrado sai.
 
 use chrono::{Datelike, Local, TimeZone};
 use serde_json::Value;
 
 const EMBED: &str = "https://embedtv.cc/api/events";
+const STREAMING: &str = "https://saimo-monitor.gabrielsaimo68.workers.dev/v1/eventos";
 const ESPN: [&str; 23] = [
     "soccer/bra.1", "soccer/bra.2", "soccer/bra.copa_do_brazil", "soccer/conmebol.libertadores",
     "soccer/conmebol.sudamericana", "soccer/uefa.champions", "soccer/uefa.europa", "soccer/eng.1",
@@ -78,9 +81,10 @@ pub fn agora() -> i64 {
 /// A agenda com os placares, só com os jogos dos `canais` (nome e logo).
 /// `None` quando a agenda não veio.
 pub fn buscar(canais: &[(String, Option<String>)]) -> Option<Vec<Jogo>> {
-    // As 24 chamadas saem juntas: em fila, a tela esperaria a soma de todas.
-    let (agenda, placares) = std::thread::scope(|escopo| {
+    // As 25 chamadas saem juntas: em fila, a tela esperaria a soma de todas.
+    let (agenda, streaming, placares) = std::thread::scope(|escopo| {
         let agenda = escopo.spawn(|| crate::rede::json(EMBED));
+        let streaming = escopo.spawn(|| crate::rede::json(STREAMING));
         let placares: Vec<_> = ESPN
             .iter()
             .map(|liga| {
@@ -90,11 +94,26 @@ pub fn buscar(canais: &[(String, Option<String>)]) -> Option<Vec<Jogo>> {
             })
             .collect();
         let placares: Vec<Value> = placares.into_iter().filter_map(|p| p.join().ok().flatten()).collect();
-        (agenda.join().ok().flatten(), placares)
+        (agenda.join().ok().flatten(), streaming.join().ok().flatten(), placares)
     });
     let agenda = agenda?;
     let espn: Vec<Placar> = placares.iter().flat_map(ler_espn).collect();
     let mut jogos = ler_agenda(&agenda, canais);
+    // Jogo do monitor que a embedtv já tem (mesmos times, começo a menos de
+    // meia hora) não entra de novo.
+    let extras: Vec<Jogo> = streaming
+        .map(|s| ler_agenda(&s, canais))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|x| {
+            !jogos.iter().any(|e| {
+                (e.inicio - x.inicio).abs() < HORA / 2
+                    && ((mesmo_time(&e.casa, &x.casa) && mesmo_time(&e.fora, &x.fora))
+                        || (mesmo_time(&e.casa, &x.fora) && mesmo_time(&e.fora, &x.casa)))
+            })
+        })
+        .collect();
+    jogos.extend(extras);
     for jogo in &mut jogos {
         // O mesmo jogo na ESPN: mesmos times (em qualquer ordem) e começo
         // a menos de quatro horas um do outro.
@@ -280,9 +299,10 @@ fn ler_agenda(agenda: &Value, canais: &[(String, Option<String>)]) -> Vec<Jogo> 
             fora,
             canal,
             canal_logo,
-            estado: String::new(),
-            placar: String::new(),
-            tempo: String::new(),
+            // Só a agenda do monitor manda o placar; a ESPN, quando acha o jogo, vale mais.
+            estado: texto(o, &["estado"]),
+            placar: texto(o, &["placar"]),
+            tempo: texto(o, &["tempo"]),
         });
     }
     jogos
