@@ -32,6 +32,9 @@ rm -rf dist/SaimoTV
 mkdir -p dist/SaimoTV
 cp target/x86_64-pc-windows-gnu/release/saimo-tv.exe "dist/SaimoTV/Saimo TV.exe"
 cp "$DLL" dist/SaimoTV/
+if [ -f "mpv/vulkan-1.dll" ]; then
+  cp "mpv/vulkan-1.dll" dist/SaimoTV/
+fi
 if [ -n "${SAIMO_ASSINAR:-}" ]; then
   "$SAIMO_ASSINAR" "dist/SaimoTV/Saimo TV.exe"
 fi
@@ -54,6 +57,11 @@ Onde ficou instalado
 Seus favoritos e o ponto onde cada filme parou ficam em %APPDATA%\\SaimoTV, e
 a desinstalação pergunta antes de apagá-los.
 
+Arquivos necessários
+  Mantenha o executável na mesma pasta dos arquivos libmpv-2.dll e vulkan-1.dll.
+  Se o Windows bloquear algum arquivo baixado, clique com botão direito nele,
+  vá em Propriedades e marque a opção "Desbloquear".
+
 O aplicativo avisa quando sai versão nova e abre o download no navegador.
 TXT
 
@@ -67,7 +75,7 @@ cd dist && zip -r SaimoTV-Windows.zip SaimoTV && cd ..
 if [ -n "${SAIMO_ASSINAR:-}" ]; then
   echo 'AVISO: O zip em si não é assinado, os arquivos dentro dele foram.'
 fi
-shasum -a 256 'dist/SaimoTV/Saimo TV.exe' dist/SaimoTV/libmpv-2.dll dist/SaimoTV-Windows.zip > dist/SHA256SUMS.txt
+shasum -a 256 dist/SaimoTV/* dist/SaimoTV-Windows.zip > dist/SHA256SUMS.txt
 
 [ -f dist/SaimoTV-Windows.zip ] || { echo "o zip não foi gerado"; exit 1; }
 echo "pronto: dist/SaimoTV-Windows.zip ($(du -h dist/SaimoTV-Windows.zip | cut -f1))"

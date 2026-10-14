@@ -40,9 +40,25 @@ def main():
                     shutil.copy2(dll, backup)
             pending = dll.with_suffix('.tmp')
             shutil.copy2(extracted, pending)
-            pending.replace(dll)
     check(dll, lock['dll_sha256'])
     print(f"mpv {lock['version']}: SHA-256 conferido")
+
+    vulkan_dll = ROOT / 'mpv/vulkan-1.dll'
+    if '--baixar' in sys.argv or not vulkan_dll.exists():
+        with tempfile.TemporaryDirectory(prefix='saimo-vulkan-') as temp:
+            archive = Path(temp) / 'vulkan.zip'
+            req = urllib.request.Request(lock['vulkan_url'], headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=120) as response, archive.open('wb') as out:
+                shutil.copyfileobj(response, out)
+            extracted = Path(temp) / 'vulkan-1.dll'
+            with extracted.open('wb') as out:
+                subprocess.run(['unzip', '-p', str(archive), 'VulkanRT-X64-1.4.363.0-Components/x64/vulkan-1.dll'], stdout=out, check=True)
+            check(extracted, lock['vulkan_dll_sha256'])
+            pending = vulkan_dll.with_suffix('.tmp')
+            shutil.copy2(extracted, pending)
+            pending.replace(vulkan_dll)
+    check(vulkan_dll, lock['vulkan_dll_sha256'])
+    print("vulkan-1.dll: SHA-256 conferido")
 
 
 if __name__ == '__main__':

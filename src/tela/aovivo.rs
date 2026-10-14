@@ -448,23 +448,41 @@ fn sem_mpv(app: &App, ui: &mut egui::Ui, area: Rect) {
     // Aberto de dentro do ZIP é o caso comum, e tem saída simples: dizer isso
     // é mais útil que anunciar que falta um arquivo que a pessoa nem conhece.
     let do_zip = crate::aberto_de_dentro_do_zip();
+    let caminho_dll = crate::caminho_do_mpv();
+    let dll_existe = caminho_dll.exists();
+
     let (titulo, recado) = if do_zip {
         (
             "Descompacte a pasta antes de abrir",
             "O Windows copiou só o programa para uma pasta temporária e deixou a libmpv-2.dll para trás. Clique com o \
              botão direito no arquivo SaimoTV-Windows.zip, escolha \"Extrair tudo\" e abra o Saimo TV.exe de dentro da \
-             pasta extraída — ou baixe o instalador, que resolve isto de uma vez.",
+             pasta extraída — ou baixe o instalador, que resolve isto de uma vez.".to_string(),
+        )
+    } else if dll_existe {
+        (
+            "Erro ao carregar o reprodutor de vídeo",
+            "O arquivo libmpv-2.dll foi encontrado na pasta, mas o Windows não conseguiu inicializá-lo.\n\n\
+             Como resolver:\n\
+             1. Desbloqueie o arquivo: clique com botão direito em libmpv-2.dll > Propriedades > marque \"Desbloquear\" e clique em OK.\n\
+             2. Driver de vídeo / Vulkan: verifique se o arquivo vulkan-1.dll está na mesma pasta ou atualize os drivers da placa de vídeo.\n\
+             3. Pacote Visual C++: instale o Microsoft Visual C++ 2015-2022 Redistributable (x64).".to_string(),
         )
     } else {
-        ("Falta o mpv", "O arquivo libmpv-2.dll precisa estar na mesma pasta do Saimo TV.exe.")
+        (
+            "Falta o mpv",
+            format!("O arquivo libmpv-2.dll precisa estar na mesma pasta do Saimo TV.exe.\nPasta atual: {}", crate::pasta_do_programa()),
+        )
     };
     let pintor = ui.painter();
-    pintor.text(area.center() - egui::vec2(0.0, 60.0), Align2::CENTER_CENTER, titulo, forte(24.0), TEXTO);
-    texto(pintor, recado, normal(15.0), SECUNDARIO, area.center() - egui::vec2(300.0, 30.0), 600.0, 6, true);
-    let pasta = crate::pasta_do_programa();
-    let detalhe = if do_zip && !pasta.is_empty() { format!("abriu daqui: {pasta}") } else { app.erro_do_mpv.clone().unwrap_or_default() };
+    pintor.text(area.center() - egui::vec2(0.0, 90.0), Align2::CENTER_CENTER, titulo, forte(22.0), TEXTO);
+    texto(pintor, &recado, normal(14.0), SECUNDARIO, area.center() - egui::vec2(320.0, 50.0), 640.0, 10, true);
+    let detalhe = if do_zip && !crate::pasta_do_programa().is_empty() {
+        format!("abriu daqui: {}", crate::pasta_do_programa())
+    } else {
+        app.erro_do_mpv.clone().unwrap_or_default()
+    };
     if !detalhe.is_empty() {
-        texto(pintor, &detalhe, normal(12.5), APAGADO, area.center() + egui::vec2(-300.0, 70.0), 600.0, 3, true);
+        texto(pintor, &format!("Detalhe técnico: {detalhe}"), normal(12.0), ACENTO, area.center() + egui::vec2(-320.0, 90.0), 640.0, 3, true);
     }
 }
 

@@ -2740,7 +2740,7 @@ pub fn pasta_do_programa() -> String {
 
 /// No Windows a biblioteca vai no pacote, ao lado do executável. No Mac (só
 /// para testar a interface antes de publicar) vale a do sistema.
-fn caminho_do_mpv() -> std::path::PathBuf {
+pub fn caminho_do_mpv() -> std::path::PathBuf {
     if let Ok(escolhido) = std::env::var("SAIMO_MPV") {
         return std::path::PathBuf::from(escolhido);
     }
