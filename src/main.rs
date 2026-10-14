@@ -2736,7 +2736,8 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
 
     let espera = std::env::var("SAIMO_FOTO_ESPERA").ok().and_then(|v| v.parse().ok()).unwrap_or(18);
     static ESCOLHIDA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if inicio.elapsed() > Duration::from_secs(3) && !ESCOLHIDA.swap(true, std::sync::atomic::Ordering::SeqCst) {
+    let antes = std::env::var("SAIMO_FOTO_ANTES").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+    if inicio.elapsed() > Duration::from_secs(antes) && !ESCOLHIDA.swap(true, std::sync::atomic::Ordering::SeqCst) {
         match std::env::var("SAIMO_FOTO_TELA").unwrap_or_default().as_str() {
             "inicio" => app.abrir_secao(Aba::Inicio),
             "ondemand" => app.abrir_secao(Aba::OnDemand),
@@ -2754,6 +2755,39 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
                 app.busca_vod = std::env::var("SAIMO_FOTO_BUSCA").unwrap_or_else(|_| "amor".into());
             }
             "ajustes" => app.abrir_secao(Aba::Ajustes),
+            "favoritos-vazio" => app.abrir_secao(Aba::Favoritos),
+            "aovivo" => app.lista_aberta = true,
+            "aovivo-sem-lista" => app.lista_aberta = false,
+            "serie" => {
+                let titulo = std::env::var("SAIMO_FOTO_TITULO").unwrap_or_else(|_| "Ted Lasso".into());
+                if let Some(a) = app.acervo.iter().find(|a| a.titulo == titulo && a.serie).cloned() {
+                    app.abrir_secao(Aba::Series);
+                    app.abrir_item(ItemNaTela { titulo: a.titulo, detalhe: a.ano, serie: true, letra: a.letra });
+                }
+            }
+            "player" => {
+                // Só a cara do player, sem vídeo: um episódio de mentira.
+                app.lista_aberta = false;
+                app.tocando_vod = Some(TocandoVod {
+                    titulo: "Ted Lasso · T1 E2".into(),
+                    urls: vec!["https://exemplo/video.m3u8".into()],
+                    fonte: 0,
+                    desde: Instant::now(),
+                    confirmado: true,
+                    episodio: Some(EpisodioTocando { serie: "Ted Lasso".into(), temporada: 1, numero: 2, versao: "dub".into(),
+                        lista: (1..=10).map(|n| vod::Episodio { temporada: 1, numero: n, versao: "dub".into(), urls: Vec::new() }).collect() }),
+                    marcas: None,
+                    legendas: Vec::new(),
+                    legenda_escolhida: None,
+                    legenda_atraso: 0.0,
+                    legenda_aviso: None,
+                    visto: (0.0, 0.0),
+                    proximo_desde: None,
+                    proximo_dispensado: false,
+                });
+                app.episodios_no_player = std::env::var("SAIMO_FOTO_EPISODIOS").is_ok();
+                app.pedir_ficha_do_destaque("Ted Lasso", true);
+            }
             "guia" => app.guia_aberto = true,
             "atalhos" => app.ajuda_aberta = true,
             "ficha" => {

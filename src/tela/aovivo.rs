@@ -25,6 +25,13 @@ const ALTURA_DA_LINHA: f32 = 68.0;
 pub fn tela(app: &mut App, ui: &mut egui::Ui) {
     let nada_no_ar = app.tocando.is_none() && app.tocando_vod.is_none() && app.outra_tela.is_none();
     let por_cima = app.controles_visiveis() || app.lista_aberta || nada_no_ar || app.guia_aberto;
+    // O fundo do guia e o da rádio vêm antes do menu: pintados depois, na
+    // mesma camada do fundo, cobririam o menu.
+    let guia_na_tela = app.guia_aberto && app.tocando_vod.is_none();
+    let so_radio = app.radio.is_some() && app.tocando.is_none() && app.tocando_vod.is_none() && app.mpv.is_some();
+    if guia_na_tela || so_radio {
+        super::pintar_fundo_do_app(ui, ui.ctx().content_rect());
+    }
     if !app.pip && por_cima && app.tocando_vod.is_none() {
         topo::menu(app, ui, true);
     }
@@ -271,7 +278,6 @@ fn linha_do_canal(app: &mut App, ui: &mut egui::Ui, indice: usize, tocando: bool
 fn guia(app: &mut App, ui_pai: &mut egui::Ui) {
     egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui_pai, |ui| {
         let area = ui.max_rect();
-        super::pintar_fundo_do_app(ui, ui.ctx().content_rect());
         let pintor = ui.painter().clone();
         let margem = 50.0;
         pintor.text(Pos2::new(area.left() + margem, area.top() + 14.0), Align2::LEFT_TOP, "Programação", forte(34.0), TEXTO);
@@ -494,7 +500,6 @@ fn estado_vazio(app: &mut App, ui: &mut egui::Ui, area: Rect) {
 fn radio(app: &mut App, ui: &mut egui::Ui, area: Rect) {
     let Some((nome, logo, confirmado)) = app.radio.as_ref().map(|r| (r.nome.clone(), r.logo.clone(), r.confirmado)) else { return };
     let janela = ui.ctx().content_rect();
-    super::pintar_fundo_do_app(ui, janela);
     let textura = logo.and_then(|u| app.imagem(&u, 256));
     let pintor = ui.painter().clone();
     if let Some(t) = textura.as_ref() {

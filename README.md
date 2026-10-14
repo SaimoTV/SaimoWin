@@ -13,11 +13,44 @@ programa avisa quando há versão nova.
 
 ## Visual
 
-Mesma identidade da TV Box: azul-marinho com acento ciano, menu do topo com
-todas as seções (Início, Ao vivo, Eventos, Filmes, Séries, Animes, Doramas, Favoritos)
-em todas as telas, lista de canais com seções em chips e número do canal, e o
-acervo sobre a imagem de fundo do app (`assets/fundo.jpg`). Filmes e Séries
-abrem com a fileira "Em alta" e a grade vem dos lançamentos para trás.
+O mesmo desenho da TV Box, refeito para mouse e teclado (`src/tela/`):
+
+- **Menu do topo** igual em todas as telas: o ícone, Buscar, Início, Ao vivo,
+  Eventos, On Demand, Favoritos, Rádios, a engrenagem dos Ajustes e o relógio.
+  A aba da tela atual fica num fundo claro; a do mouse, branca com o texto
+  escuro, como o foco da TV. Os ícones são os Material da TV Box, lidos do
+  mesmo `pathData` e rasterizados no app (`src/tela/icones.rs`).
+- **Páginas em fileiras** (Início, On Demand, Filmes, Séries, Animes, Doramas,
+  Eventos, Rádios e a busca): o destaque em cima com a imagem larga do título
+  em foco, a nota, o ano, as temporadas, os gêneros e a sinopse; embaixo, as
+  fileiras de capas, de canais ao vivo, de categorias (colagem de capas com a
+  cor de cada uma) e de jogos. Passar o mouse num cartão é o foco da TV; as
+  setas das pontas rolam a fileira; o botão direito favorita.
+- **On Demand**: as quatro categorias, "Continue assistindo", os destaques, os
+  gêneros de filmes e o "Explorar" com cada acervo de A a Z. Cada categoria
+  abre a página dela (lançamentos, um gênero por fileira com "Ver todos") e a
+  grade de A a Z com busca, ordem (mais novos ou A a Z) e gêneros em pílulas.
+- **Ao vivo**: o vídeo na janela inteira; a lista de canais por cima com as
+  seções em pílulas, número, logo, programa e andamento; embaixo, o canal com
+  o programa, o que vem a seguir e os botões redondos (canais, lista, guia,
+  multi tela, fontes, áudio e legendas, preencher, som, janelinha, tela cheia).
+  O guia cobre a tela com os canais de um lado e a programação do outro.
+- **Player**: a logo do título (TMDB) sobre a linha do tempo, que engrossa no
+  mouse e mostra para onde vai; os botões em pílula; e o painel de episódios
+  (tecla E) com as temporadas e as imagens das cenas.
+- **Ficha e página da série** como a da TV: fundo largo, capa, selos, botões,
+  sinopse, elenco; na série, as temporadas em pílulas e os episódios em
+  cartões com a imagem da cena, nome, duração, sinopse, andamento, a marca de
+  visto e uma pílula por versão (dublado, legendado).
+- **Rádios** (`src/radios.rs`): a lista `vod/radios.txt` do SaimoPlayer, nas
+  fileiras da TV (ouvidas por último, por estilo e de A a Z). A rádio toca no
+  mpv do vídeo só com o som e continua enquanto se navega; o nome dela fica
+  perto do relógio, com o botão de parar.
+- **Ajustes**: preencher a tela, velocidade, som, idioma preferido da legenda,
+  procurar atualização, atalhos e tela cheia.
+
+A escala acompanha a janela: o desenho é pensado para 1280 pontos de largura,
+e uma janela maior (ou a tela cheia) aumenta tudo junto, em degraus de 5%.
 
 ## Abertura
 
@@ -85,12 +118,18 @@ A bateria sonda a lista publicada (até três fontes por canal), uma amostra do
 acervo e o TheIntroDB, e lista o que está fora e por quê. Serve para separar
 "o app está quebrado" de "a fonte caiu".
 
-Para ver as telas no Mac sem o mpv: `SAIMO_DEMO=1 SAIMO_ABA=filmes cargo run`.
+Para ver as telas no Mac sem o mpv: `SAIMO_DEMO=1 SAIMO_ABA=ondemand cargo run`.
+A foto de cada tela sai com `SAIMO_FOTO=arquivo.png SAIMO_FOTO_TELA=<tela>`,
+onde a tela é `inicio`, `ondemand`, `filmes`, `explorar`, `eventos`, `radios`,
+`buscar`, `ajustes`, `ficha`, `serie` (com `SAIMO_FOTO_ANTES=10`), `aovivo`,
+`guia` ou `player` (estas três com `SAIMO_DEMO=1`).
 
 | Peça | O que faz |
 |---|---|
 | `src/main.rs` | estado do app, teclado, troca de fonte |
-| `src/tela.rs` | desenho: vídeo no fundo, lista e letreiro por cima |
+| `src/tela/` | desenho: menu do topo, páginas em fileiras, grade, ao vivo, player, ficha e série |
+| `src/tela/icones.rs` | os ícones Material da TV Box, rasterizados do `pathData` |
+| `src/radios.rs` | as rádios da lista publicada, estilos e ouvidas por último |
 | `src/mpv.rs` | ponte com o libmpv, carregado da DLL em tempo de execução |
 | `src/abertura.rs` | a abertura animada ao abrir o programa |
 | `src/midia.rs` | quadro de "tocando agora" do Windows: título e logo |

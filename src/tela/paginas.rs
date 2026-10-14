@@ -780,7 +780,7 @@ pub fn pagina(app: &mut App, ui: &mut egui::Ui) {
     }
 
     let buscando = app.aba == Aba::Buscar;
-    let altura_do_destaque = if buscando { 128.0 } else { (area.height() * 0.36).clamp(170.0, 260.0) };
+    let altura_do_destaque = if buscando { 128.0 } else { (area.height() * 0.30).clamp(150.0, 230.0) };
     destaque(app, ui, area, altura_do_destaque);
 
     let lista = Rect::from_min_max(Pos2::new(area.left(), area.top() + altura_do_destaque), area.max);
