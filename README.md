@@ -97,6 +97,9 @@ série pausam por ali; ao vivo o quadro não oferece pausa.
 - **Próximo episódio** nos créditos, seguindo sozinho em 10 s. Enter assiste
   agora, Esc dispensa. Sem créditos marcados, o cartão sobe nos últimos 30 s.
 - Episódio que acaba emenda no seguinte, na mesma versão (dublado/legendado).
+- O episódio seguinte toca pela mesma fonte que vinha tocando: a do mesmo
+  provedor (host), senão a da mesma posição, senão a ordem de sempre; as outras
+  ficam de reserva. Vale por série, na sessão (`src/fonte_preferida.rs`).
 - Fonte que "termina" nos primeiros 30 s é tratada como quebrada: vai para a
   próxima em vez de fechar.
 - Abre no último canal assistido.

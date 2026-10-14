@@ -12,6 +12,7 @@
 mod abertura;
 mod atualizacao;
 mod fontes_desativadas;
+mod fonte_preferida;
 mod destaques;
 mod generos;
 mod ficha;
@@ -235,6 +236,8 @@ pub struct Tocando {
 }
 
 struct App {
+    /// A fonte em que a série no ar vem tocando; vale só para esta sessão.
+    fonte_preferida: Option<fonte_preferida::Memoria>,
     mpv: Option<std::sync::Arc<mpv::Mpv>>,
     erro_do_mpv: Option<String>,
     canais: Vec<Canal>,
@@ -528,6 +531,7 @@ impl App {
             colunas_vod: 5,
             ultimo_progresso: Instant::now(),
             foco_vod: 0,
+            fonte_preferida: None,
             tocando_vod: None,
             controles_ate: Instant::now() + Duration::from_secs(6),
             ajuda_aberta: false,
@@ -797,9 +801,10 @@ impl App {
 
     fn tocar_episodio(&mut self, serie: &str, episodio: vod::Episodio, lista: Vec<vod::Episodio>) {
         let titulo = format!("{} · T{} E{}", serie, episodio.temporada, episodio.numero);
+        let urls = self.fontes_preferidas(serie, &episodio.urls);
         // Some antes de tocar: senão a troca de título apagaria o episódio.
         self.tocando_vod = None;
-        self.tocar_vod(titulo.clone(), episodio.urls.clone(), 0, true);
+        self.tocar_vod(titulo.clone(), urls, 0, true);
         let Some(t) = self.tocando_vod.as_mut() else { return };
         t.episodio = Some(EpisodioTocando {
             serie: serie.to_string(),
@@ -813,8 +818,41 @@ impl App {
         self.pedir_logo(serie, true);
     }
 
+    /// Guarda a fonte que está de fato no ar (a escolhida, a de fábrica ou a
+    /// que o player desceu sozinho) e devolve as do próximo episódio da série
+    /// com a de sempre na frente. Noutra série, ou sem nada lembrado, a lista
+    /// segue como veio.
+    fn fontes_preferidas(&mut self, serie: &str, urls: &[String]) -> Vec<String> {
+        if self.fonte_preferida.as_ref().map(|m| m.serie != serie).unwrap_or(false) {
+            self.fonte_preferida = None;
+        }
+        if let Some(t) = self.tocando_vod.as_ref() {
+            if let (Some(ep), Some(url)) = (t.episodio.as_ref(), t.urls.get(t.fonte)) {
+                if ep.serie == serie {
+                    // A posição é na lista do próprio episódio, não na reordenada.
+                    let posicao = ep
+                        .lista
+                        .iter()
+                        .find(|e| e.temporada == ep.temporada && e.numero == ep.numero && e.versao == ep.versao)
+                        .and_then(|e| e.urls.iter().position(|u| u == url))
+                        .unwrap_or(t.fonte);
+                    self.fonte_preferida = Some(fonte_preferida::Memoria {
+                        serie: serie.to_string(),
+                        host: fonte_preferida::host(url),
+                        posicao,
+                    });
+                }
+            }
+        }
+        match self.fonte_preferida.as_ref() {
+            Some(m) => fonte_preferida::ordenar(urls, &m.host, m.posicao),
+            None => urls.to_vec(),
+        }
+    }
+
     /// Toca um filme e já pede as legendas dele.
     fn tocar_filme(&mut self, titulo: String, urls: Vec<String>) {
+        self.fonte_preferida = None;
         self.tocar_vod(titulo.clone(), urls, 0, true);
         self.pedir_legendas(titulo.clone(), self.generos.id(&titulo, false), false, 0, 0);
         self.pedir_logo(&titulo, false);
@@ -1175,6 +1213,7 @@ impl App {
 
     pub fn tocar(&mut self, canal: usize, fonte: usize, nova: bool) {
         self.radio = None;
+        self.fonte_preferida = None;
         let Some(mpv) = self.mpv.as_ref() else { return };
         let Some(c) = self.canais.get(canal) else { return };
         let Some(f) = c.fontes.get(fonte) else {

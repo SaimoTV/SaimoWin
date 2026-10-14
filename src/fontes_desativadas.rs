@@ -69,7 +69,7 @@ pub fn atualizar() -> bool {
 
 /// O servidor de um endereço, em minúsculas: o pedaço entre "//" e a primeira
 /// barra, sem usuário nem porta.
-fn servidor(url: &str) -> Option<String> {
+pub fn servidor(url: &str) -> Option<String> {
     let resto = url.split("://").nth(1).unwrap_or(url);
     let autoridade = resto.split(['/', '?', '#']).next()?;
     let sem_usuario = autoridade.rsplit('@').next()?;
