@@ -377,3 +377,55 @@ fn classificacao_br(json: &serde_json::Value, serie: bool) -> Option<String> {
         .find(|n| !n.is_empty())
         .map(str::to_string)
 }
+
+/// Um episódio como o TMDB descreve: nome, sinopse, a imagem da cena e a
+/// duração. É o que a TV Box mostra no cartão do episódio.
+#[derive(Clone, Debug, Default)]
+pub struct EpisodioTmdb {
+    pub numero: u32,
+    pub nome: String,
+    pub sinopse: String,
+    pub imagem: Option<String>,
+    pub duracao: Option<u32>,
+}
+
+/// As temporadas já trazidas, por (id da série, número da temporada).
+type Temporadas = Mutex<HashMap<(u32, u32), Vec<EpisodioTmdb>>>;
+
+fn temporadas_guardadas() -> &'static Temporadas {
+    static GUARDADAS: OnceLock<Temporadas> = OnceLock::new();
+    GUARDADAS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// A temporada já trazida, se alguma thread já a buscou.
+pub fn temporada_conhecida(id: u32, numero: u32) -> Option<Vec<EpisodioTmdb>> {
+    temporadas_guardadas().lock().ok()?.get(&(id, numero)).cloned()
+}
+
+/// Busca os episódios de uma temporada. Chamada de uma thread: fala com a rede.
+/// Falha de rede guarda a lista vazia: o cartão fica sem imagem, e não se pede
+/// de novo a cada quadro.
+pub fn temporada(id: u32, numero: u32) -> Vec<EpisodioTmdb> {
+    if let Some(pronta) = temporada_conhecida(id, numero) {
+        return pronta;
+    }
+    let lista: Vec<EpisodioTmdb> = crate::rede::json(&format!("{BASE}/tv/{id}/season/{numero}?api_key={CHAVE}&language=pt-BR"))
+        .and_then(|json| json["episodes"].as_array().cloned())
+        .map(|episodios| {
+            episodios
+                .iter()
+                .map(|e| EpisodioTmdb {
+                    numero: e["episode_number"].as_u64().unwrap_or(0) as u32,
+                    nome: e["name"].as_str().unwrap_or("").to_string(),
+                    sinopse: e["overview"].as_str().unwrap_or("").to_string(),
+                    imagem: e["still_path"].as_str().map(|c| format!("{IMAGENS}w300{c}")),
+                    duracao: e["runtime"].as_u64().filter(|m| *m > 0).map(|m| m as u32),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Ok(mut mapa) = temporadas_guardadas().lock() {
+        mapa.insert((id, numero), lista.clone());
+    }
+    lista
+}

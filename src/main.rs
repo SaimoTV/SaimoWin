@@ -19,6 +19,7 @@ mod catalogo;
 mod mpv;
 mod progresso;
 mod pulos;
+mod radios;
 mod legendas;
 mod midia;
 mod bateria;
@@ -90,11 +91,19 @@ enum Recado {
     Perfil(u32, Option<ficha::Perfil>),
     /// Onde pular no que está tocando, pelo TheIntroDB.
     Marcas(String, pulos::Marcas),
+    /// A lista de rádios publicada.
+    Radios(Vec<radios::Radio>),
+    /// A ficha do título em destaque chegou (fica guardada no `ficha`).
+    FichaDoDestaque,
+    /// Os episódios de uma temporada, pelo TMDB (ficam guardados no `ficha`).
+    Temporada,
+    /// A procura pedida nos Ajustes não achou versão nova.
+    SemAtualizacao,
 }
 
 /// O que ocupa a área principal: o vídeo, ou uma das seções do acervo —
 /// como no Mac, onde o acervo abre por cima do player.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Aba {
     Canais,
     /// A porta de entrada do acervo: fileiras de capa, no lugar da grade.
@@ -106,9 +115,20 @@ pub enum Aba {
     Favoritos,
     Extras,
     Eventos,
+    /// As quatro categorias juntas, como o On Demand da TV Box.
+    OnDemand,
+    Radios,
+    Buscar,
+    Ajustes,
 }
 
 impl Aba {
+    /// As páginas de um tipo do acervo, que abrem em fileiras e têm a grade
+    /// de A a Z por dentro.
+    pub fn de_tipo(self) -> bool {
+        matches!(self, Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas)
+    }
+
     /// As seções que mostram filmes (e não séries).
     pub fn de_filmes(self) -> bool {
         matches!(self, Aba::Filmes | Aba::Favoritos | Aba::Extras)
@@ -117,7 +137,7 @@ impl Aba {
 
 /// Um cartão da grade: o nome, o que vai escrito embaixo dele, e a letra onde
 /// mora o endereço — que só é baixada quando alguém abre o título.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ItemNaTela {
     pub titulo: String,
     pub detalhe: String,
@@ -139,6 +159,7 @@ const ATUALIZAR_EVENTOS: Duration = Duration::from_secs(60);
 #[derive(Clone)]
 pub enum Destino {
     Item(ItemNaTela),
+    /// Um destaque publicado: a fila e a posição dele em `filas`.
     Fileira(usize, usize),
 }
 
@@ -196,6 +217,15 @@ impl EpisodioTocando {
 
 /// Quanto tempo o cartão do próximo episódio espera antes de seguir sozinho.
 pub const ESPERA_DO_PROXIMO: Duration = Duration::from_secs(10);
+
+/// A rádio no ar: toca no mesmo mpv do vídeo, só com o som.
+pub struct TocandoRadio {
+    pub nome: String,
+    pub url: String,
+    pub logo: Option<String>,
+    pub desde: Instant,
+    pub confirmado: bool,
+}
 
 pub struct Tocando {
     pub canal: usize,
@@ -330,6 +360,26 @@ struct App {
     series_da_letra: Option<Vec<vod::Serie>>,
     /// O quadro de "tocando agora" do Windows.
     midia: midia::Midia,
+    /// Na página de um tipo, a grade de A a Z está aberta (no lugar das fileiras).
+    pub explorar: bool,
+    /// A grade em ordem alfabética, em vez dos mais novos primeiro.
+    pub ordem_az: bool,
+    /// O que o destaque do topo das páginas mostra: o cartão em foco.
+    pub heroi: Option<tela::Heroi>,
+    /// Fichas já pedidas para o destaque, para não pedir duas vezes.
+    fichas_pedidas: std::collections::HashSet<String>,
+    /// Temporadas já pedidas ao TMDB (id, número).
+    temporadas_pedidas: std::collections::HashSet<(u32, u32)>,
+    pub radios: Vec<radios::Radio>,
+    buscando_radios: bool,
+    pub radio: Option<TocandoRadio>,
+    colecoes_pedidas: bool,
+    /// No player, o painel de episódios aberto.
+    pub episodios_no_player: bool,
+    /// Na página da série, a temporada escolhida.
+    pub temporada_aberta: u32,
+    /// O campo da busca pede o teclado no próximo quadro.
+    pub pedir_foco_na_busca: bool,
     /// A abertura animada, enquanto está na tela.
     abertura: Option<abertura::Abertura>,
 }
@@ -511,6 +561,18 @@ impl App {
             series_da_letra: None,
             midia: midia::Midia::nova(cc),
             abertura: abertura::Abertura::nova(&caminho_do_mpv()),
+            explorar: false,
+            ordem_az: false,
+            heroi: None,
+            fichas_pedidas: std::collections::HashSet::new(),
+            temporadas_pedidas: std::collections::HashSet::new(),
+            radios: radios::locais(),
+            buscando_radios: false,
+            radio: None,
+            colecoes_pedidas: false,
+            episodios_no_player: false,
+            temporada_aberta: 0,
+            pedir_foco_na_busca: false,
         };
         app.ligar_baixadores_de_imagem(&cc.egui_ctx);
         app.reordenar();
@@ -518,8 +580,13 @@ impl App {
         if let Ok(aba) = std::env::var("SAIMO_ABA") {
             match aba.as_str() {
                 "inicio" => app.abrir_secao(Aba::Inicio),
+                "ondemand" => app.abrir_secao(Aba::OnDemand),
                 "filmes" => app.abrir_secao(Aba::Filmes),
                 "series" => app.abrir_secao(Aba::Series),
+                "radios" => app.abrir_secao(Aba::Radios),
+                "buscar" => app.abrir_secao(Aba::Buscar),
+                "ajustes" => app.abrir_secao(Aba::Ajustes),
+                "eventos" => app.abrir_secao(Aba::Eventos),
                 _ => {}
             }
         }
@@ -528,7 +595,7 @@ impl App {
 
     /// A lista que está na tela: catálogo (mais os restritos quando liberados),
     /// na ordem das seções, filtrada pela busca.
-    fn visiveis(&self) -> Vec<usize> {
+    pub fn visiveis(&self) -> Vec<usize> {
         let busca = catalogo::chave_de_ordem(self.busca.trim());
         self.canais
             .iter()
@@ -617,7 +684,7 @@ impl App {
     // MARK: - Filmes e séries
 
     /// Troca a letra do acervo e busca as duas listas dela.
-    fn abrir_letra(&mut self, letra: String) {
+    pub fn abrir_letra(&mut self, letra: String) {
         if self.letra == letra && !self.filmes.is_empty() {
             return;
         }
@@ -662,6 +729,9 @@ impl App {
     fn abrir_serie(&mut self, serie: vod::Serie) {
         self.serie_aberta = Some(serie.clone());
         self.episodios.clear();
+        self.temporada_aberta = 0;
+        // A página da série tem o fundo, a nota e a sinopse da ficha.
+        self.pedir_ficha_do_destaque(&serie.titulo, true);
         if let Some(lista) = self.episodios_colecao.get(&serie.titulo).cloned() {
             self.episodios = lista;
             self.carregando_vod = false;
@@ -683,6 +753,8 @@ impl App {
         // para ir ao acervo não volta por cima dele.
         self.sair_da_multi_tela();
         self.canal_parado = None;
+        self.radio = None;
+        self.episodios_no_player = false;
         let Some(mpv) = self.mpv.as_ref() else { return };
         let Some(url) = urls.get(fonte).cloned() else {
             telemetria::caiu("vod", &titulo, urls.len());
@@ -895,7 +967,7 @@ impl App {
     }
 
     /// Grava onde o filme parou. `agora` força, em vez de esperar os 15 s.
-    fn guardar_progresso(&mut self, agora: bool) {
+    pub fn guardar_progresso(&mut self, agora: bool) {
         if !agora && self.ultimo_progresso.elapsed() < Duration::from_secs(15) {
             return;
         }
@@ -970,7 +1042,7 @@ impl App {
         self.fechar_ficha();
         match destino {
             Some(Destino::Item(item)) => self.abrir_item(item),
-            Some(Destino::Fileira(fila, indice)) => tela::seguir_fileira(self, fila, indice),
+            Some(Destino::Fileira(fila, indice)) => tela::seguir_destaque(self, fila, indice),
             None => {}
         }
     }
@@ -985,7 +1057,7 @@ impl App {
         self.logos.retain(|chave, _| !chave.starts_with("1280|") && !chave.starts_with("632|"));
     }
 
-    fn favoritar_vod(&mut self, titulo: String) {
+    pub fn favoritar_vod(&mut self, titulo: String) {
         if let Some(pos) = self.favoritos_vod.iter().position(|f| *f == titulo) {
             self.favoritos_vod.remove(pos);
         } else {
@@ -1001,7 +1073,7 @@ impl App {
     /// de uma busca por nome feita aqui, que era lenta e trocava filmes de nome
     /// igual. Quem não tem ficha fica sem capa, e a tela põe uma marca no
     /// lugar.
-    fn capa(&mut self, titulo: &str, serie: bool) -> Option<egui::TextureHandle> {
+    pub fn capa(&mut self, titulo: &str, serie: bool) -> Option<egui::TextureHandle> {
         let endereco = self.endereco_da_capa(titulo, serie)?;
         // 342 pixels, o tamanho que o arquivo de fichas publica: a capa era
         // reduzida a 96, o tamanho das logos de canal, e ficava borrada num
@@ -1011,7 +1083,7 @@ impl App {
 
     /// A ficha publicada primeiro; sem ela, a capa que veio com a fileira de
     /// destaque (animes e doramas quase nunca têm ficha).
-    fn endereco_da_capa(&self, titulo: &str, serie: bool) -> Option<String> {
+    pub fn endereco_da_capa(&self, titulo: &str, serie: bool) -> Option<String> {
         match self.generos.capa(titulo, serie) {
             Some(url) => Some(url.to_string()),
             None => self
@@ -1034,9 +1106,10 @@ impl App {
             }
         }
         let canal = self.tocando.as_ref().and_then(|t| self.canais.get(t.canal));
-        let titulo = match (self.tocando_vod.as_ref(), canal) {
-            (Some(t), _) => Some(t.titulo.as_str()),
-            (None, Some(c)) => Some(c.nome.as_str()),
+        let titulo = match (self.tocando_vod.as_ref(), canal, self.radio.as_ref()) {
+            (Some(t), _, _) => Some(t.titulo.as_str()),
+            (None, Some(c), _) => Some(c.nome.as_str()),
+            (None, None, Some(r)) => Some(r.nome.as_str()),
             _ => None,
         };
         // A ficha da série, no episódio; a do filme, no filme.
@@ -1059,7 +1132,12 @@ impl App {
                 imagem: c.logo.clone(),
                 ao_vivo: true,
             }),
-            _ => None,
+            _ => self.radio.as_ref().map(|r| midia::NoAr {
+                titulo: r.nome.clone(),
+                subtitulo: "Rádio ao vivo".into(),
+                imagem: r.logo.clone(),
+                ao_vivo: true,
+            }),
         };
         self.midia.mostrar(no_ar, self.pausado);
     }
@@ -1095,7 +1173,8 @@ impl App {
         self.tocar_vod(titulo, urls, fonte + 1, false);
     }
 
-    fn tocar(&mut self, canal: usize, fonte: usize, nova: bool) {
+    pub fn tocar(&mut self, canal: usize, fonte: usize, nova: bool) {
+        self.radio = None;
         let Some(mpv) = self.mpv.as_ref() else { return };
         let Some(c) = self.canais.get(canal) else { return };
         let Some(f) = c.fontes.get(fonte) else {
@@ -1147,6 +1226,16 @@ impl App {
     fn cuidar_do_mpv(&mut self, ctx: &egui::Context) {
         let avisos: Vec<mpv::Aviso> = self.mpv.as_ref().map(|m| m.avisos().collect()).unwrap_or_default();
         for aviso in avisos {
+            if let Some(r) = self.radio.as_mut() {
+                match aviso {
+                    mpv::Aviso::Tocando => r.confirmado = true,
+                    mpv::Aviso::Falhou | mpv::Aviso::Fim => {
+                        self.aviso = Some((format!("{}: a rádio está fora do ar", r.nome), Instant::now()));
+                        self.radio = None;
+                    }
+                }
+                continue;
+            }
             if self.tocando_vod.is_some() {
                 match aviso {
                     mpv::Aviso::Tocando => {
@@ -1228,9 +1317,14 @@ impl App {
         if estourou_vod {
             self.proxima_fonte_vod("a fonte não abriu em 14 s");
         }
+        if self.radio.as_ref().is_some_and(|r| !r.confirmado && r.desde.elapsed() > ESPERA_DA_FONTE) {
+            let nome = self.radio.as_ref().map(|r| r.nome.clone()).unwrap_or_default();
+            self.aviso = Some((format!("{nome}: a rádio não abriu"), Instant::now()));
+            self.parar_radio();
+        }
         self.cuidar_da_outra_tela();
         let outra_no_ar = self.outra_tela.as_ref().is_some_and(|o| o.tocando.is_some());
-        if self.tocando.is_some() || self.tocando_vod.is_some() || outra_no_ar {
+        if self.tocando.is_some() || self.tocando_vod.is_some() || outra_no_ar || self.radio.is_some() {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
         self.acompanhar_vod();
@@ -1272,7 +1366,7 @@ impl App {
         let mut chegou_algo = false;
         while let Ok(recado) = self.recados.try_recv() {
             chegou_algo = true;
-            if !matches!(recado, Recado::Logo(..) | Recado::LogoEsquecido(_)) {
+            if !matches!(recado, Recado::Logo(..) | Recado::LogoEsquecido(_) | Recado::FichaDoDestaque | Recado::Temporada) {
                 self.versao_dados = self.versao_dados.wrapping_add(1);
             }
             match recado {
@@ -1308,7 +1402,14 @@ impl App {
                     self.logos.insert(url, Some(textura));
                 }
                 Recado::Atualizacao(v) => self.nova_versao = Some(v),
-                Recado::Guia => {}
+                Recado::SemAtualizacao => {
+                    self.aviso = Some((format!("Você já está na versão mais nova ({VERSAO})"), Instant::now()));
+                }
+                Recado::Guia | Recado::FichaDoDestaque | Recado::Temporada => {}
+                Recado::Radios(lista) => {
+                    self.buscando_radios = false;
+                    self.radios = lista;
+                }
                 Recado::Gavetas(lista) => self.gavetas = lista,
                 Recado::Acervo(lista) => self.acervo = lista,
                 Recado::FontesDesativadas => {
@@ -1433,9 +1534,6 @@ impl App {
         telemetria::no_relogio();
     }
 
-    fn logo(&mut self, url: &str) -> Option<egui::TextureHandle> {
-        self.imagem(url, 96)
-    }
 
     /// Uma imagem da rede, reduzida para caber em `lado` pixels.
     ///
@@ -1608,29 +1706,21 @@ impl App {
                     }
                 }
                 egui::Key::T if self.outra_tela.is_some() => self.trocar_tela_em_foco(),
-                egui::Key::P => {
-                    // A janelinha por cima de tudo é de uma tela só.
-                    self.sair_da_multi_tela();
-                    self.pip = !self.pip;
-                    let nivel = if self.pip { egui::viewport::WindowLevel::AlwaysOnTop } else { egui::viewport::WindowLevel::Normal };
-                    ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(nivel));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(!self.pip));
-                    if self.pip {
-                        self.lista_aberta = false;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([400.0, 225.0].into()));
-                    } else {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([1280.0, 720.0].into()));
-                    }
+                egui::Key::P => self.alternar_janelinha(ctx),
+                egui::Key::E if self.aba == Aba::Canais && self.tocando_vod.as_ref().is_some_and(|t| t.episodio.is_some()) => {
+                    self.episodios_no_player = !self.episodios_no_player;
                 }
                 egui::Key::Tab => {
+                    // A ordem do menu do topo, como na TV Box.
                     let proxima = match self.aba {
-                        Aba::Canais => Aba::Inicio,
-                        Aba::Inicio => Aba::Filmes,
-                        Aba::Filmes => Aba::Series,
-                        Aba::Series => Aba::Animes,
-                        Aba::Animes => Aba::Doramas,
-                        Aba::Doramas => Aba::Eventos,
-                        _ => Aba::Canais,
+                        Aba::Buscar => Aba::Inicio,
+                        Aba::Inicio => Aba::Canais,
+                        Aba::Canais => Aba::Eventos,
+                        Aba::Eventos => Aba::OnDemand,
+                        Aba::OnDemand | Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas => Aba::Favoritos,
+                        Aba::Favoritos => Aba::Radios,
+                        Aba::Radios => Aba::Ajustes,
+                        _ => Aba::Buscar,
                     };
                     self.abrir_secao(proxima);
                 }
@@ -1644,8 +1734,16 @@ impl App {
                         }
                     } else if self.ajuda_aberta {
                         self.ajuda_aberta = false;
+                    } else if self.episodios_no_player {
+                        self.episodios_no_player = false;
                     } else if self.serie_aberta.is_some() {
                         self.serie_aberta = None;
+                    } else if self.explorar && self.aba.de_tipo() {
+                        self.explorar = false;
+                        self.foco_vod = 0;
+                    } else if matches!(self.aba, Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas) {
+                        // Página de um tipo: volta ao On Demand, de onde ela abriu.
+                        self.abrir_secao(Aba::OnDemand);
                     } else if self.aba != Aba::Canais {
                         self.abrir_secao(Aba::Canais);
                     } else if self.guia_aberto {
@@ -1728,30 +1826,21 @@ impl App {
                 }
             }
             egui::Key::Enter => tela::abrir_em_foco_na_fileira(self),
-            egui::Key::S => {
-                if let Some(titulo) = self.titulo_em_foco() {
-                    self.favoritar_vod(titulo);
-                }
-            }
+            egui::Key::S => tela::favoritar_em_foco_na_fileira(self),
             // I abre a ficha: sinopse, duração, gêneros e elenco, sem abrir
             // o filme para descobrir do que ele trata.
-            egui::Key::I => {
-                if let Some(item) = self.itens_na_tela().get(self.foco_vod).cloned() {
-                    self.abrir_ficha(item.titulo.clone(), item.serie, Destino::Item(item));
-                }
-            }
+            egui::Key::I => tela::ficha_em_foco_na_fileira(self),
             _ => {}
         }
     }
 
     /// Setas, Enter e estrela dentro da grade do acervo.
     fn tecla_no_acervo(&mut self, key: egui::Key) {
-        if self.aba == Aba::Inicio {
-            self.tecla_nas_fileiras(key);
+        if self.aba == Aba::Ajustes || (self.aba == Aba::Buscar && self.busca_vod.trim().is_empty()) {
             return;
         }
-        if self.aba == Aba::Eventos {
-            self.tecla_nos_eventos(key);
+        if self.serie_aberta.is_none() && tela::em_fileiras(self) {
+            self.tecla_nas_fileiras(key);
             return;
         }
         let colunas = self.colunas_vod.max(1);
@@ -1813,6 +1902,7 @@ impl App {
         self.genero.hash(&mut h);
         self.letra.hash(&mut h);
         self.liberado.hash(&mut h);
+        self.ordem_az.hash(&mut h);
         self.favoritos_vod.hash(&mut h);
         (self.acervo.len(), self.filmes.len(), self.series.len()).hash(&mut h);
         h.finish()
@@ -1869,7 +1959,10 @@ impl App {
             .collect();
         // Sem busca, o mais novo primeiro: é o que a pessoa procura ao abrir
         // Filmes, e não "#Alive" só porque "#" vem antes de "A".
-        if busca.is_empty() {
+        if busca.is_empty() && self.ordem_az {
+            let simbolo = |i: &ItemNaTela| !i.titulo.chars().next().is_some_and(|c| c.is_alphanumeric());
+            itens.sort_by_cached_key(|i| (simbolo(i), catalogo::chave_de_ordem(&i.titulo)));
+        } else if busca.is_empty() {
             let ano = |i: &ItemNaTela| {
                 i.detalhe.get(..4).and_then(|a| a.parse::<u32>().ok()).or_else(|| {
                     let t = i.titulo.trim_end();
@@ -1960,7 +2053,7 @@ impl App {
     }
 
     fn itens_do_acervo(&self) -> usize {
-        if self.aba == Aba::Inicio {
+        if self.serie_aberta.is_none() && tela::em_fileiras(self) {
             return tela::tamanho_das_filas(self).get(self.foco_fila).copied().unwrap_or(0);
         }
         if self.serie_aberta.is_some() {
@@ -2033,24 +2126,6 @@ impl App {
         eventos::agrupar(&self.eventos, eventos::agora(), &self.busca_vod)
     }
 
-    fn tecla_nos_eventos(&mut self, key: egui::Key) {
-        let jogos: Vec<eventos::Jogo> = self.jogos_na_tela().into_iter().flat_map(|(_, l)| l).collect();
-        let total = jogos.len();
-        let colunas = self.colunas_vod.max(1);
-        match key {
-            egui::Key::ArrowRight => self.foco_vod = (self.foco_vod + 1).min(total.saturating_sub(1)),
-            egui::Key::ArrowLeft => self.foco_vod = self.foco_vod.saturating_sub(1),
-            egui::Key::ArrowDown => self.foco_vod = (self.foco_vod + colunas).min(total.saturating_sub(1)),
-            egui::Key::ArrowUp => self.foco_vod = self.foco_vod.saturating_sub(colunas),
-            egui::Key::Enter => {
-                if let Some(jogo) = jogos.get(self.foco_vod) {
-                    self.abrir_jogo(&jogo.canal);
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// O cartão do jogo abre o canal ao vivo, como a lista de canais.
     pub fn abrir_jogo(&mut self, canal: &str) {
         let Some(indice) = self.canais.iter().position(|c| c.nome == canal) else {
@@ -2111,6 +2186,43 @@ impl App {
         let canal = visiveis[novo];
         self.foco = canal;
         self.tocar(canal, 0, true);
+    }
+
+    /// A janelinha por cima de tudo, sem moldura. É de uma tela só.
+    pub fn alternar_janelinha(&mut self, ctx: &egui::Context) {
+        self.sair_da_multi_tela();
+        self.pip = !self.pip;
+        let nivel = if self.pip { egui::viewport::WindowLevel::AlwaysOnTop } else { egui::viewport::WindowLevel::Normal };
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(nivel));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(!self.pip));
+        if self.pip {
+            self.lista_aberta = false;
+            // A escala da janela grande ficaria enorme na pequena.
+            ctx.set_zoom_factor(1.0);
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([400.0, 225.0].into()));
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([1280.0, 720.0].into()));
+        }
+    }
+
+    /// O voltar do player: para o filme (guardando onde parou) e volta à
+    /// página de onde ele saiu — a da série, no episódio.
+    pub fn voltar_do_player(&mut self) {
+        let serie = self.tocando_vod.as_ref().and_then(|t| t.episodio.as_ref()).map(|e| e.serie.clone());
+        let destino = if serie.is_some() { Aba::Series } else { Aba::Filmes };
+        self.abrir_secao(destino);
+        if let Some(nome) = serie {
+            if let Some(s) = self.series.iter().find(|s| s.titulo == nome).cloned() {
+                self.foco_vod = 0;
+                self.abrir_serie(s);
+            }
+        }
+    }
+
+    /// Outro episódio da mesma série, escolhido no painel do player.
+    pub fn trocar_de_episodio(&mut self, episodio: vod::Episodio) {
+        let Some(ep) = self.tocando_vod.as_ref().and_then(|t| t.episodio.clone()) else { return };
+        self.tocar_episodio(&ep.serie, episodio, ep.lista);
     }
 
     pub fn alternar_tela_cheia(&self, ctx: &egui::Context) {
@@ -2181,18 +2293,34 @@ impl App {
         self.foco_vod = 0;
         self.serie_aberta = None;
         self.foco_fila = 0;
-        // As fileiras de destaque abrem Início, Filmes e Séries.
-        if matches!(aba, Aba::Inicio | Aba::Filmes | Aba::Series) && self.filas.is_empty() && !self.carregando_filas {
+        self.explorar = false;
+        self.heroi = None;
+        self.episodios_no_player = false;
+        // As fileiras de destaque abrem as páginas do acervo e a busca.
+        let com_destaques = matches!(aba, Aba::Inicio | Aba::OnDemand | Aba::Buscar) || aba.de_tipo();
+        if com_destaques && self.filas.is_empty() && !self.carregando_filas {
             self.carregando_filas = true;
             let emissor = self.emissor.clone();
             std::thread::spawn(move || {
                 let _ = emissor.send(Recado::Destaques(destaques::filas()));
             });
         }
-        if aba == Aba::Inicio {
+        if matches!(aba, Aba::Inicio | Aba::OnDemand) {
             if self.filas.is_empty() {
                 self.carregando_vod = true;
             }
+            // Os cartões de Animes e Doramas do On Demand contam os títulos
+            // das coleções: elas vêm por trás, sem trocar de seção.
+            if aba == Aba::OnDemand {
+                self.pedir_colecoes();
+            }
+            return;
+        }
+        if aba == Aba::Radios {
+            self.buscar_radios();
+            return;
+        }
+        if matches!(aba, Aba::Buscar | Aba::Ajustes) {
             return;
         }
         if matches!(aba, Aba::Animes | Aba::Doramas) {
@@ -2220,6 +2348,139 @@ impl App {
             self.letra.clear();
             self.abrir_letra(letra);
         }
+    }
+
+    /// A coleção de animes ou de doramas, quando já chegou.
+    pub fn colecao(&self, aba: Aba) -> Option<&Vec<(vod::Serie, Vec<vod::Episodio>)>> {
+        self.colecoes.get(&(aba as u8))
+    }
+
+    /// Quais coleções já chegaram: parte da chave das fileiras.
+    pub fn colecoes_carregadas(&self) -> (usize, usize) {
+        (
+            self.colecao(Aba::Animes).map(|l| l.len()).unwrap_or(0),
+            self.colecao(Aba::Doramas).map(|l| l.len()).unwrap_or(0),
+        )
+    }
+
+    /// "Procurar atualização" dos Ajustes: a mesma procura de toda hora, já.
+    pub fn procurar_atualizacao_agora(&mut self) {
+        self.aviso = Some(("Procurando versão nova…".into(), Instant::now()));
+        let emissor = self.emissor.clone();
+        std::thread::spawn(move || {
+            let _ = emissor.send(match atualizacao::procurar() {
+                Some(v) => Recado::Atualizacao(v),
+                None => Recado::SemAtualizacao,
+            });
+        });
+    }
+
+    pub fn buscando_radios(&self) -> bool {
+        self.buscando_radios
+    }
+
+    /// Baixa animes e doramas que ainda não estão guardados, sem mostrá-los.
+    fn pedir_colecoes(&mut self) {
+        if self.colecoes_pedidas {
+            return;
+        }
+        self.colecoes_pedidas = true;
+        for aba in [Aba::Animes, Aba::Doramas] {
+            if self.colecoes.contains_key(&(aba as u8)) {
+                continue;
+            }
+            let emissor = self.emissor.clone();
+            std::thread::spawn(move || {
+                let tipo = if aba == Aba::Animes { "animes" } else { "doramas" };
+                let _ = emissor.send(Recado::Colecao(aba, vod::colecao(tipo)));
+            });
+        }
+    }
+
+    // MARK: - Rádios
+
+    /// A lista do repositório por trás; a guardada já está na tela.
+    fn buscar_radios(&mut self) {
+        if self.buscando_radios {
+            return;
+        }
+        self.buscando_radios = true;
+        let emissor = self.emissor.clone();
+        std::thread::spawn(move || {
+            if let Some(lista) = radios::baixar() {
+                let _ = emissor.send(Recado::Radios(lista));
+            }
+        });
+    }
+
+    /// Toca a rádio no mpv do vídeo, só com o som. O que tocava para.
+    pub fn tocar_radio(&mut self, radio: radios::Radio) {
+        self.sair_da_multi_tela();
+        if self.tocando_vod.is_some() {
+            self.guardar_progresso(true);
+            self.tocando_vod = None;
+        }
+        self.tocando = None;
+        self.canal_parado = None;
+        let Some(mpv) = self.mpv.as_ref() else {
+            self.aviso = Some(("O player não abriu: a rádio não tem como tocar".into(), Instant::now()));
+            return;
+        };
+        mpv.tocar(&radio.url, None, None);
+        mpv.pausa(false);
+        self.pausado = false;
+        radios::ouviu(&radio.nome);
+        self.versao_dados = self.versao_dados.wrapping_add(1);
+        self.radio = Some(TocandoRadio {
+            nome: radio.nome,
+            url: radio.url,
+            logo: radio.logo,
+            desde: Instant::now(),
+            confirmado: false,
+        });
+    }
+
+    pub fn parar_radio(&mut self) {
+        if self.radio.take().is_some() {
+            if let Some(mpv) = self.mpv.as_ref() {
+                mpv.parar();
+            }
+        }
+    }
+
+    // MARK: - Fichas do destaque
+
+    /// Pede a ficha de um título para o destaque do topo, uma vez só.
+    pub fn pedir_ficha_do_destaque(&mut self, titulo: &str, serie: bool) {
+        if ficha::conhecida(titulo, serie).is_some() {
+            return;
+        }
+        let chave = format!("{serie}|{titulo}");
+        if !self.fichas_pedidas.insert(chave) {
+            return;
+        }
+        let Some(id) = self.generos.id(titulo, serie) else { return };
+        let (titulo, emissor) = (titulo.to_string(), self.emissor.clone());
+        std::thread::spawn(move || {
+            ficha::baixar(&titulo, serie, id);
+            let _ = emissor.send(Recado::FichaDoDestaque);
+        });
+    }
+
+    /// Os episódios de uma temporada pelo TMDB: nome, sinopse e imagem.
+    pub fn pedir_temporada(&mut self, serie: &str, temporada: u32) -> Option<Vec<ficha::EpisodioTmdb>> {
+        let id = self.generos.id(serie, true)?;
+        if let Some(lista) = ficha::temporada_conhecida(id, temporada) {
+            return Some(lista);
+        }
+        if self.temporadas_pedidas.insert((id, temporada)) {
+            let emissor = self.emissor.clone();
+            std::thread::spawn(move || {
+                ficha::temporada(id, temporada);
+                let _ = emissor.send(Recado::Temporada);
+            });
+        }
+        None
     }
 
     /// O acervo cobre a tela inteira: o que estava tocando para de vez, em
@@ -2362,7 +2623,7 @@ impl App {
         self.aviso = Some((format!("volume {}%", self.volume), Instant::now()));
     }
 
-    fn favoritar(&mut self, canal: String) {
+    pub fn favoritar(&mut self, canal: String) {
         if let Some(pos) = self.favoritos.iter().position(|f| *f == canal) {
             self.favoritos.remove(pos);
         } else {
@@ -2474,14 +2735,34 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
     ctx.request_repaint_after(Duration::from_millis(200));
 
     let espera = std::env::var("SAIMO_FOTO_ESPERA").ok().and_then(|v| v.parse().ok()).unwrap_or(18);
-    if inicio.elapsed() > Duration::from_secs(3) && inicio.elapsed() < Duration::from_secs(4) {
+    static ESCOLHIDA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if inicio.elapsed() > Duration::from_secs(3) && !ESCOLHIDA.swap(true, std::sync::atomic::Ordering::SeqCst) {
         match std::env::var("SAIMO_FOTO_TELA").unwrap_or_default().as_str() {
             "inicio" => app.abrir_secao(Aba::Inicio),
+            "ondemand" => app.abrir_secao(Aba::OnDemand),
             "filmes" => app.abrir_secao(Aba::Filmes),
             "series" => app.abrir_secao(Aba::Series),
+            "explorar" => {
+                app.abrir_secao(Aba::Filmes);
+                app.explorar = true;
+            }
             "eventos" => app.abrir_secao(Aba::Eventos),
+            "radios" => app.abrir_secao(Aba::Radios),
+            "favoritos" => app.abrir_secao(Aba::Favoritos),
+            "buscar" => {
+                app.abrir_secao(Aba::Buscar);
+                app.busca_vod = std::env::var("SAIMO_FOTO_BUSCA").unwrap_or_else(|_| "amor".into());
+            }
+            "ajustes" => app.abrir_secao(Aba::Ajustes),
             "guia" => app.guia_aberto = true,
             "atalhos" => app.ajuda_aberta = true,
+            "ficha" => {
+                app.abrir_secao(Aba::Inicio);
+                let titulo = std::env::var("SAIMO_FOTO_TITULO").unwrap_or_else(|_| "Ted Lasso".into());
+                let serie = std::env::var("SAIMO_FOTO_FILME").is_err();
+                let item = ItemNaTela { titulo: titulo.clone(), detalhe: String::new(), serie, letra: String::new() };
+                app.abrir_ficha(titulo, serie, Destino::Item(item));
+            }
             _ => {}
         }
     }
@@ -2515,7 +2796,7 @@ fn gravar_favoritos(favoritos: &[String]) {
     gravar_lista("favoritos.txt", favoritos);
 }
 
-fn ler_lista(nome: &str) -> Vec<String> {
+pub fn ler_lista(nome: &str) -> Vec<String> {
     std::fs::read_to_string(catalogo::pasta().join(nome))
         .map(|t| t.lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
         .unwrap_or_default()
@@ -2579,7 +2860,7 @@ mod eventos;
 
 
 /// Um nome de título de verdade tem algo além do ano entre parênteses.
-fn tem_nome(titulo: &str) -> bool {
+pub fn tem_nome(titulo: &str) -> bool {
     let sem_ano = match titulo.rfind(" (") {
         Some(i) if titulo.ends_with(')') => &titulo[..i],
         _ if titulo.starts_with('(') && titulo.ends_with(')') => "",
