@@ -47,6 +47,9 @@ pub struct Ficha {
     pub fundo: Option<String>,
     /// Quantas temporadas a série tem, segundo o TMDB.
     pub temporadas: Option<u32>,
+    /// O nome do título desenhado (PNG transparente), como na TV Box: é o que
+    /// vai no quadro de "tocando agora" do Windows.
+    pub logo: Option<String>,
 }
 
 fn guardadas() -> &'static Mutex<HashMap<String, Ficha>> {
@@ -63,15 +66,37 @@ fn chave(titulo: &str, serie: bool) -> String {
     format!("{}{titulo}", if serie { "s:" } else { "f:" })
 }
 
+/// A logo do título, se a ficha dele já chegou. Barata: é consultada a cada
+/// quadro enquanto o título toca.
+pub fn logo(titulo: &str, serie: bool) -> Option<String> {
+    guardadas().lock().ok()?.get(&chave(titulo, serie))?.logo.clone()
+}
+
+/// A logo em português, senão em inglês, senão a sem idioma — a mesma
+/// escolha da TV Box.
+fn logo_de(json: &serde_json::Value) -> Option<String> {
+    let logos = json["images"]["logos"].as_array()?;
+    let escolhida = ["pt", "en", ""].iter().find_map(|lingua| {
+        logos.iter().find(|l| match l["iso_639_1"].as_str() {
+            Some(l) => l == *lingua || (lingua.is_empty() && l == "null"),
+            None => lingua.is_empty(),
+        })
+    })?;
+    let caminho = escolhida["file_path"].as_str().filter(|c| !c.is_empty())?;
+    Some(format!("{IMAGENS}w300{caminho}"))
+}
+
 /// Busca a ficha. Chamada de uma thread: fala com a rede.
 pub fn baixar(titulo: &str, serie: bool, id: u32) -> Option<Ficha> {
     if let Some(pronta) = conhecida(titulo, serie) {
         return Some(pronta);
     }
     let tipo = if serie { "tv" } else { "movie" };
-    let extras = if serie { "credits,content_ratings" } else { "credits,release_dates" };
+    let extras = if serie { "credits,content_ratings,images" } else { "credits,release_dates,images" };
+    // Sem o filtro de idioma as imagens viriam só em pt-BR, e quase nenhum
+    // título tem logo traduzida.
     let json = crate::rede::json(&format!(
-        "{BASE}/{tipo}/{id}?api_key={CHAVE}&language=pt-BR&append_to_response={extras}"
+        "{BASE}/{tipo}/{id}?api_key={CHAVE}&language=pt-BR&append_to_response={extras}&include_image_language=pt,en,null"
     ))?;
 
     let texto = |campo: &str| json[campo].as_str().unwrap_or("").to_string();
@@ -153,6 +178,7 @@ pub fn baixar(titulo: &str, serie: bool, id: u32) -> Option<Ficha> {
         } else {
             None
         },
+        logo: logo_de(&json),
     };
 
     if let Ok(mut mapa) = guardadas().lock() {

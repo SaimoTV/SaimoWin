@@ -15,7 +15,8 @@ use std::time::{Duration, Instant};
 pub struct NoAr {
     pub titulo: String,
     pub subtitulo: String,
-    /// Logo do canal ou capa do título; o próprio Windows a baixa.
+    /// Logo do canal, ou logo do título (capa quando ele não tem); o próprio
+    /// Windows a baixa.
     pub imagem: Option<String>,
     /// Canal ao vivo: sem pausa no quadro, porque o app não pausa ao vivo.
     pub ao_vivo: bool,
@@ -55,11 +56,15 @@ impl Midia {
     }
 
     /// Se o quadro já mostra este título: o app só monta o que vai nele (e
-    /// consulta o guia) quando algo mudou ou de tempos em tempos.
-    pub fn em_dia(&self, titulo: Option<&str>, pausado: bool) -> bool {
+    /// consulta o guia) quando algo mudou ou de tempos em tempos. A `logo`,
+    /// quando dada, também precisa ser a do quadro: ela chega depois do play,
+    /// e entra no lugar da capa assim que chega.
+    pub fn em_dia(&self, titulo: Option<&str>, logo: Option<&str>, pausado: bool) -> bool {
         let igual = match (&self.mostrado, titulo) {
             (None, None) => true,
-            (Some((no_ar, p)), Some(titulo)) => no_ar.titulo == titulo && *p == pausado,
+            (Some((no_ar, p)), Some(titulo)) => {
+                no_ar.titulo == titulo && *p == pausado && (logo.is_none() || no_ar.imagem.as_deref() == logo)
+            }
             _ => false,
         };
         igual && self.conferido.elapsed() < CONFERIR

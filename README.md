@@ -23,7 +23,9 @@ abrem com a fileira "Em alta" e a grade vem dos lançamentos para trás.
 
 O que está no ar aparece no quadro de mídia do Windows (junto do volume, na
 tela de bloqueio e em programas que mostram o que está tocando): canal com a
-logo e o programa do guia, filme e série com a capa (`src/midia.rs`). Filme e
+logo e o programa do guia, filme e série com a logo do título, do TMDB, como
+na TV Box (pt, senão en, senão sem idioma; a capa quando não há logo)
+(`src/midia.rs`, `src/ficha.rs`). Filme e
 série pausam por ali; ao vivo o quadro não oferece pausa.
 
 ## Novidades da 2.1.2
@@ -79,7 +81,7 @@ Para ver as telas no Mac sem o mpv: `SAIMO_DEMO=1 SAIMO_ABA=filmes cargo run`.
 | `src/main.rs` | estado do app, teclado, troca de fonte |
 | `src/tela.rs` | desenho: vídeo no fundo, lista e letreiro por cima |
 | `src/mpv.rs` | ponte com o libmpv, carregado da DLL em tempo de execução |
-| `src/midia.rs` | quadro de "tocando agora" do Windows: título, logo ou capa |
+| `src/midia.rs` | quadro de "tocando agora" do Windows: título e logo |
 | `src/catalogo.rs` | a mesma lista publicada dos outros aplicativos |
 | `src/telemetria.rs` | Saimo Monitor, plataforma `windows` |
 | `src/atualizacao.rs` | versão nova no GitHub, download pelo navegador |

@@ -729,12 +729,14 @@ impl App {
         });
         self.pedir_legendas(titulo.clone(), self.generos.id(serie, true), true, episodio.temporada, episodio.numero);
         self.pedir_marcas(titulo, self.generos.id(serie, true), episodio.temporada, episodio.numero);
+        self.pedir_logo(serie, true);
     }
 
     /// Toca um filme e já pede as legendas dele.
     fn tocar_filme(&mut self, titulo: String, urls: Vec<String>) {
         self.tocar_vod(titulo.clone(), urls, 0, true);
         self.pedir_legendas(titulo.clone(), self.generos.id(&titulo, false), false, 0, 0);
+        self.pedir_logo(&titulo, false);
     }
 
     /// Busca as legendas numa thread; chegam pelo recado. Se a pessoa já
@@ -1028,15 +1030,18 @@ impl App {
             (None, Some(c)) => Some(c.nome.as_str()),
             _ => None,
         };
-        if self.midia.em_dia(titulo, self.pausado) {
+        // A ficha da série, no episódio; a do filme, no filme.
+        let obra = self.tocando_vod.as_ref().map(|t| match t.episodio.as_ref() {
+            Some(e) => (e.serie.as_str(), true),
+            None => (t.titulo.as_str(), false),
+        });
+        let logo = obra.and_then(|(nome, serie)| ficha::logo(nome, serie));
+        if self.midia.em_dia(titulo, logo.as_deref(), self.pausado) {
             return;
         }
         let no_ar = match (self.tocando_vod.as_ref(), canal) {
             (Some(t), _) => {
-                let imagem = match t.episodio.as_ref() {
-                    Some(e) => self.endereco_da_capa(&e.serie, true),
-                    None => self.endereco_da_capa(&t.titulo, false),
-                };
+                let imagem = logo.or_else(|| obra.and_then(|(nome, serie)| self.endereco_da_capa(nome, serie)));
                 Some(midia::NoAr { titulo: t.titulo.clone(), subtitulo: "Saimo TV".into(), imagem, ao_vivo: false })
             }
             (None, Some(c)) => Some(midia::NoAr {
@@ -1048,6 +1053,19 @@ impl App {
             _ => None,
         };
         self.midia.mostrar(no_ar, self.pausado);
+    }
+
+    /// Busca a ficha do que começou a tocar, só pela logo do quadro de
+    /// "tocando agora"; até ela chegar (ou sem ela), vai a capa.
+    fn pedir_logo(&self, titulo: &str, serie: bool) {
+        if ficha::conhecida(titulo, serie).is_some() {
+            return;
+        }
+        let Some(id) = self.generos.id(titulo, serie) else { return };
+        let titulo = titulo.to_string();
+        std::thread::spawn(move || {
+            ficha::baixar(&titulo, serie, id);
+        });
     }
 
     fn proxima_fonte_vod(&mut self, motivo: &str) {
