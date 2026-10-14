@@ -36,6 +36,17 @@ pub fn fluxo(url: &str) -> Option<Box<dyn Read + Send + Sync>> {
     Some(Box::new(agente().get(url).call().ok()?.into_body().into_reader()))
 }
 
+/// JSON com prazo curto (8 s no todo): fonte que às vezes não responde não pode
+/// segurar a tela esperando.
+pub fn json_curto(url: &str) -> Option<serde_json::Value> {
+    let agente: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(8)))
+        .user_agent(crate::AGENTE)
+        .build()
+        .into();
+    agente.get(url).call().ok()?.into_body().with_config().limit(LIMITE_TEXTO).read_json().ok()
+}
+
 pub fn json(url: &str) -> Option<serde_json::Value> {
     agente().get(url).call().ok()?.into_body().with_config().limit(LIMITE_TEXTO).read_json().ok()
 }

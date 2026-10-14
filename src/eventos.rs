@@ -83,8 +83,8 @@ pub fn agora() -> i64 {
 pub fn buscar(canais: &[(String, Option<String>)]) -> Option<Vec<Jogo>> {
     // As 25 chamadas saem juntas: em fila, a tela esperaria a soma de todas.
     let (agenda, streaming, placares) = std::thread::scope(|escopo| {
-        let agenda = escopo.spawn(|| crate::rede::json(EMBED));
-        let streaming = escopo.spawn(|| crate::rede::json(STREAMING));
+        let agenda = escopo.spawn(|| crate::rede::json_curto(EMBED));
+        let streaming = escopo.spawn(|| crate::rede::json_curto(STREAMING));
         let placares: Vec<_> = ESPN
             .iter()
             .map(|liga| {
@@ -96,9 +96,12 @@ pub fn buscar(canais: &[(String, Option<String>)]) -> Option<Vec<Jogo>> {
         let placares: Vec<Value> = placares.into_iter().filter_map(|p| p.join().ok().flatten()).collect();
         (agenda.join().ok().flatten(), streaming.join().ok().flatten(), placares)
     });
-    let agenda = agenda?;
+    // Sem a embedtv a tela continua com os jogos do monitor; só some se as duas caírem.
+    if agenda.is_none() && streaming.is_none() {
+        return None;
+    }
     let espn: Vec<Placar> = placares.iter().flat_map(ler_espn).collect();
-    let mut jogos = ler_agenda(&agenda, canais);
+    let mut jogos = agenda.map(|a| ler_agenda(&a, canais)).unwrap_or_default();
     // Jogo do monitor que a embedtv já tem (mesmos times, começo a menos de
     // meia hora) não entra de novo.
     let extras: Vec<Jogo> = streaming
