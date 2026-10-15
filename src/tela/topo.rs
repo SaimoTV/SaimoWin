@@ -107,11 +107,25 @@ pub fn menu(app: &mut App, ui_pai: &mut egui::Ui, sobre_video: bool) {
                 direita = radio_no_ar(app, ui, &nome, direita, area.center().y);
             }
 
-            // A esquerda: o ícone e as abas, que rolam para o lado se a
-            // janela for estreita, como na TV.
+            // A esquerda: o ícone e as abas, centralizadas no menu
             marca(ui.painter(), Pos2::new(area.left() + margem + 16.0, area.center().y));
             let inicio = area.left() + margem + 44.0;
-            let faixa = Rect::from_min_max(Pos2::new(inicio, area.top()), Pos2::new(direita.max(inicio + 40.0), area.bottom()));
+            let lista_abas = abas(app);
+            let fonte = forte(15.5);
+            let mut largura_abas = 0.0;
+            for (_, rotulo, _) in &lista_abas {
+                let w = if rotulo.is_empty() {
+                    42.0
+                } else {
+                    ui.painter().layout_no_wrap(rotulo.to_string(), fonte.clone(), TEXTO).size().x + 56.0
+                };
+                largura_abas += w;
+            }
+            if !lista_abas.is_empty() {
+                largura_abas += 2.0 * (lista_abas.len() - 1) as f32;
+            }
+            let x_inicio = (area.center().x - largura_abas / 2.0).clamp(inicio, (direita - largura_abas).max(inicio));
+            let faixa = Rect::from_min_max(Pos2::new(x_inicio, area.top()), Pos2::new((x_inicio + largura_abas).min(direita).max(x_inicio + 40.0), area.bottom()));
             let marcada = aba_marcada(app.aba);
             ui.scope_builder(egui::UiBuilder::new().max_rect(faixa), |ui| {
                 egui::ScrollArea::horizontal()
@@ -121,7 +135,7 @@ pub fn menu(app: &mut App, ui_pai: &mut egui::Ui, sobre_video: bool) {
                         ui.set_min_height(faixa.height());
                         ui.horizontal_centered(|ui| {
                             ui.spacing_mut().item_spacing.x = 2.0;
-                            for (destino, rotulo, icone) in abas(app) {
+                            for (destino, rotulo, icone) in lista_abas {
                                 if aba(ui, rotulo, icone, marcada == destino).clicked() {
                                     escolhida = Some(destino);
                                 }
