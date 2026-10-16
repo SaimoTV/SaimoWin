@@ -70,6 +70,214 @@ const APELIDOS: [(&str, &str); 16] = [
     ("record sp", "recordtv sp"),
 ];
 
+/// Canais cobertos pelo guiadetv.com, com seus slugs oficiais. Fonte primária
+/// rápida que traz horários precisos no fuso de Brasília e sinopse completa.
+const GUIADETV: [(&str, &str); 203] = [
+    ("a e", "ae"),
+    ("ae", "ae"),
+    ("agro", "agro"),
+    ("agro mais", "agro"),
+    ("canal agro", "agro"),
+    ("amc", "amc"),
+    ("animal planet", "animal-planet"),
+    ("arte 1", "arte-1"),
+    ("arte1", "arte-1"),
+    ("axn", "axn"),
+    ("band", "band"),
+    ("band sp", "band"),
+    ("band campinas", "band"),
+    ("band curitiba", "band"),
+    ("band mg", "band"),
+    ("band para", "band"),
+    ("band recife tv tribuna", "band"),
+    ("band rn", "band"),
+    ("band rs", "band"),
+    ("band sergipe", "band"),
+    ("band rj", "band-rj"),
+    ("band news", "bandnews"),
+    ("bandnews", "bandnews"),
+    ("band sports", "bandsports"),
+    ("bandsports", "bandsports"),
+    ("bbc world", "bbc-world"),
+    ("bbc world news", "bbc-world"),
+    ("bis", "bis"),
+    ("bloomberg", "bloomberg"),
+    ("box kids", "box-kids"),
+    ("box kids tv", "box-kids"),
+    ("canal educacao", "canal-educacao"),
+    ("canal rural", "canal-rural"),
+    ("canal uol", "canal-uol"),
+    ("cancao nova", "cancao-nova"),
+    ("cartoon network", "cartoon-network"),
+    ("cartoonito", "cartoonito"),
+    ("cinemax", "cinemax"),
+    ("cnn brasil", "cnn-brasil"),
+    ("combate", "combate"),
+    ("curta", "curta"),
+    ("discovery channel", "discovery-channel"),
+    ("discovery home health", "discovery-home-health"),
+    ("discovery h h", "discovery-home-health"),
+    ("discovery kids", "discovery-kids"),
+    ("discovery science", "discovery-science"),
+    ("discovery theater", "discovery-theater"),
+    ("discovery turbo", "discovery-turbo"),
+    ("discovery world", "discovery-world"),
+    ("discovery id", "investigacao-discovery"),
+    ("investigacao discovery", "investigacao-discovery"),
+    ("investigation discovery", "investigacao-discovery"),
+    ("e", "e"),
+    ("espn", "espn"),
+    ("espn 2", "espn-2"),
+    ("espn 3", "espn-3"),
+    ("espn 4", "espn-4"),
+    ("espn 5", "espn-5"),
+    ("espn 6", "espn-6"),
+    ("film arts", "film-arts"),
+    ("food network", "food-network"),
+    ("fox news", "fox-news"),
+    ("futura", "futura"),
+    ("canal futura", "futura"),
+    ("ge tv", "ge-tv"),
+    ("getv", "ge-tv"),
+    ("globo news", "globo-news"),
+    ("globonews", "globo-news"),
+    ("globo rj", "globo-rio-de-janeiro"),
+    ("globo rio de janeiro", "globo-rio-de-janeiro"),
+    ("globo", "globo-sp"),
+    ("globo sp", "globo-sp"),
+    ("globo am", "globo-sp"),
+    ("globo ce", "globo-sp"),
+    ("globo df", "globo-sp"),
+    ("globo es", "globo-sp"),
+    ("globo go", "globo-sp"),
+    ("globo mg", "globo-sp"),
+    ("globo pb", "globo-sp"),
+    ("globo pe", "globo-sp"),
+    ("globo rs", "globo-sp"),
+    ("gloob", "gloob"),
+    ("gloobinho", "gloobinho"),
+    ("gnt", "gnt"),
+    ("hbo", "hbo"),
+    ("hbo 2", "hbo-2"),
+    ("hbo2", "hbo-2"),
+    ("hbo family", "hbo-family"),
+    ("hbo mundi", "hbo-mundi"),
+    ("hbo plus", "hbo-plus"),
+    ("hbo pop", "hbo-pop"),
+    ("hbo signature", "hbo-signature"),
+    ("hbo xtreme", "hbo-xtreme"),
+    ("hgtv", "hgtv"),
+    ("history", "history"),
+    ("history channel", "history"),
+    ("history 2", "history-2"),
+    ("h2", "history-2"),
+    ("jovem pan news", "jovem-pan-news"),
+    ("lifetime", "lifetime"),
+    ("lifetime movies", "lifetime"),
+    ("megapix", "megapix"),
+    ("multishow", "multishow"),
+    ("music box brazil", "music-box-brazil"),
+    ("n sports", "nsports"),
+    ("nsports", "nsports"),
+    ("n sports jogo 1", "nsports"),
+    ("off", "off"),
+    ("canal off", "off"),
+    ("premiere", "premiere-fc"),
+    ("premiere clubes", "premiere-fc"),
+    ("premiere fc", "premiere-fc"),
+    ("premiere 2", "premiere-2"),
+    ("premiere 3", "premiere-3"),
+    ("premiere 4", "premiere-4"),
+    ("premiere 5", "premiere-5"),
+    ("premiere 6", "premiere-6"),
+    ("premiere 7", "premiere-7"),
+    ("prime box brazil", "prime-box-brazil"),
+    ("record news", "record-news"),
+    ("record", "record-tv"),
+    ("record tv", "record-tv"),
+    ("record sp", "record-tv"),
+    ("record go", "record-tv"),
+    ("record mg", "record-tv"),
+    ("record rj", "record-tv"),
+    ("record internacional", "record-tv"),
+    ("recordtv", "record-tv"),
+    ("rede brasil", "rede-brasil"),
+    ("rede familia", "rede-familia"),
+    ("rede gospel", "rede-gospel"),
+    ("redetv", "rede-tv"),
+    ("rede tv", "rede-tv"),
+    ("rede vida", "rede-vida"),
+    ("sbt", "sbt"),
+    ("sbt sp", "sbt"),
+    ("sbt alterosa", "sbt"),
+    ("sbt ba", "sbt"),
+    ("sbt go", "sbt"),
+    ("sbt interior", "sbt"),
+    ("sbt londrina", "sbt"),
+    ("sbt maringa", "sbt"),
+    ("sbt mg", "sbt"),
+    ("sbt pi", "sbt"),
+    ("sbt pr", "sbt"),
+    ("sbt news", "sbt-news"),
+    ("sbt rj", "sbt-rio-de-janeiro"),
+    ("sbt rio de janeiro", "sbt-rio-de-janeiro"),
+    ("sony", "sony"),
+    ("sony channel", "sony"),
+    ("sony movies", "sony-movies"),
+    ("space", "space"),
+    ("sportv", "sportv"),
+    ("sportv 2", "sportv-2"),
+    ("sportv2", "sportv-2"),
+    ("sportv 3", "sportv-3"),
+    ("sportv3", "sportv-3"),
+    ("sportynet", "sportynet"),
+    ("sportynet 01", "sportynet"),
+    ("sportynet 4", "sportynet"),
+    ("sportynet 1", "sportynet"),
+    ("sportynet 2", "sportynet"),
+    ("sportynet 3", "sportynet"),
+    ("studio universal", "studio-universal"),
+    ("syfy", "syfy"),
+    ("usa network", "syfy"),
+    ("tcm", "tcm"),
+    ("telecine action", "telecine-action"),
+    ("telecine cult", "telecine-cult"),
+    ("telecine fun", "telecine-fun"),
+    ("telecine pipoca", "telecine-pipoca"),
+    ("telecine premium", "telecine-premium"),
+    ("telecine touch", "telecine-touch"),
+    ("terra viva", "terra-viva"),
+    ("tlc", "tlc"),
+    ("tnt", "tnt"),
+    ("tnt novelas", "tnt-novelas"),
+    ("tnt series", "tnt-series"),
+    ("tooncast", "tooncast"),
+    ("travel box brazil", "travel-box-brasil"),
+    ("travel box brasil", "travel-box-brasil"),
+    ("trutv", "trutv"),
+    ("adult swim", "trutv"),
+    ("tv aparecida", "tv-aparecida"),
+    ("tv brasil", "tv-brasil"),
+    ("tv camara", "tv-camara"),
+    ("tv cultura", "tv-cultura"),
+    ("cultura", "tv-cultura"),
+    ("tv gazeta", "tv-gazeta"),
+    ("gazeta", "tv-gazeta"),
+    ("tv ra tim bum", "tv-ra-tim-bum"),
+    ("ra tim bum", "tv-ra-tim-bum"),
+    ("tv senado", "tv-senado"),
+    ("universal tv", "universal-tv"),
+    ("universal channel", "universal-tv"),
+    ("viva", "viva"),
+    ("canal viva", "viva"),
+    ("globoplay novelas", "viva"),
+    ("warner", "warner"),
+    ("warner channel", "warner"),
+    ("woohoo", "woohoo"),
+    ("x sports", "xsports"),
+    ("xsports", "xsports"),
+];
+
 /// Canais que o meuguia.tv lista, com o código de cada um. É a fonte com o
 /// horário mais confiável da TV aberta e dos canais grandes — os feeds XMLTV
 /// erram a grade de vários deles.
@@ -215,8 +423,13 @@ fn montar(canais: &[Canal]) -> HashMap<String, Vec<Programa>> {
         }
     }
 
-    // O meuguia manda na TV aberta e nos canais grandes: os feeds XMLTV erram
-    // a grade de vários deles. São páginas pequenas, seis por vez.
+    // O guiadetv.com vem primeiro: cobre 121+ canais com horários precisos no
+    // fuso de Brasília, sem rate limit 429 e trazendo a sinopse em português.
+    for (canal, lista) in do_guiadetv(canais, de, ate) {
+        grade.entry(canal).or_insert(lista);
+    }
+
+    // O meuguia entra como reserva para canais que o guiadetv não lista (ex.: Canal Brasil).
     for (canal, lista) in do_meuguia(canais, de, ate) {
         grade.entry(canal).or_insert(lista);
     }
@@ -237,6 +450,133 @@ fn montar(canais: &[Canal]) -> HashMap<String, Vec<Programa>> {
         }
     }
     grade
+}
+
+/// Páginas do guiadetv.com, seis de cada vez. Agrupa por slug para baixar cada
+/// página apenas uma vez mesmo quando múltiplos canais compartilham o mesmo slug.
+fn do_guiadetv(canais: &[Canal], de: i64, ate: i64) -> HashMap<String, Vec<Programa>> {
+    let mut slug_para_canais: HashMap<&'static str, Vec<String>> = HashMap::new();
+    for c in canais {
+        let chave = normalizar(&c.nome);
+        if let Some((_, slug)) = GUIADETV.iter().find(|(k, _)| *k == chave) {
+            slug_para_canais.entry(*slug).or_default().push(c.nome.clone());
+        }
+    }
+    if slug_para_canais.is_empty() {
+        return HashMap::new();
+    }
+    let slugs: Vec<&'static str> = slug_para_canais.keys().copied().collect();
+    let fila = std::sync::Mutex::new(slugs.into_iter());
+    let slug_programas: std::sync::Mutex<HashMap<&'static str, Vec<Programa>>> = std::sync::Mutex::new(HashMap::new());
+    std::thread::scope(|escopo| {
+        for _ in 0..6 {
+            escopo.spawn(|| loop {
+                let Some(slug) = fila.lock().unwrap().next() else { return };
+                let url = format!("https://www.guiadetv.com/canal/{slug}");
+                let Some(html) = crate::rede::texto(&url) else { continue };
+                let lista: Vec<Programa> = ler_guiadetv(&html)
+                    .into_iter()
+                    .filter(|p| p.fim > de && p.inicio < ate)
+                    .collect();
+                if !lista.is_empty() {
+                    slug_programas.lock().unwrap().insert(slug, lista);
+                }
+            });
+        }
+    });
+    let mapa = slug_programas.into_inner().unwrap();
+    let mut saida = HashMap::new();
+    for (slug, lista) in mapa {
+        if let Some(nomes) = slug_para_canais.get(slug) {
+            for nome in nomes {
+                saida.insert(nome.clone(), lista.clone());
+            }
+        }
+    }
+    saida
+}
+
+fn ler_guiadetv(html: &str) -> Vec<Programa> {
+    struct ItemBruto {
+        inicio: i64,
+        duracao: i64,
+        titulo: String,
+        descricao: String,
+    }
+    let mut itens: Vec<ItemBruto> = Vec::new();
+    for pedaco in html.split("<li") {
+        let Some(dt) = entre(pedaco, "datetime=\"", "\"") else { continue };
+        if dt.len() < 19 { continue; }
+        let ano: i64 = dt[0..4].parse().unwrap_or(0);
+        let mes: i64 = dt[5..7].parse().unwrap_or(0);
+        let dia: i64 = dt[8..10].parse().unwrap_or(0);
+        let hora: i64 = dt[11..13].parse().unwrap_or(0);
+        let minuto: i64 = dt[14..16].parse().unwrap_or(0);
+        if ano < 2000 || mes < 1 || mes > 12 || dia < 1 || dia > 31 { continue; }
+
+        let inicio = epoch(ano, mes, dia, hora, minuto, 0) + 3 * 3600;
+
+        let Some(depois_prog) = pedaco.split_once("/programa/") else { continue };
+        let Some(apos_tag) = depois_prog.1.split_once('>') else { continue };
+        let Some(titulo_fim) = apos_tag.1.split_once("</a>") else { continue };
+        let titulo = sem_entidades(titulo_fim.0.trim());
+        if titulo.is_empty() || titulo.len() < 2 { continue; }
+
+        let mut duracao = 3600i64;
+        if let Some(apos_time) = pedaco.split_once("</time>") {
+            if let Some(span) = entre(apos_time.1, ">", "</span>") {
+                let t = span.trim();
+                if t.contains('h') {
+                    let parts: Vec<&str> = t.split('h').collect();
+                    let h: i64 = parts[0].parse().unwrap_or(0);
+                    let m: i64 = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+                    duracao = h * 3600 + m * 60;
+                } else if t.ends_with("min") {
+                    let m: i64 = t.trim_end_matches("min").trim().parse().unwrap_or(0);
+                    if m > 0 { duracao = m * 60; }
+                }
+            }
+        }
+
+        let descricao = if let Some(apos_p) = pedaco.split_once("<p") {
+            if let Some(apos_fecha) = apos_p.1.split_once('>') {
+                apos_fecha.1.split_once("</p>").map(|(d, _)| sem_entidades(d.trim())).unwrap_or_default()
+            } else { String::new() }
+        } else { String::new() };
+
+        itens.push(ItemBruto { inicio, duracao, titulo, descricao });
+    }
+
+    itens.sort_by_key(|p| p.inicio);
+
+    let mut unicos: Vec<ItemBruto> = Vec::new();
+    for item in itens {
+        if let Some(last) = unicos.last() {
+            if last.inicio == item.inicio { continue; }
+        }
+        unicos.push(item);
+    }
+
+    let mut saida = Vec::new();
+    let n = unicos.len();
+    for i in 0..n {
+        let item = &unicos[i];
+        let mut fim = item.inicio + item.duracao;
+        if i + 1 < n {
+            let proximo_inicio = unicos[i + 1].inicio;
+            if fim > proximo_inicio || (fim - proximo_inicio).abs() <= 60 {
+                fim = proximo_inicio;
+            }
+        }
+        saida.push(Programa {
+            titulo: item.titulo.clone(),
+            descricao: item.descricao.clone(),
+            categoria: String::new(),
+            inicio: item.inicio,
+            fim: if fim > item.inicio { fim } else { item.inicio + 3600 },
+        });
+    }
+    saida
 }
 
 /// Páginas do meuguia.tv, seis de cada vez: trinta e três downloads ao mesmo
