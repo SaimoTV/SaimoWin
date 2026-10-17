@@ -304,6 +304,7 @@ struct App {
     ajuda_aberta: bool,
     velocidade: f32,
     preencher: bool,
+    pub upscaling: u8,
     ultimo_mouse: Option<egui::Pos2>,
     /// Já voltou ao último canal nesta abertura: a lista recarrega e não pode
     /// arrancar a pessoa do que ela escolheu depois.
@@ -537,6 +538,11 @@ impl App {
             ajuda_aberta: false,
             velocidade: 1.0,
             preencher: false,
+            upscaling: std::fs::read_to_string(catalogo::pasta().join("upscaling.txt"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u8>().ok())
+                .filter(|&v| v <= 2)
+                .unwrap_or(0),
             ultimo_mouse: None,
             retomou_canal: false,
             carregando_filas: false,
@@ -580,6 +586,9 @@ impl App {
         };
         app.ligar_baixadores_de_imagem(&cc.egui_ctx);
         app.reordenar();
+        if app.upscaling > 0 {
+            app.aplicar_upscaling();
+        }
         // Só para conferir telas fora do Windows: SAIMO_ABA=inicio|filmes|series.
         if let Ok(aba) = std::env::var("SAIMO_ABA") {
             match aba.as_str() {
@@ -2297,6 +2306,49 @@ impl App {
         self.preencher = !self.preencher;
         if let Some(mpv) = self.mpv.as_ref() {
             mpv.definir("panscan", if self.preencher { "1.0" } else { "0.0" });
+        }
+    }
+
+    pub fn rotulo_upscaling(&self) -> &'static str {
+        match self.upscaling {
+            1 => "Nitidez HD (720p → Full HD)",
+            2 => "Super Resolução Ultra (Full HD → 4K · EWA Lanczos)",
+            _ => "Desligado",
+        }
+    }
+
+    pub fn alternar_upscaling(&mut self) {
+        self.upscaling = (self.upscaling + 1) % 3;
+        let _ = std::fs::write(catalogo::pasta().join("upscaling.txt"), self.upscaling.to_string());
+        self.aplicar_upscaling();
+        self.aviso = Some((format!("Super Resolução: {}", self.rotulo_upscaling()), Instant::now()));
+    }
+
+    pub fn aplicar_upscaling(&self) {
+        let Some(mpv) = self.mpv.as_ref() else { return };
+        match self.upscaling {
+            1 => {
+                mpv.definir("scale", "spline36");
+                mpv.definir("cscale", "spline36");
+                mpv.definir("deband", "yes");
+                mpv.definir("vf", "lavfi=[unsharp=5:5:0.75:5:5:0.0]");
+            }
+            2 => {
+                mpv.definir("scale", "ewa_lanczossharp");
+                mpv.definir("cscale", "ewa_lanczossharp");
+                mpv.definir("dscale", "mitchell");
+                mpv.definir("correct-downscaling", "yes");
+                mpv.definir("linear-downscaling", "yes");
+                mpv.definir("sigmoid-upscaling", "yes");
+                mpv.definir("deband", "yes");
+                mpv.definir("vf", "lavfi=[unsharp=5:5:1.15:5:5:0.0]");
+            }
+            _ => {
+                mpv.definir("scale", "bilinear");
+                mpv.definir("cscale", "bilinear");
+                mpv.definir("deband", "no");
+                mpv.definir("vf", "");
+            }
         }
     }
 
