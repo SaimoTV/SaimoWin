@@ -254,7 +254,7 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             if linha(ui, "Preencher a tela", if app.preencher { "Ligado: corta as bordas, sem faixas pretas" } else { "Desligado: o vídeo inteiro, com faixas se preciso" }, Icone::Preencher).clicked() {
                 acao = Some(0);
             }
-            if linha(ui, "Super Resolução (Upscaling)", app.rotulo_upscaling(), Icone::TelaCheia).clicked() {
+            if linha(ui, "Super Resolução (Upscaling)", &app.rotulo_upscaling(), Icone::TelaCheia).clicked() {
                 acao = Some(7);
             }
             if linha(ui, "Velocidade dos filmes e séries", &format!("{}×", app.velocidade), Icone::Velocidade).clicked() {

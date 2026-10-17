@@ -243,12 +243,12 @@ impl Mpv {
         let opcoes = [
             // Sem janela própria: quem desenha é a API de render.
             ("vo", "libmpv"),
-            // A API de render usa OpenGL/WGL. No Windows, decodificação
-            // direta por D3D11 exige ANGLE; alguns drivers aceitam a faixa mas
-            // entregam somente quadros pretos. O modo copy continua usando a
-            // GPU para decodificar e traz o quadro para a memória antes de
-            // desenhá-lo, funcionando também nesses aparelhos.
-            ("hwdec", "auto-copy-safe"),
+            // A API de render usa OpenGL/WGL. No Windows, a decodificação por
+            // hardware prioriza D3D11VA (NVIDIA GeForce/RTX, AMD Radeon e Intel
+            // Arc/Iris/UHD), seguida de NVDEC (NVIDIA) e DXVA2, trazendo o
+            // quadro decodificado na placa de vídeo sem tela preta.
+            ("hwdec", "d3d11va-copy,nvdec-copy,dxva2-copy,auto-copy-safe"),
+            ("hwdec-codecs", "all"),
             // Ao vivo: perder quadro é melhor que atrasar a imagem.
             ("profile", "low-latency"),
             ("cache", "yes"),

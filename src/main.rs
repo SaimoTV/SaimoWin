@@ -42,6 +42,40 @@ const CODIGO: &str = "1010";
 const ESPERA_DA_FONTE: Duration = Duration::from_secs(14);
 const SUMIR_LETREIRO: Duration = Duration::from_secs(6);
 
+/// Símbolos lidos pelos drivers NVIDIA (Optimus) e AMD (PowerXpress / SmartShift)
+/// ao iniciar o processo no Windows para vincular o contexto gráfico e de vídeo
+/// à placa de vídeo dedicada de alto desempenho (GeForce RTX/GTX ou Radeon RX).
+#[cfg(target_os = "windows")]
+#[no_mangle]
+pub static NvOptimusEnablement: u32 = 0x0000_0001;
+
+#[cfg(target_os = "windows")]
+#[no_mangle]
+pub static AmdPowerXpressRequestHighPerformance: i32 = 1;
+
+/// Identifica a placa de vídeo ativa (NVIDIA, AMD ou Intel) pelo contexto OpenGL.
+fn detectar_gpu(cc: &eframe::CreationContext<'_>) -> &'static str {
+    use eframe::glow::HasContext;
+    let Some(gl) = cc.gl.as_ref() else { return "GPU" };
+    let info = unsafe {
+        format!(
+            "{} {}",
+            gl.get_parameter_string(eframe::glow::VENDOR),
+            gl.get_parameter_string(eframe::glow::RENDERER)
+        )
+        .to_ascii_lowercase()
+    };
+    if info.contains("nvidia") || info.contains("geforce") || info.contains("rtx") || info.contains("gtx") || info.contains("quadro") {
+        "NVIDIA GPU"
+    } else if info.contains("amd") || info.contains("radeon") || info.contains("ati ") {
+        "AMD Radeon GPU"
+    } else if info.contains("intel") || info.contains("arc") || info.contains("iris") || info.contains("uhd") {
+        "Intel GPU"
+    } else {
+        "GPU"
+    }
+}
+
 fn main() -> eframe::Result<()> {
     let mut janela = egui::ViewportBuilder::default()
         .with_title("Saimo TV")
@@ -305,6 +339,7 @@ struct App {
     velocidade: f32,
     preencher: bool,
     pub upscaling: u8,
+    pub gpu_nome: &'static str,
     ultimo_mouse: Option<egui::Pos2>,
     /// Já voltou ao último canal nesta abertura: a lista recarrega e não pode
     /// arrancar a pessoa do que ela escolheu depois.
@@ -543,6 +578,7 @@ impl App {
                 .and_then(|s| s.trim().parse::<u8>().ok())
                 .filter(|&v| v <= 2)
                 .unwrap_or(0),
+            gpu_nome: detectar_gpu(cc),
             ultimo_mouse: None,
             retomou_canal: false,
             carregando_filas: false,
@@ -2309,11 +2345,11 @@ impl App {
         }
     }
 
-    pub fn rotulo_upscaling(&self) -> &'static str {
+    pub fn rotulo_upscaling(&self) -> String {
         match self.upscaling {
-            1 => "Nitidez HD (720p → Full HD)",
-            2 => "Super Resolução Ultra (Full HD → 4K · EWA Lanczos)",
-            _ => "Desligado",
+            1 => format!("Nitidez HD ({} · 720p → Full HD)", self.gpu_nome),
+            2 => format!("Super Resolução Ultra ({} · até 4K)", self.gpu_nome),
+            _ => "Desligado".to_string(),
         }
     }
 
@@ -2325,31 +2361,121 @@ impl App {
     }
 
     pub fn aplicar_upscaling(&self) {
-        let Some(mpv) = self.mpv.as_ref() else { return };
-        match self.upscaling {
+        if let Some(mpv) = self.mpv.as_ref() {
+            Self::configurar_upscaling_mpv(mpv, self.upscaling);
+        }
+        if let Some(outra) = self.outra_tela.as_ref() {
+            Self::configurar_upscaling_mpv(&outra.mpv, self.upscaling);
+        }
+    }
+
+    fn configurar_upscaling_mpv(mpv: &mpv::Mpv, modo: u8) {
+        // Nunca usa filtros de CPU (vf=lavfi=[unsharp=...]): todo o upscaling
+        // e nitidez CAS rodam 100% nos shaders da GPU (NVIDIA, AMD e Intel).
+        mpv.definir("vf", "");
+        match modo {
             1 => {
+                let shader = Self::garantir_shader_gpu("saimo_cas_hd.glsl", "0.55");
                 mpv.definir("scale", "spline36");
                 mpv.definir("cscale", "spline36");
+                mpv.definir("dscale", "mitchell");
+                mpv.definir("scale-antiring", "0.80");
+                mpv.definir("cscale-antiring", "0.80");
+                mpv.definir("sigmoid-upscaling", "yes");
                 mpv.definir("deband", "yes");
-                mpv.definir("vf", "lavfi=[unsharp=5:5:0.75:5:5:0.0]");
+                mpv.definir("deband-iterations", "1");
+                mpv.definir("deband-threshold", "32");
+                mpv.definir("glsl-shaders", &shader);
             }
             2 => {
+                let shader = Self::garantir_shader_gpu("saimo_fsr_ultra.glsl", "0.85");
                 mpv.definir("scale", "ewa_lanczossharp");
                 mpv.definir("cscale", "ewa_lanczossharp");
                 mpv.definir("dscale", "mitchell");
+                mpv.definir("scale-antiring", "0.85");
+                mpv.definir("cscale-antiring", "0.85");
                 mpv.definir("correct-downscaling", "yes");
                 mpv.definir("linear-downscaling", "yes");
                 mpv.definir("sigmoid-upscaling", "yes");
                 mpv.definir("deband", "yes");
-                mpv.definir("vf", "lavfi=[unsharp=5:5:1.15:5:5:0.0]");
+                mpv.definir("deband-iterations", "2");
+                mpv.definir("deband-threshold", "36");
+                mpv.definir("glsl-shaders", &shader);
             }
             _ => {
+                mpv.definir("glsl-shaders", "");
                 mpv.definir("scale", "bilinear");
                 mpv.definir("cscale", "bilinear");
+                mpv.definir("scale-antiring", "0.0");
+                mpv.definir("cscale-antiring", "0.0");
                 mpv.definir("deband", "no");
-                mpv.definir("vf", "");
             }
         }
+    }
+
+    /// Grava o shader GLSL de Super Resolução em luminância com trava anti-halo
+    /// para execução direta nas placas de vídeo NVIDIA, AMD e Intel via libmpv.
+    fn garantir_shader_gpu(nome: &str, nitidez: &str) -> String {
+        let caminho = catalogo::pasta().join(nome);
+        let codigo = format!(
+            r#"//!HOOK MAIN
+//!BIND HOOKED
+//!DESC Saimo GPU Luminance Anti-Ringing CAS ({nitidez})
+
+float saimo_luma(vec3 rgb) {{
+    return dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+}}
+
+vec4 hook() {{
+    vec4 center = HOOKED_tex(HOOKED_pos);
+    vec3 c = center.rgb;
+    vec3 n = HOOKED_texOff(vec2( 0.0, -1.0)).rgb;
+    vec3 s = HOOKED_texOff(vec2( 0.0,  1.0)).rgb;
+    vec3 w = HOOKED_texOff(vec2(-1.0,  0.0)).rgb;
+    vec3 e = HOOKED_texOff(vec2( 1.0,  0.0)).rgb;
+    vec3 nw = HOOKED_texOff(vec2(-1.0, -1.0)).rgb;
+    vec3 ne = HOOKED_texOff(vec2( 1.0, -1.0)).rgb;
+    vec3 sw = HOOKED_texOff(vec2(-1.0,  1.0)).rgb;
+    vec3 se = HOOKED_texOff(vec2( 1.0,  1.0)).rgb;
+
+    float lc = saimo_luma(c);
+    float ln = saimo_luma(n);
+    float ls = saimo_luma(s);
+    float lw = saimo_luma(w);
+    float le = saimo_luma(e);
+    float lnw = saimo_luma(nw);
+    float lne = saimo_luma(ne);
+    float lsw = saimo_luma(sw);
+    float lse = saimo_luma(se);
+
+    float mn4 = min(min(ln, ls), min(lw, le));
+    float mx4 = max(max(ln, ls), max(lw, le));
+    float mnDiag = min(min(lnw, lne), min(lsw, lse));
+    float mxDiag = max(max(lnw, lne), max(lsw, lse));
+    float mnL = 0.5 * (mn4 + min(mn4, min(mnDiag, lc)));
+    float mxL = 0.5 * (mx4 + max(mx4, max(mxDiag, lc)));
+
+    float contrast = mxL - mnL;
+    float noiseGate = smoothstep(0.015, 0.055, contrast);
+
+    float amp = clamp(min(mnL, 1.0 - mxL) / max(mxL, 1e-4), 0.0, 1.0);
+    amp = sqrt(amp);
+
+    float peak = -1.0 / mix(8.0, 5.0, {nitidez});
+    float wt = amp * peak * noiseGate;
+    float diagWt = wt * 0.25;
+
+    float sumW = 1.0 + 4.0 * wt + 4.0 * diagWt;
+    float sharpL = (lc + (ln + ls + lw + le) * wt + (lnw + lne + lsw + lse) * diagWt) / max(sumW, 1e-4);
+
+    sharpL = clamp(sharpL, mnL, mxL);
+    float delta = sharpL - lc;
+    return vec4(clamp(c + vec3(delta), 0.0, 1.0), center.a);
+}}
+"#
+        );
+        let _ = std::fs::write(&caminho, codigo);
+        caminho.to_string_lossy().into_owned()
     }
 
     pub fn escolher_fonte(&mut self, fonte: usize) {
@@ -2632,6 +2758,7 @@ impl App {
         let tocando = self.tocando.take();
         self.outra_tela = Some(OutraTela { mpv: antiga, tocando });
         self.foco_a_direita = true;
+        self.aplicar_upscaling();
         self.ajustar_som_das_telas();
         self.aba = Aba::Canais;
         self.lista_aberta = true;
