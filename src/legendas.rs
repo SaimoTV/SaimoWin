@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-const VOD: &str = "https://raw.githubusercontent.com/gabrielsaimo/SaimoPlayer/main/vod/";
+const VOD: &str = crate::origens::FILMES;
 const OPENSUBTITLES: &str = "https://opensubtitles-v3.strem.io/subtitles";
 const FRAGMENTOS: u32 = 100;
 

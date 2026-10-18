@@ -13,8 +13,7 @@
 
 use std::time::{Duration, SystemTime};
 
-const ENDERECO: &str =
-    "https://raw.githubusercontent.com/gabrielsaimo/SaimoPlayer/main/vod/destaques.txt";
+const ARQUIVO: &str = "destaques.txt";
 /// A lista muda quando o gerador roda; um dia em disco abre instantâneo sem
 /// ficar semanas desatualizado.
 const VALIDADE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -76,7 +75,7 @@ fn texto() -> Option<String> {
         }
     }
 
-    if let Some(baixado) = crate::rede::texto(ENDERECO) {
+    if let Some(baixado) = crate::rede::texto(&format!("{}{ARQUIVO}", crate::origens::FILMES)) {
         if !baixado.trim().is_empty() {
             let _ = std::fs::write(&local, &baixado);
             return Some(baixado);

@@ -7,7 +7,7 @@
 
 use std::sync::Mutex;
 
-const BASE: &str = "https://raw.githubusercontent.com/gabrielsaimo/SaimoPlayer/main/vod/";
+const BASE: &str = crate::origens::FILMES;
 
 #[derive(Clone, Debug, Default)]
 pub struct Gaveta {

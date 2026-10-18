@@ -1,4 +1,4 @@
-//! As rádios: `vod/radios.txt` do SaimoPlayer, a mesma lista da TV Box.
+//! As rádios: `radios.txt` do endereço de canais, a mesma lista da TV Box.
 //!
 //! Uma por linha, `nome|endereço|logo` (o logo é opcional). A tela mostra na
 //! hora a última lista guardada em disco e busca a do repositório por trás,
@@ -7,7 +7,6 @@
 //! O estilo (rock, notícias, gospel...) sai do nome da rádio, com as mesmas
 //! palavras da TV Box: a lista publicada só tem nome, endereço e logo.
 
-const ENDERECO: &str = "https://raw.githubusercontent.com/gabrielsaimo/SaimoPlayer/main/vod/radios.txt";
 const ARQUIVO: &str = "radios.txt";
 const RECENTES: &str = "radios-recentes.txt";
 
@@ -69,7 +68,7 @@ pub fn locais() -> Vec<Radio> {
 /// A lista do repositório, guardada para a próxima vez. Nada quando a rede
 /// falhou ou veio outra coisa: aí vale a local.
 pub fn baixar() -> Option<Vec<Radio>> {
-    let texto = crate::rede::texto(ENDERECO)?;
+    let texto = crate::rede::texto(&format!("{}{ARQUIVO}", crate::origens::CANAIS))?;
     let lista = ler(&texto);
     if lista.len() < 10 {
         return None;

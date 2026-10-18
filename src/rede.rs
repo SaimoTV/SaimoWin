@@ -51,20 +51,6 @@ pub fn json(url: &str) -> Option<serde_json::Value> {
     agente().get(url).call().ok()?.into_body().with_config().limit(LIMITE_TEXTO).read_json().ok()
 }
 
-/// Para onde um endereço redireciona, sem baixar o conteúdo.
-pub fn destino(url: &str) -> Option<String> {
-    let agente: ureq::Agent = ureq::Agent::config_builder()
-        .max_redirects(0)
-        // 302 é a resposta esperada aqui, não um erro.
-        .http_status_as_error(false)
-        .timeout_connect(Some(Duration::from_secs(15)))
-        .user_agent(crate::AGENTE)
-        .build()
-        .into();
-    let resposta = agente.get(url).call().ok()?;
-    resposta.headers().get("location")?.to_str().ok().map(str::to_string)
-}
-
 /// Envia e lê a resposta. Só para o "olá": o resto é fogo e esquece.
 pub fn postar_e_ler(url: String, corpo: String) -> Option<serde_json::Value> {
     agente()

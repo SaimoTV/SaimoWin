@@ -9,7 +9,9 @@ OpenGL) e vídeo pelo mpv. Não há navegador nem página HTML em lugar nenhum.
 
 Versão atual: **2.0.0**. O instalador sai no release único de
 [SaimoPlayer](https://github.com/gabrielsaimo/SaimoPlayer/releases/latest), e o
-programa avisa quando há versão nova.
+programa avisa quando há versão nova, lendo `versao.json` de
+`saimo-canais.pages.dev` (sem dono/repositório gravado; só aceita links de release
+do GitHub). Catálogo em `saimo-canais.pages.dev` e acervo em `saimo-filmes.pages.dev`.
 
 ## Visual
 
@@ -223,8 +225,9 @@ onde a tela é `inicio`, `ondemand`, `filmes`, `explorar`, `eventos`, `radios`,
 | `src/abertura.rs` | a abertura animada ao abrir o programa |
 | `src/midia.rs` | quadro de "tocando agora" do Windows: título e logo |
 | `src/catalogo.rs` | a mesma lista publicada dos outros aplicativos |
+| `src/origens.rs` | os dois endereços estáveis (`saimo-canais.pages.dev`, `saimo-filmes.pages.dev`); único lugar com URL de dados |
 | `src/telemetria.rs` | Saimo Monitor, plataforma `windows` |
-| `src/atualizacao.rs` | versão nova no GitHub, download pelo navegador |
+| `src/atualizacao.rs` | lê `versao.json` do endereço de canais, download pelo navegador (só links de release do GitHub) |
 | `src/pulos.rs` | TheIntroDB: abertura, recapitulação e créditos |
 | `src/legendas.rs` | OpenSubtitles pelo id do TMDB (via `vod/imdb/`) |
 | `src/vod.rs`, `src/progresso.rs` | acervo e onde cada título parou |

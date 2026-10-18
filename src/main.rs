@@ -27,6 +27,7 @@ mod bateria;
 mod connect;
 mod controle;
 mod rede;
+mod origens;
 mod telemetria;
 
 use catalogo::Canal;

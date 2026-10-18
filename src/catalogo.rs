@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-pub const BASE: &str = "https://raw.githubusercontent.com/gabrielsaimo/SaimoPlayer/main/";
+pub const BASE: &str = crate::origens::CANAIS;
 
 /// Ordem das seções, igual à do Mac, do TV Box e do site.
 pub const ORDEM: [&str; 10] = [
