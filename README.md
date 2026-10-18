@@ -72,6 +72,21 @@ na TV Box (pt, senão en, senão sem idioma; a capa quando não há logo)
 (`src/midia.rs`, `src/ficha.rs`). Filme e
 série pausam por ali; ao vivo o quadro não oferece pausa.
 
+## Placa de vídeo e falhas
+
+O app não escolhe a placa de vídeo: em notebook com placa integrada e
+dedicada, quem decide é o Windows (Configurações > Sistema > Tela > Elementos
+gráficos). A 2.3.0 forçava a dedicada (`NvOptimusEnablement` /
+`AmdPowerXpressRequestHighPerformance` exportados no `.exe`) e decodificava
+com D3D11VA/NVDEC em todos os codecs; em alguns notebooks o app fechava
+sozinho depois de alguns instantes, e só parava abrindo pela integrada. Voltou
+a decodificação segura do mpv (`hwdec=auto-copy-safe`), sem forçar placa.
+
+Se o app cair por um erro dele, a causa fica em `falhas.txt`, na pasta de
+dados do app (`%APPDATA%\SaimoTV`). Queda dentro do driver de vídeo não passa
+por ali: essa aparece no Visualizador de Eventos do Windows (Logs do Windows >
+Aplicativo).
+
 ## Saimo Connect (controle pelo celular)
 
 O app Saimo do celular acha este computador e manda nele exatamente como manda

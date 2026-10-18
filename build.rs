@@ -89,17 +89,4 @@ END
         // executável sem enfeite que uma compilação que não termina.
         _ => println!("cargo:warning=sem {windres}: o .exe sai sem ícone e sem ficha de versão"),
     }
-
-    // Exporta os símbolos oficiais da NVIDIA (Optimus) e da AMD (PowerXpress /
-    // SmartShift) na tabela PE do executável para o driver selecionar sempre a
-    // GPU dedicada de alto desempenho (GeForce RTX/GTX ou Radeon RX).
-    let def = saida.join("saimo-gpu.def");
-    if std::fs::write(
-        &def,
-        "EXPORTS\n    NvOptimusEnablement DATA\n    AmdPowerXpressRequestHighPerformance DATA\n",
-    )
-    .is_ok()
-    {
-        println!("cargo:rustc-link-arg-bins={}", def.display());
-    }
 }

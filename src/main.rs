@@ -44,17 +44,6 @@ const CODIGO: &str = "1010";
 const ESPERA_DA_FONTE: Duration = Duration::from_secs(14);
 const SUMIR_LETREIRO: Duration = Duration::from_secs(6);
 
-/// Símbolos lidos pelos drivers NVIDIA (Optimus) e AMD (PowerXpress / SmartShift)
-/// ao iniciar o processo no Windows para vincular o contexto gráfico e de vídeo
-/// à placa de vídeo dedicada de alto desempenho (GeForce RTX/GTX ou Radeon RX).
-#[cfg(target_os = "windows")]
-#[no_mangle]
-pub static NvOptimusEnablement: u32 = 0x0000_0001;
-
-#[cfg(target_os = "windows")]
-#[no_mangle]
-pub static AmdPowerXpressRequestHighPerformance: i32 = 1;
-
 /// Identifica a placa de vídeo ativa (NVIDIA, AMD ou Intel) pelo contexto OpenGL.
 fn detectar_gpu(cc: &eframe::CreationContext<'_>) -> &'static str {
     use eframe::glow::HasContext;
@@ -79,6 +68,18 @@ fn detectar_gpu(cc: &eframe::CreationContext<'_>) -> &'static str {
 }
 
 fn main() -> eframe::Result<()> {
+    // Se o app cair, a causa fica em falhas.txt (pasta de dados do app, com
+    // as últimas ocorrências): sem console no Windows, sem isto um "fechou
+    // sozinho" chegava sem pista nenhuma.
+    let padrao = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let caminho = catalogo::pasta().join("falhas.txt");
+        let antes = std::fs::read_to_string(&caminho).unwrap_or_default();
+        let antes: String = antes.chars().rev().take(20_000).collect::<Vec<_>>().into_iter().rev().collect();
+        let quando = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _ = std::fs::write(&caminho, format!("{antes}[{quando}] versão {} — {info}\n", env!("CARGO_PKG_VERSION")));
+        padrao(info);
+    }));
     let mut janela = egui::ViewportBuilder::default()
         .with_title("Saimo TV")
         .with_inner_size([1280.0, 720.0])
