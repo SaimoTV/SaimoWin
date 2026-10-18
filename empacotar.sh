@@ -62,6 +62,12 @@ Arquivos necessários
   Se o Windows bloquear algum arquivo baixado, clique com botão direito nele,
   vá em Propriedades e marque a opção "Desbloquear".
 
+Controle pelo celular (Saimo Connect)
+  O app Saimo do celular, na mesma rede, acha este computador e controla os
+  canais, os filmes, o volume e pode tocar o som no celular. Na primeira vez
+  o Windows pergunta sobre o Firewall: permita em "Redes privadas". Cada
+  celular novo só entra depois de você clicar em "Permitir" aqui.
+
 O aplicativo avisa quando sai versão nova e abre o download no navegador.
 TXT
 

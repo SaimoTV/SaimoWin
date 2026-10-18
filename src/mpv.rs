@@ -139,7 +139,12 @@ struct Render(*mut mpv_render_context);
 unsafe impl Send for Render {}
 unsafe impl Sync for Render {}
 
+/// O número de cada mpv do app: o Saimo Connect usa para saber que lista
+/// cada um está tocando.
+static PROXIMO_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 pub struct Mpv {
+    id: u64,
     simbolos: Arc<Simbolos>,
     handle: Arc<Ponteiro>,
     render: Mutex<Option<Render>>,
@@ -324,6 +329,7 @@ impl Mpv {
         }
 
         Ok(Mpv {
+            id: PROXIMO_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
             simbolos,
             handle,
             render: Mutex::new(None),
@@ -391,19 +397,44 @@ impl Mpv {
         self.tocar_com_legenda(url, referer, agente, None);
     }
 
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Ao vivo: a lista passa pela régua do Saimo Connect (`connect::hls`),
+    /// a mesma que o celular lê, para o som no celular tocar junto com a
+    /// imagem daqui. Os pedaços continuam vindo direto da origem. Sem o
+    /// Connect no ar, ou fora do HLS, toca direto como sempre.
+    ///
+    /// `rebase-start-time=no` só neste arquivo: a posição (`time-pos`) fica no
+    /// carimbo de tempo dos próprios pedaços, que é como o app a leva para a
+    /// régua comum.
+    pub fn tocar_ao_vivo(&self, url: &str, referer: Option<&str>, agente: Option<&str>) {
+        match crate::connect::pela_regua(url, referer, agente, self.id) {
+            Some(local) => self.carregar(&local, url, referer, agente, None, &["rebase-start-time=no"]),
+            None => self.tocar(url, referer, agente),
+        }
+    }
+
     /// Como `tocar`, com uma legenda externa (arquivo .srt) já ligada à
     /// abertura. Trocar de fonte do mesmo título passa por aqui: a legenda
     /// escolhida acompanha, e não some junto com o arquivo anterior.
     pub fn tocar_com_legenda(&self, url: &str, referer: Option<&str>, agente: Option<&str>, legenda: Option<&str>) {
+        self.carregar(url, url, referer, agente, legenda, &[]);
+    }
+
+    /// Abre `endereco`; `original` é o endereço da fonte (o mesmo, fora da
+    /// régua), que decide as opções.
+    fn carregar(&self, endereco: &str, original: &str, referer: Option<&str>, agente: Option<&str>, legenda: Option<&str>, extras: &[&str]) {
         self.propriedade("referrer", referer.unwrap_or(""));
         self.propriedade("user-agent", agente.unwrap_or(crate::AGENTE));
         // O atraso da legenda é do arquivo: o próximo recomeça no original.
         self.propriedade("sub-delay", "0");
-        let mut opcoes: Vec<String> = Vec::new();
+        let mut opcoes: Vec<String> = extras.iter().map(|o| o.to_string()).collect();
         // Alguns masters HLS são servidos como text/plain e terminam em .txt.
         // Sem a opção por arquivo o FFmpeg os detecta como terminal ANSI e o
         // MPV nunca chega às variantes, áudios ou legendas.
-        if url.split('?').next().unwrap_or(url).to_ascii_lowercase().ends_with(".txt") {
+        if original.split('?').next().unwrap_or(original).to_ascii_lowercase().ends_with(".txt") {
             opcoes.push("demuxer-lavf-format=hls".to_string());
         }
         if let Some(caminho) = legenda {
@@ -411,9 +442,9 @@ impl Mpv {
             opcoes.push(format!("sub-files=%{}%{}", caminho.len(), caminho));
         }
         if opcoes.is_empty() {
-            self.comando(&["loadfile", url, "replace"]);
+            self.comando(&["loadfile", endereco, "replace"]);
         } else {
-            self.comando(&["loadfile", url, "replace", "-1", &opcoes.join(",")]);
+            self.comando(&["loadfile", endereco, "replace", "-1", &opcoes.join(",")]);
         }
     }
 

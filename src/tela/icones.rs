@@ -54,6 +54,8 @@ pub enum Icone {
     Parar,
     Direita,
     Esquerda,
+    /// O "Cast" da TV Box: o Saimo Connect.
+    Cast,
 }
 
 /// O `pathData` de cada ícone, na caixa de 24 x 24 da Material.
@@ -103,6 +105,7 @@ fn caminhos(icone: Icone) -> &'static [&'static str] {
         Icone::Parar => &["M6,6h12v12H6z"],
         Icone::Direita => &["M10,6L8.59,7.41 13.17,12l-4.58,4.59L10,18l6,-6z"],
         Icone::Esquerda => &["M15.41,7.41L14,6l-6,6 6,6 1.41,-1.41L10.83,12z"],
+        Icone::Cast => &["M1,18v3h3c0,-1.66 -1.34,-3 -3,-3zM1,14v2c2.76,0 5,2.24 5,5h2c0,-3.87 -3.13,-7 -7,-7zM1,10v2c4.97,0 9,4.03 9,9h2c0,-6.08 -4.92,-11 -11,-11zM21,3L3,3c-1.1,0 -2,0.9 -2,2v3h2L3,5h18v14h-7v2h7c1.1,0 2,-0.9 2,-2L23,5c0,-1.1 -0.9,-2 -2,-2z"],
     }
 }
 
@@ -464,7 +467,7 @@ mod testes {
 
     #[test]
     fn todo_icone_desenha_alguma_coisa() {
-        for icone in [Icone::Eventos, Icone::Velocidade, Icone::Radio, Icone::Ajustes, Icone::Coracao] {
+        for icone in [Icone::Eventos, Icone::Velocidade, Icone::Radio, Icone::Ajustes, Icone::Coracao, Icone::Cast] {
             let soma: f32 = rasterizar(caminhos(icone), 32).iter().sum();
             assert!(soma > 20.0, "{icone:?}");
         }

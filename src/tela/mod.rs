@@ -185,6 +185,7 @@ pub fn desenhar(app: &mut App, ui: &mut egui::Ui) {
         janelas::atalhos(app, ctx);
     }
     janelas::atualizacao(app, ctx);
+    janelas::aprovacao(app, ctx);
 }
 
 // MARK: - Fundo do app

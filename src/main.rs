@@ -24,6 +24,8 @@ mod radios;
 mod legendas;
 mod midia;
 mod bateria;
+mod connect;
+mod controle;
 mod rede;
 mod telemetria;
 
@@ -421,6 +423,14 @@ struct App {
     pub pedir_foco_na_busca: bool,
     /// A abertura animada, enquanto está na tela.
     abertura: Option<abertura::Abertura>,
+    /// Os pedidos do Saimo Connect (o celular como controle remoto).
+    connect: Receiver<connect::Pedido>,
+    /// Celulares esperando o "Permitir": o cliente, o nome e desde quando.
+    pub aprovacoes: std::collections::VecDeque<(u64, String, Instant)>,
+    /// Quando o estado foi publicado para os celulares pela última vez.
+    connect_publicado: Instant,
+    /// O filme ou episódio que o celular mandou abrir, a caminho.
+    remoto: controle::Remoto,
 }
 
 /// A segunda tela da multi tela: outro mpv, outro canal, sem som.
@@ -619,6 +629,10 @@ impl App {
             episodios_no_player: false,
             temporada_aberta: 0,
             pedir_foco_na_busca: false,
+            connect: connect::iniciar(cc.egui_ctx.clone()),
+            aprovacoes: std::collections::VecDeque::new(),
+            connect_publicado: Instant::now(),
+            remoto: controle::Remoto::default(),
         };
         app.ligar_baixadores_de_imagem(&cc.egui_ctx);
         app.reordenar();
@@ -1267,7 +1281,7 @@ impl App {
             self.tocando = None;
             return;
         };
-        mpv.tocar(&f.url, f.referer.as_deref(), f.agente.as_deref());
+        mpv.tocar_ao_vivo(&f.url, f.referer.as_deref(), f.agente.as_deref());
         mpv.pausa(false);
         self.pausado = false;
         telemetria::comecou("live", &c.nome, &f.url, fonte + 1, nova);
@@ -1709,11 +1723,7 @@ impl App {
         // Número de canal, e o código que revela a lista restrita.
         if !escrevendo && self.aba == Aba::Canais {
             for c in texto_digitado.chars().filter(|c| c.is_ascii_digit()) {
-                if self.digitado_em.elapsed() > Duration::from_millis(1500) {
-                    self.digitado.clear();
-                }
-                self.digitado.push(c);
-                self.digitado_em = Instant::now();
+                self.digito(c);
             }
             if texto_digitado.contains('?') {
                 self.ajuda_aberta = !self.ajuda_aberta;
@@ -1753,130 +1763,146 @@ impl App {
                     continue;
                 }
             }
-            // Enter com o botão de pular à vista faz o que o botão diz; Esc
-            // dispensa o cartão do próximo episódio.
-            if self.aba == Aba::Canais && self.tocando_vod.is_some() {
-                if key == egui::Key::Enter && self.acao_na_tela() {
-                    continue;
-                }
-                if key == egui::Key::Escape && self.proximo_na_tela().is_some() {
-                    self.dispensar_proximo();
-                    continue;
+            self.tecla(ctx, key, modifiers);
+        }
+    }
+
+    /// Um número de canal sendo digitado (pelo teclado ou pelo controle do
+    /// celular); o código que revela a lista restrita passa por aqui também.
+    pub fn digito(&mut self, c: char) {
+        if self.digitado_em.elapsed() > Duration::from_millis(1500) {
+            self.digitado.clear();
+        }
+        self.digitado.push(c);
+        self.digitado_em = Instant::now();
+    }
+
+    /// O que cada tecla faz. O controle remoto do celular passa por aqui
+    /// também, com as mesmas teclas.
+    pub fn tecla(&mut self, ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers) {
+        // Enter com o botão de pular à vista faz o que o botão diz; Esc
+        // dispensa o cartão do próximo episódio.
+        if self.aba == Aba::Canais && self.tocando_vod.is_some() {
+            if key == egui::Key::Enter && self.acao_na_tela() {
+                return;
+            }
+            if key == egui::Key::Escape && self.proximo_na_tela().is_some() {
+                self.dispensar_proximo();
+                return;
+            }
+        }
+        match key {
+            egui::Key::Space => self.alternar_pausa(),
+            egui::Key::F if modifiers.ctrl => {
+                ctx.memory_mut(|m| m.request_focus(egui::Id::new("busca-canais")));
+                self.lista_aberta = true;
+            }
+            egui::Key::F | egui::Key::F11 => self.alternar_tela_cheia(ctx),
+            egui::Key::F1 | egui::Key::H => self.ajuda_aberta = !self.ajuda_aberta,
+            egui::Key::G => {
+                self.guia_aberto = !self.guia_aberto;
+                self.abrir_secao(Aba::Canais);
+            }
+            egui::Key::L => self.lista_aberta = !self.lista_aberta,
+            egui::Key::M => self.alternar_mudo(),
+            egui::Key::Plus | egui::Key::Equals => self.mudar_volume(5),
+            egui::Key::Minus => self.mudar_volume(-5),
+            egui::Key::PageUp => self.pular_canal(-1),
+            egui::Key::PageDown => self.pular_canal(1),
+            egui::Key::D if self.aba == Aba::Canais => {
+                if self.outra_tela.is_some() {
+                    self.sair_da_multi_tela();
+                } else {
+                    self.entrar_na_multi_tela();
                 }
             }
-            match key {
-                egui::Key::Space => self.alternar_pausa(),
-                egui::Key::F if modifiers.ctrl => {
-                    ctx.memory_mut(|m| m.request_focus(egui::Id::new("busca-canais")));
+            egui::Key::T if self.outra_tela.is_some() => self.trocar_tela_em_foco(),
+            egui::Key::P => self.alternar_janelinha(ctx),
+            egui::Key::E if self.aba == Aba::Canais && self.tocando_vod.as_ref().is_some_and(|t| t.episodio.is_some()) => {
+                self.episodios_no_player = !self.episodios_no_player;
+            }
+            egui::Key::Tab => {
+                // A ordem do menu do topo, como na TV Box.
+                let proxima = match self.aba {
+                    Aba::Buscar => Aba::Inicio,
+                    Aba::Inicio => Aba::Canais,
+                    Aba::Canais => Aba::Eventos,
+                    Aba::Eventos => Aba::OnDemand,
+                    Aba::OnDemand | Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas => Aba::Favoritos,
+                    Aba::Favoritos => Aba::Radios,
+                    Aba::Radios => Aba::Ajustes,
+                    _ => Aba::Buscar,
+                };
+                self.abrir_secao(proxima);
+            }
+            egui::Key::Escape => {
+                if self.ficha_aberta.is_some() {
+                    if self.ficha_ator.is_some() {
+                        self.ficha_ator = None;
+                        self.filmografia.clear();
+                    } else {
+                        self.fechar_ficha();
+                    }
+                } else if self.ajuda_aberta {
+                    self.ajuda_aberta = false;
+                } else if self.episodios_no_player {
+                    self.episodios_no_player = false;
+                } else if self.serie_aberta.is_some() {
+                    self.serie_aberta = None;
+                } else if self.explorar && self.aba.de_tipo() {
+                    self.explorar = false;
+                    self.foco_vod = 0;
+                } else if matches!(self.aba, Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas) {
+                    // Página de um tipo: volta ao On Demand, de onde ela abriu.
+                    self.abrir_secao(Aba::OnDemand);
+                } else if self.aba != Aba::Canais {
+                    self.abrir_secao(Aba::Canais);
+                } else if self.guia_aberto {
+                    self.guia_aberto = false;
+                } else if ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                } else {
+                    self.lista_aberta = !self.lista_aberta;
+                }
+            }
+            _ if self.aba != Aba::Canais => self.tecla_no_acervo(key),
+            egui::Key::ArrowDown | egui::Key::ArrowUp => {
+                let visiveis = self.visiveis();
+                let atual = visiveis.iter().position(|i| *i == self.foco).unwrap_or(0);
+                let novo = if key == egui::Key::ArrowDown {
+                    (atual + 1).min(visiveis.len().saturating_sub(1))
+                } else {
+                    atual.saturating_sub(1)
+                };
+                if let Some(i) = visiveis.get(novo) {
+                    self.foco = *i;
                     self.lista_aberta = true;
                 }
-                egui::Key::F | egui::Key::F11 => self.alternar_tela_cheia(ctx),
-                egui::Key::F1 | egui::Key::H => self.ajuda_aberta = !self.ajuda_aberta,
-                egui::Key::G => {
-                    self.guia_aberto = !self.guia_aberto;
-                    self.abrir_secao(Aba::Canais);
-                }
-                egui::Key::L => self.lista_aberta = !self.lista_aberta,
-                egui::Key::M => self.alternar_mudo(),
-                egui::Key::Plus | egui::Key::Equals => self.mudar_volume(5),
-                egui::Key::Minus => self.mudar_volume(-5),
-                egui::Key::PageUp => self.pular_canal(-1),
-                egui::Key::PageDown => self.pular_canal(1),
-                egui::Key::D if self.aba == Aba::Canais => {
-                    if self.outra_tela.is_some() {
-                        self.sair_da_multi_tela();
-                    } else {
-                        self.entrar_na_multi_tela();
-                    }
-                }
-                egui::Key::T if self.outra_tela.is_some() => self.trocar_tela_em_foco(),
-                egui::Key::P => self.alternar_janelinha(ctx),
-                egui::Key::E if self.aba == Aba::Canais && self.tocando_vod.as_ref().is_some_and(|t| t.episodio.is_some()) => {
-                    self.episodios_no_player = !self.episodios_no_player;
-                }
-                egui::Key::Tab => {
-                    // A ordem do menu do topo, como na TV Box.
-                    let proxima = match self.aba {
-                        Aba::Buscar => Aba::Inicio,
-                        Aba::Inicio => Aba::Canais,
-                        Aba::Canais => Aba::Eventos,
-                        Aba::Eventos => Aba::OnDemand,
-                        Aba::OnDemand | Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas => Aba::Favoritos,
-                        Aba::Favoritos => Aba::Radios,
-                        Aba::Radios => Aba::Ajustes,
-                        _ => Aba::Buscar,
-                    };
-                    self.abrir_secao(proxima);
-                }
-                egui::Key::Escape => {
-                    if self.ficha_aberta.is_some() {
-                        if self.ficha_ator.is_some() {
-                            self.ficha_ator = None;
-                            self.filmografia.clear();
-                        } else {
-                            self.fechar_ficha();
-                        }
-                    } else if self.ajuda_aberta {
-                        self.ajuda_aberta = false;
-                    } else if self.episodios_no_player {
-                        self.episodios_no_player = false;
-                    } else if self.serie_aberta.is_some() {
-                        self.serie_aberta = None;
-                    } else if self.explorar && self.aba.de_tipo() {
-                        self.explorar = false;
-                        self.foco_vod = 0;
-                    } else if matches!(self.aba, Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas) {
-                        // Página de um tipo: volta ao On Demand, de onde ela abriu.
-                        self.abrir_secao(Aba::OnDemand);
-                    } else if self.aba != Aba::Canais {
-                        self.abrir_secao(Aba::Canais);
-                    } else if self.guia_aberto {
-                        self.guia_aberto = false;
-                    } else if ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
-                    } else {
-                        self.lista_aberta = !self.lista_aberta;
-                    }
-                }
-                _ if self.aba != Aba::Canais => self.tecla_no_acervo(key),
-                egui::Key::ArrowDown | egui::Key::ArrowUp => {
-                    let visiveis = self.visiveis();
-                    let atual = visiveis.iter().position(|i| *i == self.foco).unwrap_or(0);
-                    let novo = if key == egui::Key::ArrowDown {
-                        (atual + 1).min(visiveis.len().saturating_sub(1))
-                    } else {
-                        atual.saturating_sub(1)
-                    };
-                    if let Some(i) = visiveis.get(novo) {
-                        self.foco = *i;
-                        self.lista_aberta = true;
-                    }
-                }
-                egui::Key::Enter => {
-                    let foco = self.foco;
-                    if self.visiveis().contains(&foco) {
-                        self.tocar(foco, 0, true);
-                    }
-                }
-                egui::Key::ArrowRight => {
-                    if self.tocando_vod.is_some() {
-                        self.avancar(10.0);
-                    } else {
-                        self.escolher_fonte_seguinte();
-                    }
-                }
-                egui::Key::ArrowLeft => {
-                    if self.tocando_vod.is_some() {
-                        self.avancar(-10.0);
-                    }
-                }
-                egui::Key::S => {
-                    if let Some(canal) = self.canais.get(self.foco).map(|c| c.nome.clone()) {
-                        self.favoritar(canal);
-                    }
-                }
-                _ => {}
             }
+            egui::Key::Enter => {
+                let foco = self.foco;
+                if self.visiveis().contains(&foco) {
+                    self.tocar(foco, 0, true);
+                }
+            }
+            egui::Key::ArrowRight => {
+                if self.tocando_vod.is_some() {
+                    self.avancar(10.0);
+                } else {
+                    self.escolher_fonte_seguinte();
+                }
+            }
+            egui::Key::ArrowLeft => {
+                if self.tocando_vod.is_some() {
+                    self.avancar(-10.0);
+                }
+            }
+            egui::Key::S => {
+                if let Some(canal) = self.canais.get(self.foco).map(|c| c.nome.clone()) {
+                    self.favoritar(canal);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2242,17 +2268,13 @@ impl App {
 
     pub fn alternar_mudo(&mut self) {
         self.mudo = !self.mudo;
-        if let Some(mpv) = self.mpv.as_ref() {
-            mpv.mudo(self.mudo);
-        }
+        self.ajustar_som_das_telas();
         self.mostrar_controles();
     }
 
     pub fn definir_volume(&mut self, valor: i32) {
         self.volume = valor.clamp(0, 130);
-        if let Some(mpv) = self.mpv.as_ref() {
-            mpv.volume(self.volume);
-        }
+        self.ajustar_som_das_telas();
     }
 
     /// Canal vizinho na lista que está na tela; -1 é o de cima.
@@ -2643,7 +2665,7 @@ vec4 hook() {{
             self.aviso = Some(("O player não abriu: a rádio não tem como tocar".into(), Instant::now()));
             return;
         };
-        mpv.tocar(&radio.url, None, None);
+        mpv.tocar_ao_vivo(&radio.url, None, None);
         mpv.pausa(false);
         self.pausado = false;
         radios::ouviu(&radio.nome);
@@ -2772,6 +2794,11 @@ vec4 hook() {{
         outra.mpv.parar();
         self.mpv_reserva = Some(outra.mpv);
         self.foco_a_direita = false;
+        // Uma tela só: o som do Connect volta para ela (a não ser que o
+        // celular tenha calado o computador).
+        if connect::tv_audio() != "mute" {
+            connect::definir_tv_audio("0");
+        }
         self.ajustar_som_das_telas();
     }
 
@@ -2785,19 +2812,37 @@ vec4 hook() {{
         if let Some(t) = self.tocando.as_ref() {
             self.foco = t.canal;
         }
+        // O som segue a tela em foco, a não ser que um celular esteja ouvindo
+        // uma delas e tenha escolhido qual fica aqui (ou calado o computador).
+        if !connect::som_no_celular() && connect::tv_audio() != "mute" {
+            connect::definir_tv_audio(if self.foco_a_direita { "1" } else { "0" });
+        }
         self.ajustar_som_das_telas();
         self.letreiro_ate = Instant::now() + SUMIR_LETREIRO;
     }
 
-    /// Só a tela em foco tem som: duas transmissões falando juntas não
-    /// servem a ninguém.
+    /// Só uma tela tem som: duas transmissões falando juntas não servem a
+    /// ninguém. É a em foco; com um celular ouvindo pelo Saimo Connect, a que
+    /// ele escolheu para ficar aqui ("0" a da esquerda, "1" a da direita), e
+    /// nenhuma quando ele calou o computador.
     fn ajustar_som_das_telas(&self) {
+        let escolha = connect::tv_audio();
+        let (foco, outra) = match (escolha.as_str(), self.outra_tela.is_some()) {
+            ("mute", _) => (false, false),
+            (_, false) => (true, false),
+            (lado, true) if connect::som_no_celular() => {
+                let foco_e = if self.foco_a_direita { "1" } else { "0" };
+                (lado == foco_e, lado != foco_e)
+            }
+            _ => (true, false),
+        };
         if let Some(mpv) = self.mpv.as_ref() {
             mpv.volume(self.volume);
-            mpv.mudo(self.mudo);
+            mpv.mudo(self.mudo || !foco);
         }
-        if let Some(outra) = self.outra_tela.as_ref() {
-            outra.mpv.mudo(true);
+        if let Some(o) = self.outra_tela.as_ref() {
+            o.mpv.volume(self.volume);
+            o.mpv.mudo(self.mudo || !outra);
         }
     }
 
@@ -2822,9 +2867,9 @@ vec4 hook() {{
         let Some(canal) = self.canais.get(t.canal) else { return };
         match canal.fontes.get(t.fonte + 1) {
             Some(fonte) => {
-                outra.mpv.tocar(&fonte.url, fonte.referer.as_deref(), fonte.agente.as_deref());
-                outra.mpv.mudo(true);
+                outra.mpv.tocar_ao_vivo(&fonte.url, fonte.referer.as_deref(), fonte.agente.as_deref());
                 outra.tocando = Some(Tocando { canal: t.canal, fonte: t.fonte + 1, desde: Instant::now(), confirmado: false });
+                self.ajustar_som_das_telas();
             }
             None => {
                 outra.mpv.parar();
@@ -2835,9 +2880,7 @@ vec4 hook() {{
 
     fn mudar_volume(&mut self, passo: i32) {
         self.volume = (self.volume + passo).clamp(0, 130);
-        if let Some(mpv) = self.mpv.as_ref() {
-            mpv.volume(self.volume);
-        }
+        self.ajustar_som_das_telas();
         self.aviso = Some((format!("volume {}%", self.volume), Instant::now()));
     }
 
@@ -3072,6 +3115,7 @@ impl eframe::App for App {
         self.cuidar_dos_recados(ctx);
         self.cuidar_dos_eventos(ctx);
         self.cuidar_do_mpv(ctx);
+        self.cuidar_do_connect(ctx);
         self.cuidar_da_midia();
         if self.cuidar_da_abertura(ctx) {
             self.baixar_logos_pendentes();

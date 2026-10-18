@@ -72,6 +72,75 @@ na TV Box (pt, senão en, senão sem idioma; a capa quando não há logo)
 (`src/midia.rs`, `src/ficha.rs`). Filme e
 série pausam por ali; ao vivo o quadro não oferece pausa.
 
+## Saimo Connect (controle pelo celular)
+
+O app Saimo do celular acha este computador e manda nele exatamente como manda
+na TV Box: o mesmo servidor do `Connect.kt`, na porta **8999**
+(`src/connect/`, e o lado do app em `src/controle.rs`).
+
+- **Descoberta**: o celular varre a rede pedindo `GET /info` a cada endereço
+  (`"app": "saimo-tv"`, o id deste computador, gravado em
+  `%APPDATA%\SaimoTV\connect-id.txt`, e o nome "Saimo TV - <nome do PC>").
+  Não há anúncio mDNS: o app do celular não procura por ele, só pela varredura.
+- **Permissão**: celular novo só entra depois de alguém clicar em **Permitir**
+  na janela que abre aqui (o ícone pisca na barra de tarefas). Sem resposta em
+  um minuto, fica de fora. O aprovado fica lembrado
+  (`connect-celulares.txt`); **Ajustes > Saimo Connect > Esquecer todos os
+  celulares** apaga a lista e derruba quem está ligado.
+- **Controle remoto** (WebSocket `/ws`, escrito à mão como o da TV Box):
+  trocar de canal (inclusive em cada metade da multi tela), ligar e desligar a
+  multi tela, escolher a tela em foco, abrir filme ou episódio do acervo (pela
+  chave `saimo|m|letra|título|ano`; fora do acervo, pelo endereço que o celular
+  manda), pausar, avançar, trocar de fonte, volume, digitar na busca e as
+  teclas do controle. As teclas do controle passam pelo mesmo caminho do
+  teclado (`App::tecla`), então fazem o que o teclado faz — o código da lista
+  restrita inclusive só vale digitado, e o estado nunca mostra canal escondido.
+- **Espelho**: o estado (o que toca em cada tela, a fonte com referer e agente,
+  o programa do guia, filme com posição e duração, volume, quem ouve no
+  celular) vai para o celular a cada mudança.
+- **Som da TV no celular**: o celular toca o mesmo canal sozinho e acerta o
+  passo pela régua comum. Enquanto algum celular ouve, a cada segundo vai
+  `{t:"pos", screens:[{idx, st, playing}]}` com o `st` de cada tela, e o
+  `ping` devolve a hora daqui para o celular medir a diferença dos relógios.
+
+### A régua comum com o mpv
+
+A TV Box sabe pelo ExoPlayer qual trecho do HLS está tocando; o mpv não diz.
+Por isso o ao vivo em HLS daqui toca pela mesma rota `/hls` que o celular usa
+(`http://127.0.0.1:8999/hls?u=...&tv=<mpv>`):
+
+1. a lista passa pelo `Historico` (o mesmo da TV Box): dois minutos de trechos
+   lembrados e, sem marca de horário no canal, uma marca contínua por trecho a
+   partir das durações reais. Celular e computador leem a mesma régua;
+2. o app lê os primeiros bytes de cada trecho que o mpv vai tocar e guarda o
+   primeiro carimbo de tempo (PTS) do vídeo dele;
+3. o mpv abre o canal com `rebase-start-time=no`, então a posição dele
+   (`time-pos`) é o próprio PTS. O trecho no ar é o de PTS logo antes da
+   posição, e `st` = começo do trecho na régua + o que já tocou dele.
+
+Os pedaços continuam vindo direto da origem: só a lista passa por aqui. Se a
+lista não abrir pela rota, o mpv é redirecionado para o endereço original e o
+canal toca como antes, só sem a régua. Filme usa a posição; rádio que não é
+HLS e fonte que não é HLS ficam sem régua (o celular toca, sem acertar o passo).
+
+Conferido no Mac contra canais reais da lista: o PTS lido pelo app é o mesmo
+que o FFmpeg entrega pela lista da rota, e o `time-pos` do mpv 0.41 aberto
+como o app abre cai sempre dentro do trecho certo — o `st` andou junto com o
+relógio, com menos de 50 ms de variação em 30 s e passando por cinco trechos.
+
+### Firewall do Windows
+
+Na primeira vez que o Saimo TV abre, o Windows pergunta se ele pode usar a
+rede. Marque **Redes privadas** e permita: sem isso o celular não acha o
+computador (o resto do app, inclusive o ao vivo pela rota local, funciona do
+mesmo jeito). Se a pergunta foi recusada: Segurança do Windows > Firewall e
+proteção de rede > Permitir um aplicativo pelo firewall > Saimo TV > Privada.
+
+Para testar num computador que já tem algo na porta 8999:
+`SAIMO_CONNECT_PORTA=18999` (o celular só procura a 8999). `SAIMO_SEM_CONNECT=1`
+abre o app sem o servidor. O servidor de verdade, com um cliente de fora:
+`SAIMO_CONNECT_PORTA=18999 cargo test servidor_de_verdade -- --ignored --nocapture`.
+
 ## Novidades da 2.1.2
 
 - **Multi tela**: dois canais ao vivo lado a lado (botão da barra ou tecla D).
@@ -134,6 +203,8 @@ onde a tela é `inicio`, `ondemand`, `filmes`, `explorar`, `eventos`, `radios`,
 | `src/tela/icones.rs` | os ícones Material da TV Box, rasterizados do `pathData` |
 | `src/radios.rs` | as rádios da lista publicada, estilos e ouvidas por último |
 | `src/mpv.rs` | ponte com o libmpv, carregado da DLL em tempo de execução |
+| `src/connect/` | Saimo Connect: servidor na porta 8999, WebSocket, rota `/hls` e a régua comum |
+| `src/controle.rs` | o que o celular manda fazer e o estado que volta para ele |
 | `src/abertura.rs` | a abertura animada ao abrir o programa |
 | `src/midia.rs` | quadro de "tocando agora" do Windows: título e logo |
 | `src/catalogo.rs` | a mesma lista publicada dos outros aplicativos |

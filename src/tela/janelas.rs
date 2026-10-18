@@ -151,3 +151,49 @@ pub fn atualizacao(app: &mut App, ctx: &egui::Context) {
         app.nova_versao = None;
     }
 }
+
+/// Saimo Connect: um celular novo quer mandar neste computador. Só entra com
+/// alguém clicando em "Permitir" aqui; sem resposta em um minuto, fica de fora.
+pub fn aprovacao(app: &mut App, ctx: &egui::Context) {
+    let Some((cliente, nome, desde)) = app.aprovacoes.front().cloned() else { return };
+    veu(ctx);
+    let resta = crate::connect::ESPERA_DA_APROVACAO.saturating_sub(desde.elapsed()).as_secs();
+    let mut escolha = None;
+    egui::Area::new(egui::Id::new("aprovacao-connect"))
+        .order(egui::Order::Foreground)
+        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .show(ctx, |ui| {
+            modal().show(ui, |ui| {
+                ui.set_max_width(520.0);
+                ui.horizontal(|ui| {
+                    let (lugar, _) = ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
+                    super::icones::pintar(ui.painter(), super::Icone::Cast, lugar.center(), 26.0, ACENTO);
+                    super::rotulo_de_secao(ui, "Saimo Connect");
+                });
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(format!("{nome} quer se conectar a este computador")).font(forte(24.0)).color(TEXTO));
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("Permitindo, o celular troca de canal, abre filmes e séries, muda o volume e pode tocar o som daqui. Ele fica lembrado; os Ajustes esquecem todos.")
+                        .font(normal(15.0))
+                        .color(SECUNDARIO),
+                );
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    if botao(ui, Some(super::Icone::Certo), "Permitir", true).clicked() {
+                        escolha = Some(true);
+                    }
+                    ui.add_space(8.0);
+                    if botao(ui, Some(super::Icone::Fechar), "Recusar", false).clicked() {
+                        escolha = Some(false);
+                    }
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(format!("recusa sozinho em {resta} s")).font(normal(13.0)).color(super::APAGADO));
+                });
+            });
+        });
+    if let Some(permitido) = escolha {
+        crate::connect::responder(cliente, permitido);
+        app.aprovacoes.pop_front();
+    }
+}

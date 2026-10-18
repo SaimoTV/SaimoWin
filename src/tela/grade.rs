@@ -271,6 +271,26 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
                 acao = Some(3);
             }
             ui.add_space(18.0);
+            rotulo_de_secao(ui, "Saimo Connect");
+            ui.add_space(4.0);
+            let onde = match (crate::connect::ativo(), crate::connect::ip_local()) {
+                (true, Some(ip)) => format!("No ar em {ip}:{}: o app Saimo do celular acha este computador na mesma rede", crate::connect::porta()),
+                (true, None) => "No ar, mas sem rede local: ligue o computador ao Wi-Fi ou ao cabo".to_string(),
+                (false, _) => format!("Fora do ar: a porta {} está ocupada por outro programa", crate::connect::porta()),
+            };
+            linha(ui, "Controle pelo celular", &onde, Icone::Cast).on_hover_text(
+                "Se o Windows perguntar sobre o Firewall, permita em redes privadas: sem isso o celular não acha o computador",
+            );
+            let autorizados = crate::connect::quantos_autorizados();
+            let resumo = match autorizados {
+                0 => "Nenhum celular autorizado".to_string(),
+                1 => "1 celular autorizado · clique para esquecer".to_string(),
+                n => format!("{n} celulares autorizados · clique para esquecer"),
+            };
+            if linha(ui, "Esquecer todos os celulares", &resumo, Icone::Fechar).clicked() {
+                acao = Some(8);
+            }
+            ui.add_space(18.0);
             rotulo_de_secao(ui, "Aplicativo");
             ui.add_space(4.0);
             if linha(ui, "Procurar atualização", &format!("Você está na versão {}", crate::VERSAO), Icone::Baixar).clicked() {
@@ -302,6 +322,10 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         Some(4) => app.procurar_atualizacao_agora(),
         Some(5) => app.ajuda_aberta = true,
         Some(6) => app.alternar_tela_cheia(ui.ctx()),
+        Some(8) => {
+            crate::connect::esquecer_todos();
+            app.aviso = Some(("Celulares esquecidos. Na próxima conexão o computador vai perguntar de novo.".into(), std::time::Instant::now()));
+        }
         _ => {}
     }
 }
