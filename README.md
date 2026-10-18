@@ -267,6 +267,28 @@ cargo check --target x86_64-pc-windows-gnu   # confere o alvo de verdade
 `SAIMO_MPV` aponta para outra biblioteca do mpv e `SAIMO_SEM_TELEMETRIA=1`
 impede que o teste vire aparelho no painel.
 
+## Telemetria por amostra
+
+O monitor é cobrado por pedido, então só uma fatia estável dos aparelhos fala
+com ele (`src/telemetria.rs`). A conta é a mesma do servidor (`amostrado` no
+`worker.js`): FNV-1a de 32 bits sobre o `deviceId` em minúsculas, e entra quem
+tem `hash % 10000 < amostraPct * 100`. O percentual vem de `telemetria.json`
+(arquivo estático do monitor, de graça), relido no máximo uma vez por dia e
+guardado em `amostra.json` na pasta do app; sem leitura vale 5%. O `/v1/hello`
+também pode mandar `amostraPct`/`amostra`.
+
+- Fora da amostra: nada vai ao monitor (nem olá, nem batida, nem evento), menos
+  um relatório de quebra (`crash`), que vale de todos.
+- Na amostra: como antes, mas a batida extra (pausa, troca de título, parada)
+  sai no máximo uma a cada 30 s; a do relógio segue o `heartbeatSeconds` do
+  olá, e a do fechamento sai sempre.
+- `/v1/fontes` (servidores desligados): no máximo uma leitura por hora, com a
+  última lista boa guardada em `fontes_desativadas.json` — reabrir o app dentro
+  da hora não pergunta de novo.
+- `/v1/eventos`: ver Eventos abaixo.
+
+Teste da conta: `cargo test telemetria`.
+
 ## Eventos
 
 A mesma tela de Eventos da TV Box e do celular (menu do topo ou Tab depois de
@@ -288,7 +310,8 @@ dizem se já começou, o placar e o tempo de jogo, e trazem escudos melhores.
 - O cartão mostra a liga, o selo "AO VIVO" com o tempo de jogo (ou "21:30",
   "amanhã 16:00", "sáb 16:00"), os escudos (a inicial quando falta), o placar
   ou o X, e o canal. Clique ou Enter abre o canal ao vivo.
-- Com a tela aberta, a agenda é buscada de novo a cada minuto.
+- Só busca com a tela aberta e o app na frente: na hora ao abrir (se a última
+  busca tem mais de um minuto) e depois a cada três minutos.
 
 Para conferir contra a rede: `cargo test agenda_com -- --ignored --nocapture`.
 

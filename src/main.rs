@@ -187,8 +187,11 @@ pub struct ItemNaTela {
 /// cheia, e ainda assim uns 200 MB no máximo.
 const MAXIMO_DE_CAPAS: usize = 280;
 
-/// De quanto em quanto tempo a tela de Eventos busca a agenda de novo.
-const ATUALIZAR_EVENTOS: Duration = Duration::from_secs(60);
+/// De quanto em quanto tempo a tela de Eventos busca a agenda de novo, com a
+/// tela aberta e o app na frente. A agenda do monitor é cobrada por pedido.
+const ATUALIZAR_EVENTOS: Duration = Duration::from_secs(180);
+/// Ao abrir a tela, busca na hora se a última busca tem mais que isto.
+const EVENTOS_AO_ABRIR: Duration = Duration::from_secs(60);
 
 /// Para onde o "Assistir" da ficha leva.
 ///
@@ -371,6 +374,8 @@ struct App {
     /// Quando a agenda foi pedida da última vez, e se ainda está a caminho.
     eventos_pedidos: Option<Instant>,
     buscando_eventos: bool,
+    /// A tela de Eventos acabou de abrir: vale o prazo curto (`EVENTOS_AO_ABRIR`).
+    eventos_ao_abrir: bool,
     /// Sobe a cada recado com dados novos (acervo, letra, gêneros, fileiras):
     /// é parte da chave dos caches da grade e das fileiras.
     pub versao_dados: u64,
@@ -494,14 +499,15 @@ impl App {
             });
         }
         {
-            // Os servidores desligados no painel, de dois em dois minutos: é o
-            // tempo que alguém aguenta um canal quebrado.
+            // Os servidores desligados no painel: confere de dez em dez
+            // minutos, mas só vai à rede quando a lista guardada passou de uma
+            // hora (ver `fontes_desativadas::VALIDADE_S`).
             let emissor = emissor.clone();
             std::thread::spawn(move || loop {
                 if fontes_desativadas::atualizar() {
                     let _ = emissor.send(Recado::FontesDesativadas);
                 }
-                std::thread::sleep(std::time::Duration::from_secs(120));
+                std::thread::sleep(std::time::Duration::from_secs(600));
             });
         }
         {
@@ -607,6 +613,7 @@ impl App {
             eventos_erro: false,
             eventos_pedidos: None,
             buscando_eventos: false,
+            eventos_ao_abrir: true,
             versao_dados: 0,
             cache_itens: std::cell::RefCell::new(None),
             fila_de_imagens: std::sync::Arc::new(FilaDeImagens::default()),
@@ -2195,15 +2202,29 @@ impl App {
 
     // MARK: - Eventos
 
-    /// Com a tela de Eventos aberta, a agenda é buscada na hora e de novo a
-    /// cada minuto: o placar anda.
+    /// Com a tela de Eventos aberta e o app na frente, a agenda é buscada ao
+    /// abrir (se a última tem mais de um minuto) e de novo a cada três: o
+    /// placar anda. App no fundo ou minimizado não busca nada.
     fn cuidar_dos_eventos(&mut self, ctx: &egui::Context) {
         if self.aba != Aba::Eventos {
             return;
         }
+        let na_frente = ctx.input(|i| {
+            i.viewport().focused.unwrap_or(true) && !i.viewport().minimized.unwrap_or(false)
+        });
+        // Voltar a ter foco gera um quadro novo, e aí a conta recomeça.
+        if !na_frente {
+            return;
+        }
+        // Abrir a tela só adianta a busca se a última tem mais de um minuto;
+        // senão segue o ritmo normal.
+        if self.eventos_ao_abrir && self.eventos_pedidos.is_some_and(|q| q.elapsed() < EVENTOS_AO_ABRIR) {
+            self.eventos_ao_abrir = false;
+        }
+        let prazo = if self.eventos_ao_abrir { EVENTOS_AO_ABRIR } else { ATUALIZAR_EVENTOS };
         let falta = self
             .eventos_pedidos
-            .map(|quando| ATUALIZAR_EVENTOS.saturating_sub(quando.elapsed()))
+            .map(|quando| prazo.saturating_sub(quando.elapsed()))
             .unwrap_or(Duration::ZERO);
         // Sem isto, a próxima busca (e a troca de grupo de quem começou) só
         // aconteceria no próximo movimento do mouse.
@@ -2223,6 +2244,7 @@ impl App {
             return;
         }
         self.eventos_pedidos = Some(Instant::now());
+        self.eventos_ao_abrir = false;
         self.buscando_eventos = true;
         let emissor = self.emissor.clone();
         let ctx = ctx.clone();
@@ -2579,8 +2601,9 @@ vec4 hook() {{
             return;
         }
         if aba == Aba::Eventos {
-            // Volta para a tela: a agenda é buscada de novo na hora.
-            self.eventos_pedidos = None;
+            // Volta para a tela: a agenda é buscada de novo na hora, se a
+            // última busca tem mais de um minuto.
+            self.eventos_ao_abrir = true;
             return;
         }
         if aba != Aba::Canais && self.filmes.is_empty() && self.series.is_empty() {

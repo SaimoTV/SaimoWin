@@ -942,7 +942,7 @@ fn padrao(app: &App) -> (String, String, bool, String, Option<(String, bool)>) {
             ("On Demand".into(), if total > 0 { format!("{} títulos", numero(total)) } else { "Carregando…".into() },
                 "Filmes, séries, animes e doramas, dublados e legendados.".into())
         }
-        Aba::Eventos => ("Eventos".into(), eventos::resumo(&app.jogos_na_tela()), "Os jogos nos canais da lista, com o placar ao vivo. A agenda se atualiza a cada minuto.".into()),
+        Aba::Eventos => ("Eventos".into(), eventos::resumo(&app.jogos_na_tela()), "Os jogos nos canais da lista, com o placar ao vivo. A agenda se atualiza a cada três minutos.".into()),
         Aba::Radios => {
             let n = app.radios.len();
             ("Rádios".into(), if n > 0 { format!("{n} rádios ao vivo") } else { "Carregando…".into() },

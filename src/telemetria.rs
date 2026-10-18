@@ -4,11 +4,27 @@
 //! tocando de tempos em tempos, e quando uma fonte falha ou um canal cai. O
 //! aparelho é um UUID sorteado na primeira abertura, guardado ao lado do cache.
 //! Sem rede o monitor fica sem o dado e o app continua igual.
+//!
+//! Telemetria por amostra: o monitor é cobrado por pedido, então só uma fatia
+//! estável dos aparelhos fala com ele. A conta é a mesma do servidor
+//! (`amostrado` no worker.js): FNV-1a de 32 bits sobre o id do aparelho em
+//! minúsculas, e entra quem tem `hash % 10000 < amostraPct * 100`. Fora da
+//! amostra nada sai — nem olá, nem batida, nem evento —, menos o relatório de
+//! quebra. O percentual vem de `telemetria.json`, arquivo estático do monitor
+//! (servido de graça, sem rodar o Worker), lido no máximo uma vez por dia.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const BASE: &str = "https://saimo-monitor.gabrielsaimo68.workers.dev/v1";
+const AMOSTRA_URL: &str = "https://saimo-monitor.gabrielsaimo68.workers.dev/telemetria.json";
+/// Sem leitura nenhuma do percentual, vale o mesmo do servidor hoje.
+const AMOSTRA_PADRAO: f64 = 5.0;
+/// O percentual é relido no máximo uma vez por dia.
+const AMOSTRA_VALIDADE_S: u64 = 24 * 3600;
+/// Batida extra (pausa, troca de título, parada) no máximo uma a cada 30 s:
+/// quem zapeia ou pausa e volta não vira uma rajada de pedidos.
+const INTERVALO_EXTRA: Duration = Duration::from_secs(30);
 const PLATAFORMA: &str = "windows";
 /// Zapeando, cada canal que passa não vira batida: só quem ficou.
 const MINIMO_PARA_CONTAR_S: u64 = 20;
@@ -33,6 +49,14 @@ struct Estado {
     ultima_batida: Instant,
     batida_s: u64,
     erros: u32,
+    /// Percentual da amostra (0 a 100).
+    pct: f64,
+    /// O olá do monitor pode dizer de que lado este aparelho está; vale mais
+    /// que a conta daqui enquanto o app estiver aberto.
+    amostra_servidor: Option<bool>,
+    cumprimentou: bool,
+    /// Quando saiu a última batida de verdade, para segurar as extras.
+    batida_enviada: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -43,12 +67,61 @@ struct Busca {
 }
 
 impl Estado {
+    fn na_amostra(&self) -> bool {
+        self.amostra_servidor.unwrap_or_else(|| amostrado(&self.id, self.pct))
+    }
+
     fn segundos_rodando(&self) -> u64 {
         (self.acumulado + self.rodando_desde.map(|d| d.elapsed()).unwrap_or_default()).as_secs()
     }
 }
 
 static ESTADO: Mutex<Option<Estado>> = Mutex::new(None);
+
+/// FNV-1a de 32 bits, sem sinal, sobre os bytes UTF-8.
+fn fnv1a(texto: &str) -> u32 {
+    let mut h: u32 = 0x811c9dc5;
+    for b in texto.as_bytes() {
+        h ^= *b as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+    h
+}
+
+/// O mesmo lado da amostra que o servidor calcula para este id.
+fn amostrado(id: &str, pct: f64) -> bool {
+    ((fnv1a(&id.to_lowercase()) % 10000) as f64) < pct * 100.0
+}
+
+fn pct_valido(v: Option<&serde_json::Value>) -> Option<f64> {
+    v.and_then(|v| v.as_f64()).filter(|n| n.is_finite() && (0.0..=100.0).contains(n))
+}
+
+fn agora_s() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn arquivo_amostra() -> std::path::PathBuf {
+    crate::catalogo::pasta().join("amostra.json")
+}
+
+/// O percentual guardado e quando foi lido (segundos Unix; 0 se nunca).
+fn amostra_guardada() -> (f64, u64) {
+    let lido: Option<serde_json::Value> = std::fs::read_to_string(arquivo_amostra())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok());
+    let pct = pct_valido(lido.as_ref().and_then(|v| v.get("amostraPct"))).unwrap_or(AMOSTRA_PADRAO);
+    let em = lido.as_ref().and_then(|v| v.get("lidoEm")).and_then(|v| v.as_u64()).unwrap_or(0);
+    (pct, em)
+}
+
+fn guardar_amostra(pct: f64, lido_em: u64) {
+    let corpo = serde_json::json!({ "amostraPct": pct, "lidoEm": lido_em });
+    let _ = std::fs::write(arquivo_amostra(), corpo.to_string());
+}
 
 /// UUID v4 sem depender de mais uma biblioteca: tempo, endereço de pilha e
 /// contador bastam para um número que só identifica esta instalação.
@@ -109,6 +182,11 @@ fn host(url: &str) -> Option<String> {
 fn enviar(rota: &str, mut corpo: serde_json::Value) {
     let estado = ESTADO.lock().unwrap();
     let Some(estado) = estado.as_ref() else { return };
+    // Fora da amostra só o relatório de quebra sai.
+    let quebra = rota == "event" && corpo.get("type").and_then(|t| t.as_str()) == Some("crash");
+    if !estado.na_amostra() && !quebra {
+        return;
+    }
     corpo["deviceId"] = estado.id.clone().into();
     corpo["platform"] = PLATAFORMA.into();
     corpo["version"] = crate::VERSAO.into();
@@ -120,6 +198,7 @@ pub fn iniciar() {
     if std::env::var("SAIMO_SEM_TELEMETRIA").is_ok() {
         return;
     }
+    let (pct, lido_em) = amostra_guardada();
     {
         let mut estado = ESTADO.lock().unwrap();
         if estado.is_some() {
@@ -137,13 +216,40 @@ pub fn iniciar() {
             ultima_batida: Instant::now(),
             batida_s: 300,
             erros: 0,
+            pct,
+            amostra_servidor: None,
+            cumprimentou: false,
+            batida_enviada: None,
         });
     }
+    cumprimentar();
+    // O percentual da amostra, uma vez por dia; se mudou e este aparelho
+    // passou a entrar, o olá sai agora.
+    if agora_s().saturating_sub(lido_em) >= AMOSTRA_VALIDADE_S {
+        std::thread::spawn(|| {
+            let Some(novo) = crate::rede::json_curto(AMOSTRA_URL)
+                .and_then(|v| pct_valido(v.get("amostraPct")))
+            else { return };
+            guardar_amostra(novo, agora_s());
+            if let Some(estado) = ESTADO.lock().unwrap().as_mut() {
+                estado.pct = novo;
+            }
+            cumprimentar();
+        });
+    }
+}
+
+/// O olá, uma vez por abertura e só da amostra.
+fn cumprimentar() {
     // O monitor responde de quanto em quanto tempo quer a batida; sem ler a
     // resposta, um ajuste no painel não chegaria neste app.
     let corpo = {
-        let estado = ESTADO.lock().unwrap();
-        let Some(estado) = estado.as_ref() else { return };
+        let mut estado = ESTADO.lock().unwrap();
+        let Some(estado) = estado.as_mut() else { return };
+        if estado.cumprimentou || !estado.na_amostra() {
+            return;
+        }
+        estado.cumprimentou = true;
         serde_json::json!({
             "deviceId": estado.id,
             "platform": PLATAFORMA,
@@ -157,11 +263,22 @@ pub fn iniciar() {
     };
     std::thread::spawn(move || {
         let Some(resposta) = crate::rede::postar_e_ler(format!("{BASE}/hello"), corpo.to_string()) else { return };
-        let Some(segundos) = resposta.get("heartbeatSeconds").and_then(|v| v.as_u64()) else { return };
-        if (60..=3600).contains(&segundos) {
-            if let Some(estado) = ESTADO.lock().unwrap().as_mut() {
+        let novo_pct = pct_valido(resposta.get("amostraPct"));
+        if let Some(pct) = novo_pct {
+            guardar_amostra(pct, amostra_guardada().1);
+        }
+        let mut estado = ESTADO.lock().unwrap();
+        let Some(estado) = estado.as_mut() else { return };
+        if let Some(segundos) = resposta.get("heartbeatSeconds").and_then(|v| v.as_u64()) {
+            if (60..=3600).contains(&segundos) {
                 estado.batida_s = segundos;
             }
+        }
+        if let Some(pct) = novo_pct {
+            estado.pct = pct;
+        }
+        if let Some(dentro) = resposta.get("amostra").and_then(|v| v.as_bool()) {
+            estado.amostra_servidor = Some(dentro);
         }
     });
 }
@@ -176,14 +293,25 @@ pub fn no_relogio() {
         }
     };
     if passou {
-        bater();
+        bater(false);
     }
 }
 
-fn bater() {
+/// `extra` é a batida fora do relógio (pausa, troca, parada): sai no máximo
+/// uma a cada 30 s. A do relógio e a do fechamento saem sempre.
+fn bater(extra: bool) {
     let corpo = {
         let mut estado = ESTADO.lock().unwrap();
         let Some(estado) = estado.as_mut() else { return };
+        // Fora da amostra o relógio continua, mas nada sai nem é zerado.
+        if !estado.na_amostra() {
+            estado.ultima_batida = Instant::now();
+            return;
+        }
+        if extra && estado.batida_enviada.map(|b| b.elapsed() < INTERVALO_EXTRA).unwrap_or(false) {
+            return;
+        }
+        estado.batida_enviada = Some(Instant::now());
         let segundos = if estado.tocando.is_some() { estado.segundos_rodando() } else { 0 };
         estado.acumulado = Duration::ZERO;
         if estado.rodando_desde.is_some() {
@@ -230,7 +358,7 @@ pub fn comecou(kind: &str, titulo: &str, url: &str, fonte: usize, nova: bool) {
         }
     };
     if fechar_conta {
-        bater();
+        bater(true);
     }
     {
         let mut estado = ESTADO.lock().unwrap();
@@ -310,7 +438,7 @@ pub fn video(rodando: bool, pausado: bool, carregando: bool, pulou: bool, qualid
         }
     }
     if bater_agora {
-        bater();
+        bater(true);
     }
     if let Some((kind, titulo, host, ms)) = travou {
         enviar("event", serde_json::json!({
@@ -368,7 +496,7 @@ pub fn parou() {
         }
     };
     if fechar_conta {
-        bater();
+        bater(true);
     }
     {
         let mut estado = ESTADO.lock().unwrap();
@@ -399,8 +527,29 @@ pub fn erro(detalhe: String) {
 
 pub fn fechando() {
     let tocando = ESTADO.lock().unwrap().as_ref().map(|e| e.tocando.is_some()).unwrap_or(false);
-    bater();
+    bater(false);
     if tocando {
         evento("play_stop", None, None, None, None, None);
+    }
+}
+
+#[cfg(test)]
+mod testes {
+    use super::{amostrado, fnv1a};
+
+    // Valores calculados com a conta do servidor (worker.js) no node.
+    #[test]
+    fn hash_igual_ao_do_servidor() {
+        assert_eq!(fnv1a("79a275ad-b783-488c-8e18-2439ff3aed1c"), 3670190157);
+        assert_eq!(fnv1a("db09f237-fffa-40c7-94c5-35eddcad6970"), 2926602047);
+    }
+
+    #[test]
+    fn amostra_de_cinco_por_cento() {
+        assert!(amostrado("79a275ad-b783-488c-8e18-2439ff3aed1c", 5.0));
+        assert!(amostrado("79A275AD-B783-488C-8E18-2439FF3AED1C", 5.0));
+        assert!(!amostrado("db09f237-fffa-40c7-94c5-35eddcad6970", 5.0));
+        assert!(amostrado("db09f237-fffa-40c7-94c5-35eddcad6970", 100.0));
+        assert!(!amostrado("79a275ad-b783-488c-8e18-2439ff3aed1c", 0.0));
     }
 }

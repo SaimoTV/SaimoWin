@@ -16,33 +16,72 @@
 
 use std::collections::HashSet;
 use std::sync::RwLock;
-use std::time::{Duration, Instant};
 
 const ENDERECO: &str = "https://saimo-monitor.gabrielsaimo68.workers.dev/v1/fontes";
-/// Desligar um servidor tem que valer em minutos, que é o tempo que alguém
-/// aguenta um canal quebrado.
-const VALIDADE: Duration = Duration::from_secs(120);
+/// Uma leitura por hora. Cada aparelho perguntando de dois em dois minutos
+/// custava caro no monitor (cobrado por pedido); desligar um servidor agora
+/// leva até uma hora para chegar a todos. A última lista boa fica guardada
+/// com a hora em que veio, e reabrir o app dentro da hora não pergunta de novo.
+const VALIDADE_S: u64 = 3600;
+const ARQUIVO: &str = "fontes_desativadas.json";
 
 static HOSTS: RwLock<Option<HashSet<String>>> = RwLock::new(None);
-static LIDO_EM: RwLock<Option<Instant>> = RwLock::new(None);
+/// Segundos Unix da última leitura boa (0 se nunca).
+static LIDO_EM: RwLock<Option<u64>> = RwLock::new(None);
+
+fn agora_s() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Na primeira consulta, a lista guardada da última vez.
+fn carregar_guardado() {
+    if HOSTS.read().map(|h| h.is_some()).unwrap_or(true) {
+        return;
+    }
+    let lido: Option<serde_json::Value> = std::fs::read_to_string(crate::catalogo::pasta().join(ARQUIVO))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok());
+    let hosts: HashSet<String> = lido
+        .as_ref()
+        .and_then(|v| v.get("desativados"))
+        .and_then(|d| d.as_array())
+        .map(|l| l.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
+        .unwrap_or_default();
+    let em = lido.as_ref().and_then(|v| v.get("lidoEm")).and_then(|v| v.as_u64()).unwrap_or(0);
+    if let Ok(mut guarda) = HOSTS.write() {
+        if guarda.is_none() {
+            *guarda = Some(hosts);
+            if let Ok(mut marca) = LIDO_EM.write() {
+                // Relógio que voltou para trás não prende a lista velha para sempre.
+                *marca = Some(if em <= agora_s() { em } else { 0 });
+            }
+        }
+    }
+}
 
 fn hosts() -> HashSet<String> {
+    carregar_guardado();
     HOSTS.read().ok().and_then(|h| h.clone()).unwrap_or_default()
 }
 
 /// Busca a lista quando ela envelheceu. Devolve verdadeiro quando mudou, que é
 /// quando quem chamou precisa remontar a lista de canais.
 pub fn atualizar() -> bool {
+    carregar_guardado();
     if let Ok(marca) = LIDO_EM.read() {
-        if marca.map(|m| m.elapsed() < VALIDADE).unwrap_or(false) {
+        if marca.map(|m| agora_s().saturating_sub(m) < VALIDADE_S).unwrap_or(false) {
             return false;
         }
     }
     let Some(corpo) = crate::rede::json(ENDERECO) else { return false };
     let Some(lista) = corpo.get("desativados").and_then(|d| d.as_array()) else { return false };
 
+    let agora = agora_s();
     if let Ok(mut marca) = LIDO_EM.write() {
-        *marca = Some(Instant::now());
+        *marca = Some(agora);
     }
     let novos: HashSet<String> = lista
         .iter()
@@ -50,6 +89,11 @@ pub fn atualizar() -> bool {
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
+
+    let mut ordenados: Vec<&String> = novos.iter().collect();
+    ordenados.sort_unstable();
+    let guardar = serde_json::json!({ "desativados": ordenados, "lidoEm": agora });
+    let _ = std::fs::write(crate::catalogo::pasta().join(ARQUIVO), guardar.to_string());
 
     let mudou = hosts() != novos;
     if mudou {
