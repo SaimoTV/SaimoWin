@@ -11,13 +11,17 @@ Versão atual: **2.0.0**. O instalador sai no release único de
 [SaimoPlayer](https://github.com/gabrielsaimo/SaimoPlayer/releases/latest), e o
 programa avisa quando há versão nova, lendo `versao.json` de
 `https://github.com/saimo-tv/saimo-downloads/releases/latest/download/versao.json`
-(só aceita links de release do GitHub). O app **não traz lista nenhuma nem
-endereço de lista**: na primeira abertura pergunta o endereço da lista de canais
-e o da lista de filmes e séries (também em Ajustes > Listas), guardados em
-`link-canais.txt` e `link-filmes.txt` na pasta do app. Sem endereço o app abre
-vazio e não faz pedido de rede de lista. O endereço de canais serve
-`catalogo.txt`, `restritos.txt`, `radios.txt` e `guia.txt` (tabelas do guia por
-canal); o de filmes serve a pasta `vod/`.
+(só aceita links de release do GitHub).
+
+Os dois endereços de lista vêm de fábrica e ativos, em duas constantes de
+`src/listas.rs` (`https://canais-saimo.pages.dev/` e
+`https://filmes-saimo.pages.dev/`), e o app nunca pergunta nada ao abrir. Em
+Ajustes > Listas dá para trocá-los (o link novo é testado antes), "Restaurar
+padrão" volta aos de fábrica e salvar um campo em branco desliga aquela lista
+(arquivo `link-canais.txt`/`link-filmes.txt` com a marca `desativado`; sem
+arquivo vale o de fábrica). Lista desligada: estado vazio e nenhum pedido de
+rede. O endereço de canais serve `catalogo.txt`, `restritos.txt`, `radios.txt` e
+`guia.txt` (tabelas do guia por canal); o de filmes serve a pasta `vod/`.
 
 ## Visual
 
@@ -231,7 +235,7 @@ onde a tela é `inicio`, `ondemand`, `filmes`, `explorar`, `eventos`, `radios`,
 | `src/abertura.rs` | a abertura animada ao abrir o programa |
 | `src/midia.rs` | quadro de "tocando agora" do Windows: título e logo |
 | `src/catalogo.rs` | a mesma lista publicada dos outros aplicativos |
-| `src/listas.rs` | os dois endereços informados pelo usuário: normalização, teste, gravação, migração e apagar cache |
+| `src/listas.rs` | os dois endereços de lista (padrão de fábrica, troca, desligar): normalização, teste, gravação, migração e apagar cache |
 | `src/telemetria.rs` | Saimo Monitor, plataforma `windows` |
 | `src/atualizacao.rs` | lê `versao.json` do endereço de canais, download pelo navegador (só links de release do GitHub) |
 | `src/pulos.rs` | TheIntroDB: abertura, recapitulação e créditos |

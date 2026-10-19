@@ -666,10 +666,6 @@ impl App {
             remoto: controle::Remoto::default(),
         };
         app.ligar_baixadores_de_imagem(&cc.egui_ctx);
-        // Nenhum endereço guardado: a primeira abertura pergunta.
-        if listas::nenhum() {
-            app.dialogo_listas = Some(listas::Dialogo::novo(true));
-        }
         app.reordenar();
         if app.upscaling > 0 {
             app.aplicar_upscaling();
@@ -739,7 +735,7 @@ impl App {
 
     /// Abre a janela "Endereço das listas" pelos Ajustes.
     pub fn abrir_dialogo_listas(&mut self) {
-        self.dialogo_listas = Some(listas::Dialogo::novo(false));
+        self.dialogo_listas = Some(listas::Dialogo::novo());
     }
 
     /// Salvar da janela. Cada campo é normalizado; os preenchidos são testados
@@ -3191,8 +3187,9 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
     static ESCOLHIDA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let antes = std::env::var("SAIMO_FOTO_ANTES").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
     if inicio.elapsed() > Duration::from_secs(antes) && !ESCOLHIDA.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        if std::env::var("SAIMO_FOTO_SEM_DIALOGO").is_ok() {
-            app.dialogo_listas = None;
+        if std::env::var("SAIMO_FOTO_SEM_LISTAS").is_ok() {
+            // Só para fotografar o estado vazio: desliga as duas listas.
+            app.aplicar_listas(vec![(listas::Lista::Canais, None), (listas::Lista::Filmes, None)]);
         }
         match std::env::var("SAIMO_FOTO_TELA").unwrap_or_default().as_str() {
             "inicio" => app.abrir_secao(Aba::Inicio),

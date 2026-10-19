@@ -198,7 +198,7 @@ pub fn aprovacao(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// "Endereço das listas": a pergunta da primeira abertura e a edição dos Ajustes.
+/// "Endereço das listas": a edição dos Ajustes (nunca abre sozinha).
 pub fn listas(app: &mut App, ctx: &egui::Context) {
     let Some(mut d) = app.dialogo_listas.clone() else { return };
     veu(ctx);
@@ -222,7 +222,7 @@ pub fn listas(app: &mut App, ctx: &egui::Context) {
                 ui.label(egui::RichText::new("Endereço das listas").font(forte(26.0)).color(TEXTO));
                 ui.add_space(8.0);
                 ui.label(
-                    egui::RichText::new("Informe o endereço da lista de canais e o da lista de filmes e séries. Você pode deixar em branco e informar depois em Ajustes.")
+                    egui::RichText::new("Os endereços já vêm preenchidos. Troque se quiser usar outra lista; em branco, a lista fica desligada.")
                         .font(normal(15.0))
                         .color(SECUNDARIO),
                 );
@@ -278,7 +278,7 @@ pub fn listas(app: &mut App, ctx: &egui::Context) {
                             }
                         }
                         ui.add_space(8.0);
-                        if botao(ui, None, if d.primeira { "Agora não" } else { "Cancelar" }, false).clicked() {
+                        if botao(ui, None, "Cancelar", false).clicked() {
                             fechar = true;
                         }
                     } else {
@@ -286,14 +286,22 @@ pub fn listas(app: &mut App, ctx: &egui::Context) {
                             salvar = true;
                         }
                         ui.add_space(8.0);
-                        if botao(ui, None, if d.primeira { "Agora não" } else { "Cancelar" }, false).clicked() {
+                        if botao(ui, None, "Cancelar", false).clicked() {
                             fechar = true;
                         }
                     }
                 });
-                if !d.primeira && !testando {
+                if !testando {
                     ui.add_space(10.0);
-                    ui.label(egui::RichText::new("Deixar um campo em branco e salvar apaga aquela lista deste computador.").font(normal(13.0)).color(super::APAGADO));
+                    if botao(ui, Some(super::Icone::Trocar), "Restaurar padrão", false).clicked() {
+                        d.canais = listas::PADRAO_CANAIS.to_string();
+                        d.filmes = listas::PADRAO_FILMES.to_string();
+                        d.fase = listas::Fase::Editando;
+                        d.falhas.clear();
+                        d.invalido = false;
+                    }
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new("Deixar um campo em branco e salvar desliga e apaga aquela lista deste computador.").font(normal(13.0)).color(super::APAGADO));
                 }
             });
         });

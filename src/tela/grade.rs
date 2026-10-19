@@ -276,7 +276,7 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(18.0);
             rotulo_de_secao(ui, "Listas");
             ui.add_space(4.0);
-            let mostra = |l: Option<String>| l.unwrap_or_else(|| "Não informado".to_string());
+            let mostra = |l: Option<String>| l.unwrap_or_else(|| "Desligada".to_string());
             if linha(ui, "Lista de canais", &mostra(crate::listas::canais()), Icone::Link)
                 .on_hover_text("Ver, editar ou apagar o endereço")
                 .clicked()

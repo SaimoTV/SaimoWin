@@ -1,12 +1,19 @@
 //! Os dois endereços de onde o app lê as listas: canais, e filmes e séries.
 //!
-//! O app não traz lista nenhuma nem endereço de lista: quem usa informa os
-//! dois na primeira abertura (ou depois, em Ajustes > Listas). Ficam em
-//! arquivos de texto na pasta do app, como as outras preferências. Sem
-//! endereço não há pedido de rede para lista.
+//! Os dois endereços já vêm de fábrica (as duas constantes abaixo, o único
+//! lugar do app com endereço de lista) e ativos. Quem usa pode trocá-los em
+//! Ajustes > Listas; guardar vazio desliga a lista (marca "desativado" no
+//! arquivo, diferente de "nunca mexeu", que é arquivo ausente). Desligada, não
+//! há pedido de rede para a lista.
 
 use std::path::PathBuf;
 use std::sync::RwLock;
+
+/// Endereço de fábrica da lista de canais.
+pub const PADRAO_CANAIS: &str = "https://canais-saimo.pages.dev/";
+/// Endereço de fábrica da lista de filmes e séries.
+pub const PADRAO_FILMES: &str = "https://filmes-saimo.pages.dev/";
+const DESATIVADO: &str = "desativado";
 
 const ARQUIVO_CANAIS: &str = "link-canais.txt";
 const ARQUIVO_FILMES: &str = "link-filmes.txt";
@@ -23,6 +30,13 @@ impl Lista {
         match self {
             Lista::Canais => ARQUIVO_CANAIS,
             Lista::Filmes => ARQUIVO_FILMES,
+        }
+    }
+
+    pub fn padrao(self) -> &'static str {
+        match self {
+            Lista::Canais => PADRAO_CANAIS,
+            Lista::Filmes => PADRAO_FILMES,
         }
     }
 
@@ -97,20 +111,17 @@ pub struct Dialogo {
     pub falhas: Vec<Lista>,
     /// Há algum endereço que nem é http(s) válido: não dá para "salvar mesmo assim".
     pub invalido: bool,
-    /// Aberta porque não há nenhum endereço (primeira abertura), e não pelos Ajustes.
-    pub primeira: bool,
     pub focar: bool,
 }
 
 impl Dialogo {
-    pub fn novo(primeira: bool) -> Self {
+    pub fn novo() -> Self {
         Dialogo {
             canais: canais().unwrap_or_default(),
             filmes: filmes().unwrap_or_default(),
             fase: Fase::Editando,
             falhas: Vec::new(),
             invalido: false,
-            primeira,
             focar: true,
         }
     }
@@ -123,9 +134,22 @@ fn pasta() -> PathBuf {
 }
 
 fn ler_do_disco(lista: Lista) -> Option<String> {
-    let texto = std::fs::read_to_string(pasta().join(lista.arquivo())).ok()?;
+    let texto = std::fs::read_to_string(pasta().join(lista.arquivo())).ok();
+    interpretar(texto.as_deref(), lista)
+}
+
+/// Sem arquivo (ou arquivo ilegível): o endereço de fábrica. Marca
+/// "desativado": lista desligada. Senão, o endereço guardado.
+fn interpretar(texto: Option<&str>, lista: Lista) -> Option<String> {
+    let Some(texto) = texto else { return Some(lista.padrao().to_string()) };
+    if texto.trim() == DESATIVADO {
+        return None;
+    }
     // Normaliza de novo: um arquivo editado à mão não pode quebrar a leitura.
-    normalizar(&texto).ok().flatten()
+    match normalizar(texto) {
+        Ok(Some(base)) => Some(base),
+        _ => Some(lista.padrao().to_string()),
+    }
 }
 
 fn carregar_se_preciso() {
@@ -157,21 +181,20 @@ pub fn filmes() -> Option<String> {
     endereco(Lista::Filmes)
 }
 
-/// Os dois vazios: é quando a primeira abertura pergunta.
-pub fn nenhum() -> bool {
-    canais().is_none() && filmes().is_none()
-}
-
-/// Guarda (ou apaga, com `None`) o endereço. Já deve vir normalizado.
+/// Guarda o endereço (já normalizado). `None` desliga a lista (marca
+/// "desativado"); o endereço de fábrica volta a ser "nunca mexeu" (sem arquivo).
 pub fn guardar(lista: Lista, base: Option<&str>) {
     carregar_se_preciso();
     let caminho = pasta().join(lista.arquivo());
     match base {
+        Some(b) if b == lista.padrao() => {
+            let _ = std::fs::remove_file(&caminho);
+        }
         Some(b) => {
             let _ = std::fs::write(&caminho, b);
         }
         None => {
-            let _ = std::fs::remove_file(&caminho);
+            let _ = std::fs::write(&caminho, DESATIVADO);
         }
     }
     if let Ok(mut l) = LIDOS.write() {
@@ -225,6 +248,17 @@ mod testes {
     }
     fn ok(s: &str) -> Option<String> {
         Some(s.to_string())
+    }
+
+    #[test]
+    fn padrao_sem_arquivo_desativado_com_marca() {
+        assert_eq!(interpretar(None, Lista::Canais), ok(PADRAO_CANAIS));
+        assert_eq!(interpretar(None, Lista::Filmes), ok(PADRAO_FILMES));
+        assert_eq!(interpretar(Some("desativado"), Lista::Canais), None);
+        assert_eq!(interpretar(Some("http://localhost:8101"), Lista::Canais), ok("http://localhost:8101/"));
+        assert_eq!(interpretar(Some("lixo ftp://"), Lista::Filmes), ok(PADRAO_FILMES));
+        assert_eq!(n(PADRAO_CANAIS), Ok(ok(PADRAO_CANAIS)));
+        assert_eq!(n(PADRAO_FILMES), Ok(ok(PADRAO_FILMES)));
     }
 
     #[test]
