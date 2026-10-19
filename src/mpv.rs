@@ -78,6 +78,7 @@ const PARAM_OPENGL_INIT_PARAMS: c_int = 2;
 const PARAM_OPENGL_FBO: c_int = 3;
 const PARAM_FLIP_Y: c_int = 4;
 
+const EVENT_SHUTDOWN: c_int = 1;
 const EVENT_START_FILE: c_int = 6;
 const EVENT_END_FILE: c_int = 7;
 const EVENT_FILE_LOADED: c_int = 8;
@@ -166,6 +167,9 @@ pub struct Mpv {
     erro_render: Mutex<Option<String>>,
     avisos: Receiver<Aviso>,
     _emissor: Sender<Aviso>,
+    /// Pede à thread dos avisos que pare, antes de o handle ser destruído.
+    parar_avisos: Arc<std::sync::atomic::AtomicBool>,
+    thread_avisos: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -311,18 +315,30 @@ impl Mpv {
 
         // Thread só para os avisos do mpv: sem ela, uma fonte morta não teria
         // como avisar a tela para pular para a próxima.
-        {
+        let parar_avisos = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread_avisos = {
             let simbolos = simbolos.clone();
             let handle = handle.clone();
             let emissor = emissor.clone();
+            let parar = parar_avisos.clone();
             std::thread::spawn(move || {
                 let mut vigia = Vigia::default();
                 loop {
+                // O handle pode estar sendo destruído (fim da abertura, troca de tela): parar
+                // ANTES de chamar o mpv de novo. Chamar mpv_wait_event num handle já destruído
+                // corrompia a memória do processo e derrubava o app (queda no talloc do libmpv
+                // e no heap do ntdll) poucos segundos depois de abrir, em alguns PCs.
+                if parar.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
                 let evento = unsafe { (simbolos.wait_event)(handle.0, 1.0) };
                 if evento.is_null() {
                     continue;
                 }
                 let evento = unsafe { &*evento };
+                if evento.event_id == EVENT_SHUTDOWN || parar.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
                 let aviso = match evento.event_id {
                     EVENT_START_FILE if !evento.data.is_null() => {
                         let inicio = unsafe { &*(evento.data as *const MpvEventStartFile) };
@@ -342,8 +358,8 @@ impl Mpv {
                     }
                 }
                 }
-            });
-        }
+            })
+        };
 
         Ok(Mpv {
             id: PROXIMO_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
@@ -353,6 +369,8 @@ impl Mpv {
             erro_render: Mutex::new(None),
             avisos,
             _emissor: emissor,
+            parar_avisos,
+            thread_avisos: Mutex::new(Some(thread_avisos)),
         })
     }
 
@@ -580,13 +598,21 @@ impl Mpv {
 
 impl Drop for Mpv {
     fn drop(&mut self) {
+        crate::diagnostico::etapa("mpv: encerrando um player");
+        // 1) A thread dos avisos sai do mpv_wait_event (o wakeup o devolve na hora) e termina;
+        //    só então o handle pode ser destruído.
+        self.parar_avisos.store(true, std::sync::atomic::Ordering::SeqCst);
+        unsafe { (self.simbolos.wakeup)(self.handle.0) };
+        if let Some(t) = self.thread_avisos.lock().ok().and_then(|mut g| g.take()) {
+            let _ = t.join();
+        }
+        // 2) O contexto de vídeo antes do player (ordem exigida pelo libmpv).
         if let Some(render) = self.render.lock().unwrap().take() {
             unsafe { (self.simbolos.render_context_free)(render.0) };
         }
-        unsafe {
-            (self.simbolos.wakeup)(self.handle.0);
-            (self.simbolos.terminate_destroy)(self.handle.0);
-        }
+        // 3) O player.
+        unsafe { (self.simbolos.terminate_destroy)(self.handle.0) };
+        crate::diagnostico::etapa("mpv: player encerrado");
     }
 }
 

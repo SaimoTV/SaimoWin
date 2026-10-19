@@ -45,7 +45,8 @@ impl Abertura {
     /// Sobe a abertura, ou nada quando não há como (sem mpv, foto de teste,
     /// `SAIMO_SEM_ABERTURA`).
     pub fn nova(caminho_do_mpv: &std::path::Path) -> Option<Self> {
-        if std::env::var("SAIMO_FOTO").is_ok() || std::env::var("SAIMO_SEM_ABERTURA").is_ok() {
+        // Modo seguro (o app caiu na abertura anterior): sem o segundo mpv da abertura.
+        if std::env::var("SAIMO_FOTO").is_ok() || std::env::var("SAIMO_SEM_ABERTURA").is_ok() || crate::diagnostico::nivel() >= 1 {
             return None;
         }
         let arquivo = gravar_video()?;
