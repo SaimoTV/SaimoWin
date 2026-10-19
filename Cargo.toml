@@ -1,6 +1,6 @@
 [package]
 name = "saimo-tv"
-version = "2.4.2"
+version = "2.4.3"
 edition = "2021"
 description = "Saimo TV para Windows"
 
