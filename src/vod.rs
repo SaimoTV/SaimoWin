@@ -7,8 +7,6 @@
 
 use std::sync::Mutex;
 
-const BASE: &str = crate::origens::FILMES;
-
 #[derive(Clone, Debug, Default)]
 pub struct Gaveta {
     pub letra: String,
@@ -42,6 +40,11 @@ pub struct Episodio {
 
 static BASES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+/// Esquece as bases em memória (o endereço de filmes mudou ou foi apagado).
+pub fn esquecer() {
+    BASES.lock().unwrap().clear();
+}
+
 fn pasta() -> std::path::PathBuf {
     let pasta = crate::catalogo::pasta().join("vod");
     let _ = std::fs::create_dir_all(&pasta);
@@ -52,7 +55,9 @@ fn pasta() -> std::path::PathBuf {
 /// base, então um índice velho com as bases noutra ordem manda todo mundo para
 /// o servidor errado. São menos de um kilobyte.
 pub fn indice() -> Vec<Gaveta> {
-    let texto = crate::rede::texto(&format!("{BASE}indice.txt")).or_else(|| {
+    // Sem endereço de filmes não há pedido de rede nem acervo.
+    let Some(base) = crate::listas::filmes() else { return Vec::new() };
+    let texto = crate::rede::texto(&format!("{base}indice.txt")).or_else(|| {
         std::fs::read_to_string(pasta().join("indice.txt")).ok()
     });
     let Some(texto) = texto else { return Vec::new() };
@@ -132,13 +137,14 @@ pub fn arquivo_publico(nome: &str) -> Option<String> {
 }
 
 fn arquivo(nome: &str) -> Option<String> {
+    let base = crate::listas::filmes()?;
     let local = pasta().join(nome.replace("%23", "hash"));
     if let Ok(texto) = std::fs::read_to_string(&local) {
         if !texto.is_empty() {
             return Some(texto);
         }
     }
-    let texto = crate::rede::texto(&format!("{BASE}{nome}"))?;
+    let texto = crate::rede::texto(&format!("{base}{nome}"))?;
     if let Some(pai) = local.parent() {
         let _ = std::fs::create_dir_all(pai);
     }
@@ -214,9 +220,10 @@ pub fn colecao(tipo: &str) -> Vec<(Serie, Vec<Episodio>)> {
     if tipo != "animes" && tipo != "doramas" {
         return Vec::new();
     }
+    let Some(base) = crate::listas::filmes() else { return Vec::new() };
     let nome = format!("redeflix/links-{tipo}.txt");
     let local = pasta().join(&nome);
-    let texto = crate::rede::texto(&format!("{BASE}{nome}")).inspect(|texto| {
+    let texto = crate::rede::texto(&format!("{base}{nome}")).inspect(|texto| {
         if let Some(pai) = local.parent() { let _ = std::fs::create_dir_all(pai); }
         let _ = std::fs::write(&local, texto);
     }).or_else(|| std::fs::read_to_string(&local).ok());

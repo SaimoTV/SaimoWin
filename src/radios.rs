@@ -68,7 +68,8 @@ pub fn locais() -> Vec<Radio> {
 /// A lista do repositório, guardada para a próxima vez. Nada quando a rede
 /// falhou ou veio outra coisa: aí vale a local.
 pub fn baixar() -> Option<Vec<Radio>> {
-    let texto = crate::rede::texto(&format!("{}{ARQUIVO}", crate::origens::CANAIS))?;
+    let base = crate::listas::canais()?;
+    let texto = crate::rede::texto(&format!("{base}{ARQUIVO}"))?;
     let lista = ler(&texto);
     if lista.len() < 10 {
         return None;

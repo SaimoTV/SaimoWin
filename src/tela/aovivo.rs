@@ -105,6 +105,15 @@ fn lista(app: &mut App, ui_pai: &mut egui::Ui) {
                 }
             }
 
+            if app.canais.is_empty() && crate::listas::canais().is_none() {
+                ui.add_space(24.0);
+                ui.label(egui::RichText::new("Nenhum canal. Informe o endereço da lista de canais em Ajustes > Listas.").font(normal(15.0)).color(SECUNDARIO));
+                ui.add_space(12.0);
+                if botao(ui, Some(Icone::Ajustes), "Abrir Ajustes", true).clicked() {
+                    app.abrir_secao(Aba::Ajustes);
+                }
+            }
+
             // As seções em pílulas: um clique leva a lista até ela. A da
             // linha em foco fica branca, como na TV.
             let secao_do_foco = app.canais.get(app.foco).map(|c| {
@@ -488,6 +497,11 @@ fn sem_mpv(app: &App, ui: &mut egui::Ui, area: Rect) {
 
 fn estado_vazio(app: &mut App, ui: &mut egui::Ui, area: Rect) {
     let centro = area.center();
+    if app.canais.is_empty() && crate::listas::canais().is_none() {
+        icones::pintar(ui.painter(), Icone::AoVivo, centro - egui::vec2(0.0, 120.0), 64.0, APAGADO);
+        super::vazio_com_atalho(app, ui, centro - egui::vec2(0.0, 50.0), "Nenhum canal. Informe o endereço da lista de canais em Ajustes > Listas.");
+        return;
+    }
     icones::pintar(ui.painter(), Icone::AoVivo, centro - egui::vec2(0.0, 90.0), 64.0, APAGADO);
     ui.painter().text(centro - egui::vec2(0.0, 30.0), Align2::CENTER_CENTER, "Escolha um canal na lista", forte(24.0), TEXTO);
     ui.painter().text(

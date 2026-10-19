@@ -15,11 +15,6 @@ use std::io::Read;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const FEEDS: [&str; 2] = [
-    "https://iptv-epg.org/files/epg-br.xml",
-    "https://www.open-epg.com/files/brazil3.xml",
-];
-const PLUTO: &str = "https://raw.githubusercontent.com/matthuisman/i.mjh.nz/master/PlutoTV/br.xml";
 const VALIDADE_S: i64 = 6 * 3600;
 const JANELA_PASSADA_S: i64 = 6 * 3600;
 const JANELA_FUTURA_S: i64 = 3 * 86400;
@@ -50,306 +45,75 @@ impl Programa {
     }
 }
 
-/// Nomes que os feeds escrevem diferente do catálogo.
-const APELIDOS: [(&str, &str); 16] = [
-    ("adult swim", "trutv"),
-    ("history", "history channel"),
-    ("sony channel", "sony"),
-    ("sportv 2", "sportv2"),
-    ("sportv 3", "sportv3"),
-    ("gnt", "gnt hd"),
-    ("band", "band sp"),
-    ("warner", "warner channel"),
-    ("sbt", "sbt sp"),
-    ("discovery id", "investigacao discovery"),
-    ("amc", "amc brasil"),
-    ("cnn brasil money", "cnn brasil money hd br"),
-    ("universal premiere", "universal premiere hd br"),
-    ("universal reality", "universal reality br"),
-    ("tnt novelas", "tnt novelas br"),
-    ("record sp", "recordtv sp"),
-];
+/// As tabelas por canal do guia, lidas de `guia.txt` (servido pelo endereço de
+/// canais). Linhas com TAB, `#` comenta:
+/// `meuguia<TAB>nome no catálogo<TAB>código`, `guiadetv<TAB>nome<TAB>endereço`,
+/// `alias<TAB>nome<TAB>nome no feed`, `feed<TAB>-<TAB>url`, `pluto<TAB>-<TAB>url`.
+/// Os nomes são guardados normalizados. Sem o arquivo o guia fica só com o que
+/// casa por nome nos feeds que o arquivo traz — ou seja, sem nada.
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct Tabelas {
+    meuguia: Vec<(String, String)>,
+    guiadetv: Vec<(String, String)>,
+    alias: Vec<(String, String)>,
+    feeds: Vec<String>,
+    pluto: Option<String>,
+}
 
-/// Canais cobertos pelo guiadetv.com, com seus slugs oficiais. Fonte primária
-/// rápida que traz horários precisos no fuso de Brasília e sinopse completa.
-const GUIADETV: [(&str, &str); 203] = [
-    ("a e", "ae"),
-    ("ae", "ae"),
-    ("agro", "agro"),
-    ("agro mais", "agro"),
-    ("canal agro", "agro"),
-    ("amc", "amc"),
-    ("animal planet", "animal-planet"),
-    ("arte 1", "arte-1"),
-    ("arte1", "arte-1"),
-    ("axn", "axn"),
-    ("band", "band"),
-    ("band sp", "band"),
-    ("band campinas", "band"),
-    ("band curitiba", "band"),
-    ("band mg", "band"),
-    ("band para", "band"),
-    ("band recife tv tribuna", "band"),
-    ("band rn", "band"),
-    ("band rs", "band"),
-    ("band sergipe", "band"),
-    ("band rj", "band-rj"),
-    ("band news", "bandnews"),
-    ("bandnews", "bandnews"),
-    ("band sports", "bandsports"),
-    ("bandsports", "bandsports"),
-    ("bbc world", "bbc-world"),
-    ("bbc world news", "bbc-world"),
-    ("bis", "bis"),
-    ("bloomberg", "bloomberg"),
-    ("box kids", "box-kids"),
-    ("box kids tv", "box-kids"),
-    ("canal educacao", "canal-educacao"),
-    ("canal rural", "canal-rural"),
-    ("canal uol", "canal-uol"),
-    ("cancao nova", "cancao-nova"),
-    ("cartoon network", "cartoon-network"),
-    ("cartoonito", "cartoonito"),
-    ("cinemax", "cinemax"),
-    ("cnn brasil", "cnn-brasil"),
-    ("combate", "combate"),
-    ("curta", "curta"),
-    ("discovery channel", "discovery-channel"),
-    ("discovery home health", "discovery-home-health"),
-    ("discovery h h", "discovery-home-health"),
-    ("discovery kids", "discovery-kids"),
-    ("discovery science", "discovery-science"),
-    ("discovery theater", "discovery-theater"),
-    ("discovery turbo", "discovery-turbo"),
-    ("discovery world", "discovery-world"),
-    ("discovery id", "investigacao-discovery"),
-    ("investigacao discovery", "investigacao-discovery"),
-    ("investigation discovery", "investigacao-discovery"),
-    ("e", "e"),
-    ("espn", "espn"),
-    ("espn 2", "espn-2"),
-    ("espn 3", "espn-3"),
-    ("espn 4", "espn-4"),
-    ("espn 5", "espn-5"),
-    ("espn 6", "espn-6"),
-    ("film arts", "film-arts"),
-    ("food network", "food-network"),
-    ("fox news", "fox-news"),
-    ("futura", "futura"),
-    ("canal futura", "futura"),
-    ("ge tv", "ge-tv"),
-    ("getv", "ge-tv"),
-    ("globo news", "globo-news"),
-    ("globonews", "globo-news"),
-    ("globo rj", "globo-rio-de-janeiro"),
-    ("globo rio de janeiro", "globo-rio-de-janeiro"),
-    ("globo", "globo-sp"),
-    ("globo sp", "globo-sp"),
-    ("globo am", "globo-sp"),
-    ("globo ce", "globo-sp"),
-    ("globo df", "globo-sp"),
-    ("globo es", "globo-sp"),
-    ("globo go", "globo-sp"),
-    ("globo mg", "globo-sp"),
-    ("globo pb", "globo-sp"),
-    ("globo pe", "globo-sp"),
-    ("globo rs", "globo-sp"),
-    ("gloob", "gloob"),
-    ("gloobinho", "gloobinho"),
-    ("gnt", "gnt"),
-    ("hbo", "hbo"),
-    ("hbo 2", "hbo-2"),
-    ("hbo2", "hbo-2"),
-    ("hbo family", "hbo-family"),
-    ("hbo mundi", "hbo-mundi"),
-    ("hbo plus", "hbo-plus"),
-    ("hbo pop", "hbo-pop"),
-    ("hbo signature", "hbo-signature"),
-    ("hbo xtreme", "hbo-xtreme"),
-    ("hgtv", "hgtv"),
-    ("history", "history"),
-    ("history channel", "history"),
-    ("history 2", "history-2"),
-    ("h2", "history-2"),
-    ("jovem pan news", "jovem-pan-news"),
-    ("lifetime", "lifetime"),
-    ("lifetime movies", "lifetime"),
-    ("megapix", "megapix"),
-    ("multishow", "multishow"),
-    ("music box brazil", "music-box-brazil"),
-    ("n sports", "nsports"),
-    ("nsports", "nsports"),
-    ("n sports jogo 1", "nsports"),
-    ("off", "off"),
-    ("canal off", "off"),
-    ("premiere", "premiere-fc"),
-    ("premiere clubes", "premiere-fc"),
-    ("premiere fc", "premiere-fc"),
-    ("premiere 2", "premiere-2"),
-    ("premiere 3", "premiere-3"),
-    ("premiere 4", "premiere-4"),
-    ("premiere 5", "premiere-5"),
-    ("premiere 6", "premiere-6"),
-    ("premiere 7", "premiere-7"),
-    ("prime box brazil", "prime-box-brazil"),
-    ("record news", "record-news"),
-    ("record", "record-tv"),
-    ("record tv", "record-tv"),
-    ("record sp", "record-tv"),
-    ("record go", "record-tv"),
-    ("record mg", "record-tv"),
-    ("record rj", "record-tv"),
-    ("record internacional", "record-tv"),
-    ("recordtv", "record-tv"),
-    ("rede brasil", "rede-brasil"),
-    ("rede familia", "rede-familia"),
-    ("rede gospel", "rede-gospel"),
-    ("redetv", "rede-tv"),
-    ("rede tv", "rede-tv"),
-    ("rede vida", "rede-vida"),
-    ("sbt", "sbt"),
-    ("sbt sp", "sbt"),
-    ("sbt alterosa", "sbt"),
-    ("sbt ba", "sbt"),
-    ("sbt go", "sbt"),
-    ("sbt interior", "sbt"),
-    ("sbt londrina", "sbt"),
-    ("sbt maringa", "sbt"),
-    ("sbt mg", "sbt"),
-    ("sbt pi", "sbt"),
-    ("sbt pr", "sbt"),
-    ("sbt news", "sbt-news"),
-    ("sbt rj", "sbt-rio-de-janeiro"),
-    ("sbt rio de janeiro", "sbt-rio-de-janeiro"),
-    ("sony", "sony"),
-    ("sony channel", "sony"),
-    ("sony movies", "sony-movies"),
-    ("space", "space"),
-    ("sportv", "sportv"),
-    ("sportv 2", "sportv-2"),
-    ("sportv2", "sportv-2"),
-    ("sportv 3", "sportv-3"),
-    ("sportv3", "sportv-3"),
-    ("sportynet", "sportynet"),
-    ("sportynet 01", "sportynet"),
-    ("sportynet 4", "sportynet"),
-    ("sportynet 1", "sportynet"),
-    ("sportynet 2", "sportynet"),
-    ("sportynet 3", "sportynet"),
-    ("studio universal", "studio-universal"),
-    ("syfy", "syfy"),
-    ("usa network", "syfy"),
-    ("tcm", "tcm"),
-    ("telecine action", "telecine-action"),
-    ("telecine cult", "telecine-cult"),
-    ("telecine fun", "telecine-fun"),
-    ("telecine pipoca", "telecine-pipoca"),
-    ("telecine premium", "telecine-premium"),
-    ("telecine touch", "telecine-touch"),
-    ("terra viva", "terra-viva"),
-    ("tlc", "tlc"),
-    ("tnt", "tnt"),
-    ("tnt novelas", "tnt-novelas"),
-    ("tnt series", "tnt-series"),
-    ("tooncast", "tooncast"),
-    ("travel box brazil", "travel-box-brasil"),
-    ("travel box brasil", "travel-box-brasil"),
-    ("trutv", "trutv"),
-    ("adult swim", "trutv"),
-    ("tv aparecida", "tv-aparecida"),
-    ("tv brasil", "tv-brasil"),
-    ("tv camara", "tv-camara"),
-    ("tv cultura", "tv-cultura"),
-    ("cultura", "tv-cultura"),
-    ("tv gazeta", "tv-gazeta"),
-    ("gazeta", "tv-gazeta"),
-    ("tv ra tim bum", "tv-ra-tim-bum"),
-    ("ra tim bum", "tv-ra-tim-bum"),
-    ("tv senado", "tv-senado"),
-    ("universal tv", "universal-tv"),
-    ("universal channel", "universal-tv"),
-    ("viva", "viva"),
-    ("canal viva", "viva"),
-    ("globoplay novelas", "viva"),
-    ("warner", "warner"),
-    ("warner channel", "warner"),
-    ("woohoo", "woohoo"),
-    ("x sports", "xsports"),
-    ("xsports", "xsports"),
-];
+impl Tabelas {
+    fn meuguia(&self, chave: &str) -> Option<&str> {
+        self.meuguia.iter().find(|(k, _)| k == chave).map(|(_, v)| v.as_str())
+    }
+    fn guiadetv(&self, chave: &str) -> Option<&str> {
+        self.guiadetv.iter().find(|(k, _)| k == chave).map(|(_, v)| v.as_str())
+    }
+    #[cfg(test)]
+    fn alias(&self, chave: &str) -> Option<&str> {
+        self.alias.iter().find(|(k, _)| k == chave).map(|(_, v)| v.as_str())
+    }
+}
 
-/// Canais que o meuguia.tv lista, com o código de cada um. É a fonte com o
-/// horário mais confiável da TV aberta e dos canais grandes — os feeds XMLTV
-/// erram a grade de vários deles.
-const MEUGUIA: [(&str, &str); 67] = [
-    ("a e", "MDO"),
-    ("animal planet", "APL"),
-    ("band", "BAN"),
-    ("band news", "NEW"),
-    ("band sports", "BSP"),
-    ("cartoon network", "CAR"),
-    ("cinemax", "MNX"),
-    ("combate", "135"),
-    ("discovery kids", "DIK"),
-    ("discovery world", "DIW"),
-    ("discovery channel", "DIS"),
-    ("discovery home health", "HEA"),
-    ("discovery science", "DSC"),
-    ("discovery turbo", "DTU"),
-    ("espn", "ESP"),
-    ("espn 2", "ES2"),
-    ("espn 3", "ES3"),
-    ("espn 4", "ES4"),
-    ("espn 5", "ES5"),
-    ("gnt", "GNT"),
-    ("globo rj", "GRD"),
-    ("globo sp", "GRD"),
-    ("globo", "GRD"),
-    ("globonews", "GLN"),
-    ("gloob", "GOB"),
-    ("gloobinho", "GBI"),
-    ("hbo", "HBO"),
-    ("hbo2", "HB2"),
-    ("hbo family", "HFA"),
-    ("hbo plus", "HPL"),
-    ("history", "HIS"),
-    ("megapix", "MPX"),
-    ("multishow", "MSH"),
-    ("record", "REC"),
-    ("record news", "RCN"),
-    ("redetv", "RTV"),
-    ("sbt", "SBT"),
-    ("space", "SPA"),
-    ("sportv", "SPO"),
-    ("sportv 2", "SP2"),
-    ("sportv 3", "SP3"),
-    ("tnt", "TNT"),
-    ("tnt series", "TBS"),
-    ("tcm", "TCM"),
-    ("tlc", "TRV"),
-    ("telecine action", "TC2"),
-    ("telecine cult", "TC5"),
-    ("telecine fun", "TC6"),
-    ("telecine pipoca", "TC4"),
-    ("telecine premium", "TC1"),
-    ("telecine touch", "TC3"),
-    ("universal tv", "USA"),
-    ("studio universal", "HAL"),
-    ("warner", "WBT"),
-    ("axn", "AXN"),
-    ("canal brasil", "CBR"),
-    ("canal off", "OFF"),
-    ("e", "EET"),
-    ("sony channel", "SET"),
-    ("premiere clubes", "121"),
-    ("viva", "VIV"),
-    ("arte 1", "BQ5"),
-    ("amc", "MGM"),
-    ("tv brasil", "TED"),
-    ("tv aparecida", "TAP"),
-    ("tv cultura", "CUL"),
-    ("tv gazeta", "GAZ"),
-];
+pub fn ler_tabelas(texto: &str) -> Tabelas {
+    let mut t = Tabelas::default();
+    for linha in texto.lines() {
+        let linha = linha.trim_end_matches('\r');
+        if linha.trim().is_empty() || linha.trim_start().starts_with('#') {
+            continue;
+        }
+        let campos: Vec<&str> = linha.split('\t').map(str::trim).collect();
+        if campos.len() < 3 || campos[2].is_empty() {
+            continue;
+        }
+        let (nome, valor) = (normalizar(campos[1]), campos[2].to_string());
+        match campos[0] {
+            "meuguia" if !nome.is_empty() => t.meuguia.push((nome, valor)),
+            "guiadetv" if !nome.is_empty() => t.guiadetv.push((nome, valor)),
+            "alias" if !nome.is_empty() => t.alias.push((nome, normalizar(&valor))),
+            "feed" if valor.starts_with("http") => t.feeds.push(valor),
+            "pluto" if valor.starts_with("http") => t.pluto = Some(valor),
+            _ => {}
+        }
+    }
+    t
+}
+
+/// `guia.txt` do endereço de canais, com cópia em disco para quando a rede
+/// falha. Sem endereço de canais, tabelas vazias e nenhum pedido.
+fn tabelas() -> Tabelas {
+    let local = crate::catalogo::pasta().join("guia-tabelas.txt");
+    if let Some(base) = crate::listas::canais() {
+        if let Some(texto) = crate::rede::texto(&format!("{base}guia.txt")) {
+            if texto.lines().any(|l| l.contains('\t')) {
+                let _ = std::fs::write(&local, &texto);
+                return ler_tabelas(&texto);
+            }
+        }
+        if let Ok(texto) = std::fs::read_to_string(&local) {
+            return ler_tabelas(&texto);
+        }
+    }
+    Tabelas::default()
+}
 
 static GRADE: Mutex<Option<HashMap<String, Vec<Programa>>>> = Mutex::new(None);
 
@@ -384,6 +148,11 @@ pub fn agora_e_depois(canal: &str) -> Option<(Programa, Option<Programa>)> {
     Some((lista[posicao].clone(), depois))
 }
 
+/// Esvazia o guia em memória (o endereço de canais mudou ou foi apagado).
+pub fn limpar() {
+    *GRADE.lock().unwrap() = None;
+}
+
 pub fn canais_com_guia() -> usize {
     GRADE.lock().unwrap().as_ref().map(|g| g.len()).unwrap_or(0)
 }
@@ -409,14 +178,21 @@ pub fn carregar(canais: Vec<Canal>, aviso: impl Fn() + Send + 'static) {
 }
 
 fn montar(canais: &[Canal]) -> HashMap<String, Vec<Programa>> {
+    if canais.is_empty() {
+        return HashMap::new();
+    }
+    montar_com(canais, &tabelas())
+}
+
+fn montar_com(canais: &[Canal], tabelas: &Tabelas) -> HashMap<String, Vec<Programa>> {
     let de = agora() - JANELA_PASSADA_S;
     let ate = agora() + JANELA_FUTURA_S;
     let mut grade: HashMap<String, Vec<Programa>> = HashMap::new();
 
     // A Pluto primeiro: é o guia certo dos canais dela, e o mais leve.
     let (ids_da_pluto, principais) = ids_da_pluto(canais);
-    if !ids_da_pluto.is_empty() {
-        for (canal, lista) in ler_feed(PLUTO, &ids_da_pluto, de, ate) {
+    if let (Some(pluto), false) = (tabelas.pluto.as_deref(), ids_da_pluto.is_empty()) {
+        for (canal, lista) in ler_feed(pluto, &ids_da_pluto, de, ate) {
             if principais.contains(&canal) {
                 grade.insert(canal, lista);
             }
@@ -425,27 +201,27 @@ fn montar(canais: &[Canal]) -> HashMap<String, Vec<Programa>> {
 
     // O guiadetv.com vem primeiro: cobre 121+ canais com horários precisos no
     // fuso de Brasília, sem rate limit 429 e trazendo a sinopse em português.
-    for (canal, lista) in do_guiadetv(canais, de, ate) {
+    for (canal, lista) in do_guiadetv(canais, tabelas, de, ate) {
         grade.entry(canal).or_insert(lista);
     }
 
     // O meuguia entra como reserva para canais que o guiadetv não lista (ex.: Canal Brasil).
-    for (canal, lista) in do_meuguia(canais, de, ate) {
+    for (canal, lista) in do_meuguia(canais, tabelas, de, ate) {
         grade.entry(canal).or_insert(lista);
     }
 
     // Os feeds XMLTV, casados pelo nome, só para quem ainda está sem guia.
     let por_nome = nomes_procurados(canais, &principais);
-    for feed in FEEDS {
-        let achado = ler_feed_por_nome(feed, &por_nome, de, ate);
+    for feed in &tabelas.feeds {
+        let achado = ler_feed_por_nome(feed, &por_nome, &tabelas.alias, de, ate);
         for (canal, lista) in achado {
             grade.entry(canal).or_insert(lista);
         }
     }
 
     // Onde a Pluto é só reserva, a grade dela entra na falta de outra.
-    if !ids_da_pluto.is_empty() {
-        for (canal, lista) in ler_feed(PLUTO, &ids_da_pluto, de, ate) {
+    if let (Some(pluto), false) = (tabelas.pluto.as_deref(), ids_da_pluto.is_empty()) {
+        for (canal, lista) in ler_feed(pluto, &ids_da_pluto, de, ate) {
             grade.entry(canal).or_insert(lista);
         }
     }
@@ -454,32 +230,33 @@ fn montar(canais: &[Canal]) -> HashMap<String, Vec<Programa>> {
 
 /// Páginas do guiadetv.com, seis de cada vez. Agrupa por slug para baixar cada
 /// página apenas uma vez mesmo quando múltiplos canais compartilham o mesmo slug.
-fn do_guiadetv(canais: &[Canal], de: i64, ate: i64) -> HashMap<String, Vec<Programa>> {
-    let mut slug_para_canais: HashMap<&'static str, Vec<String>> = HashMap::new();
+fn do_guiadetv(canais: &[Canal], tabelas: &Tabelas, de: i64, ate: i64) -> HashMap<String, Vec<Programa>> {
+    let mut slug_para_canais: HashMap<String, Vec<String>> = HashMap::new();
     for c in canais {
         let chave = normalizar(&c.nome);
-        if let Some((_, slug)) = GUIADETV.iter().find(|(k, _)| *k == chave) {
-            slug_para_canais.entry(*slug).or_default().push(c.nome.clone());
+        if let Some(slug) = tabelas.guiadetv(&chave) {
+            slug_para_canais.entry(slug.to_string()).or_default().push(c.nome.clone());
         }
     }
     if slug_para_canais.is_empty() {
         return HashMap::new();
     }
-    let slugs: Vec<&'static str> = slug_para_canais.keys().copied().collect();
+    let slugs: Vec<String> = slug_para_canais.keys().cloned().collect();
     let fila = std::sync::Mutex::new(slugs.into_iter());
-    let slug_programas: std::sync::Mutex<HashMap<&'static str, Vec<Programa>>> = std::sync::Mutex::new(HashMap::new());
+    let slug_programas: std::sync::Mutex<HashMap<String, Vec<Programa>>> = std::sync::Mutex::new(HashMap::new());
     std::thread::scope(|escopo| {
         for _ in 0..6 {
             escopo.spawn(|| loop {
                 let Some(slug) = fila.lock().unwrap().next() else { return };
-                let url = format!("https://www.guiadetv.com/canal/{slug}");
+                // A tabela traz o endereço inteiro; só um nome solto vira o caminho do site.
+                let url = if slug.starts_with("http") { slug.clone() } else { format!("https://www.guiadetv.com/canal/{slug}") };
                 let Some(html) = crate::rede::texto(&url) else { continue };
                 let lista: Vec<Programa> = ler_guiadetv(&html)
                     .into_iter()
                     .filter(|p| p.fim > de && p.inicio < ate)
                     .collect();
                 if !lista.is_empty() {
-                    slug_programas.lock().unwrap().insert(slug, lista);
+                    slug_programas.lock().unwrap().insert(slug.clone(), lista);
                 }
             });
         }
@@ -487,7 +264,7 @@ fn do_guiadetv(canais: &[Canal], de: i64, ate: i64) -> HashMap<String, Vec<Progr
     let mapa = slug_programas.into_inner().unwrap();
     let mut saida = HashMap::new();
     for (slug, lista) in mapa {
-        if let Some(nomes) = slug_para_canais.get(slug) {
+        if let Some(nomes) = slug_para_canais.get(&slug) {
             for nome in nomes {
                 saida.insert(nome.clone(), lista.clone());
             }
@@ -581,16 +358,10 @@ fn ler_guiadetv(html: &str) -> Vec<Programa> {
 
 /// Páginas do meuguia.tv, seis de cada vez: trinta e três downloads ao mesmo
 /// tempo tiram banda do vídeo e fazem o site devolver 429.
-fn do_meuguia(canais: &[Canal], de: i64, ate: i64) -> HashMap<String, Vec<Programa>> {
-    let alvos: Vec<(String, &str)> = canais
+fn do_meuguia(canais: &[Canal], tabelas: &Tabelas, de: i64, ate: i64) -> HashMap<String, Vec<Programa>> {
+    let alvos: Vec<(String, String)> = canais
         .iter()
-        .filter_map(|c| {
-            let chave = normalizar(&c.nome);
-            MEUGUIA
-                .iter()
-                .find(|(nome, _)| *nome == chave)
-                .map(|(_, codigo)| (c.nome.clone(), *codigo))
-        })
+        .filter_map(|c| tabelas.meuguia(&normalizar(&c.nome)).map(|codigo| (c.nome.clone(), codigo.to_string())))
         .collect();
     if alvos.is_empty() {
         return HashMap::new();
@@ -773,13 +544,19 @@ fn ler_feed(url: &str, ids: &HashMap<String, String>, de: i64, ate: i64) -> Hash
 }
 
 /// Um feed lido em fluxo, casando pelo nome do canal.
-fn ler_feed_por_nome(url: &str, procurados: &[String], de: i64, ate: i64) -> HashMap<String, Vec<Programa>> {
-    percorrer(url, de, ate, |nomes| casar(nomes, procurados))
+fn ler_feed_por_nome(
+    url: &str,
+    procurados: &[String],
+    alias: &[(String, String)],
+    de: i64,
+    ate: i64,
+) -> HashMap<String, Vec<Programa>> {
+    percorrer(url, de, ate, |nomes| casar(nomes, procurados, alias))
 }
 
 /// Casamento exato e por apelido primeiro, marcando o id como tomado; a regra
 /// solta de prefixo só depois, e nunca sobre um id já tomado.
-fn casar(nomes: &HashMap<String, Vec<String>>, procurados: &[String]) -> HashMap<String, String> {
+fn casar(nomes: &HashMap<String, Vec<String>>, procurados: &[String], alias: &[(String, String)]) -> HashMap<String, String> {
     let mut saida = HashMap::new();
     let mut tomados: Vec<String> = Vec::new();
     let mut sobraram: Vec<(String, String)> = Vec::new();
@@ -787,10 +564,10 @@ fn casar(nomes: &HashMap<String, Vec<String>>, procurados: &[String]) -> HashMap
     for nome in procurados {
         let chave = normalizar(nome);
         let ids = nomes.get(&chave).or_else(|| {
-            APELIDOS
+            alias
                 .iter()
                 .find(|(de, _)| *de == chave)
-                .and_then(|(_, para)| nomes.get(*para))
+                .and_then(|(_, para)| nomes.get(para))
         });
         match ids {
             Some(ids) if !ids.is_empty() => {
@@ -1090,6 +867,33 @@ mod testes {
             println!("{nome}: {}", atual.unwrap_or_else(|| "sem guia".into()));
         }
         assert!(grade.len() > 100, "guia pequeno demais: {}", grade.len());
+    }
+}
+
+#[cfg(test)]
+mod testes_tabelas {
+    use super::*;
+
+    #[test]
+    fn le_guia_txt() {
+        let t = ler_tabelas(
+            "# comentario\nmeuguia\tA&E\tMDO\nmeuguia\tTNT Séries\tTBS\nguiadetv\ta e\tae\n\
+             alias\tSporTV 2\tsportv2\nfeed\t-\thttps://f/1.xml\nfeed\t-\thttps://f/2.xml\n\
+             pluto\t-\thttps://p/br.xml\nlixo\tx\ty\nmeuguia\tsem codigo\n",
+        );
+        assert_eq!(t.meuguia("a e"), Some("MDO"));
+        assert_eq!(t.meuguia("tnt series"), Some("TBS"));
+        assert_eq!(t.guiadetv("a e"), Some("ae"));
+        assert_eq!(t.alias("sportv 2"), Some("sportv2"));
+        assert_eq!(t.feeds, vec!["https://f/1.xml", "https://f/2.xml"]);
+        assert_eq!(t.pluto.as_deref(), Some("https://p/br.xml"));
+        assert_eq!(t.meuguia.len(), 2);
+    }
+
+    #[test]
+    fn sem_arquivo_nao_ha_tabelas() {
+        assert_eq!(ler_tabelas(""), Tabelas::default());
+        assert!(montar(&[]).is_empty());
     }
 }
 

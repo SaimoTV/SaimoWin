@@ -1,4 +1,4 @@
-//! Procura versão nova no `versao.json` do endereço estável de canais e abre o
+//! Procura versão nova no `versao.json` do endereço fixo de atualização e abre o
 //! download no navegador.
 //!
 //! O arquivo diz qual é a versão e onde está o instalador de cada plataforma;
@@ -8,6 +8,10 @@
 //! `confere_sha256`.
 
 use std::sync::Mutex;
+
+/// O endereço de atualização, um só e fixo. O link de download vem do próprio
+/// `versao.json`.
+const ENDERECO: &str = "https://github.com/saimo-tv/saimo-downloads/releases/latest/download/versao.json";
 
 /// Plataforma deste app em `arquivos` do `versao.json`.
 const PLATAFORMA: &str = "windows";
@@ -49,7 +53,7 @@ pub fn mais_nova(candidata: &str, atual: &str) -> bool {
 }
 
 pub fn procurar() -> Option<Versao> {
-    let dados = crate::rede::json(&format!("{}versao.json", crate::origens::CANAIS))?;
+    let dados = crate::rede::json(ENDERECO)?;
     let achada = ler_versao(&dados)?;
     if !mais_nova(&achada.numero, crate::VERSAO) {
         return None;

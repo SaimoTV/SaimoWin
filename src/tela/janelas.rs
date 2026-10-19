@@ -2,7 +2,7 @@
 //! atalhos e a oferta de versão nova, no modal escuro da TV Box (`bg_modal`).
 
 use super::{botao, branco, forte, normal, ACENTO, FUNDO, SECUNDARIO, TEXTO, VIDRO};
-use crate::{atualizacao, App};
+use crate::{atualizacao, listas, App};
 use eframe::egui::{self, Align2, Stroke, Vec2};
 use std::time::Duration;
 
@@ -195,5 +195,122 @@ pub fn aprovacao(app: &mut App, ctx: &egui::Context) {
     if let Some(permitido) = escolha {
         crate::connect::responder(cliente, permitido);
         app.aprovacoes.pop_front();
+    }
+}
+
+/// "Endereço das listas": a pergunta da primeira abertura e a edição dos Ajustes.
+pub fn listas(app: &mut App, ctx: &egui::Context) {
+    let Some(mut d) = app.dialogo_listas.clone() else { return };
+    veu(ctx);
+    let mut salvar = false;
+    let mut sem_teste = false;
+    let mut fechar = false;
+    let testando = d.fase == listas::Fase::Testando;
+    let mut mudou = false;
+    egui::Area::new(egui::Id::new("enderecos-das-listas"))
+        .order(egui::Order::Foreground)
+        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .show(ctx, |ui| {
+            modal().show(ui, |ui| {
+                ui.set_width(560.0);
+                ui.horizontal(|ui| {
+                    let (lugar, _) = ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
+                    super::icones::pintar(ui.painter(), super::Icone::Link, lugar.center(), 26.0, ACENTO);
+                    super::rotulo_de_secao(ui, "Listas");
+                });
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Endereço das listas").font(forte(26.0)).color(TEXTO));
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("Informe o endereço da lista de canais e o da lista de filmes e séries. Você pode deixar em branco e informar depois em Ajustes.")
+                        .font(normal(15.0))
+                        .color(SECUNDARIO),
+                );
+                ui.add_space(16.0);
+                for (lista, rotulo, dica) in [
+                    (listas::Lista::Canais, "Canais", "endereço da lista de canais"),
+                    (listas::Lista::Filmes, "Filmes e séries", "endereço da lista de filmes e séries"),
+                ] {
+                    ui.label(egui::RichText::new(rotulo).font(forte(14.0)).color(SECUNDARIO));
+                    ui.add_space(4.0);
+                    let texto = if lista == listas::Lista::Canais { &mut d.canais } else { &mut d.filmes };
+                    let id = egui::Id::new(("campo-lista", rotulo));
+                    let resposta = ui.add_enabled(
+                        !testando,
+                        egui::TextEdit::singleline(texto)
+                            .id(id)
+                            .font(normal(16.0))
+                            .hint_text(egui::RichText::new(dica).font(normal(16.0)).color(super::APAGADO))
+                            .margin(egui::Margin::symmetric(12, 10))
+                            .desired_width(f32::INFINITY),
+                    );
+                    if d.focar && lista == listas::Lista::Canais {
+                        resposta.request_focus();
+                        d.focar = false;
+                    }
+                    if resposta.changed() {
+                        mudou = true;
+                    }
+                    if resposta.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !testando {
+                        salvar = true;
+                    }
+                    if d.fase == listas::Fase::Falhou && d.falhas.contains(&lista) {
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new("Não consegui abrir este endereço. Confira o link.").font(normal(13.5)).color(super::VIVO));
+                    }
+                    ui.add_space(12.0);
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if testando {
+                        ui.add(egui::Spinner::new().color(ACENTO));
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("Conferindo os endereços…").font(normal(14.0)).color(SECUNDARIO));
+                    } else if d.fase == listas::Fase::Falhou {
+                        if botao(ui, Some(super::Icone::Trocar), "Tentar de novo", true).clicked() {
+                            salvar = true;
+                        }
+                        if !d.invalido {
+                            ui.add_space(8.0);
+                            if botao(ui, Some(super::Icone::Certo), "Salvar mesmo assim", false).clicked() {
+                                salvar = true;
+                                sem_teste = true;
+                            }
+                        }
+                        ui.add_space(8.0);
+                        if botao(ui, None, if d.primeira { "Agora não" } else { "Cancelar" }, false).clicked() {
+                            fechar = true;
+                        }
+                    } else {
+                        if botao(ui, Some(super::Icone::Certo), "Salvar", true).clicked() {
+                            salvar = true;
+                        }
+                        ui.add_space(8.0);
+                        if botao(ui, None, if d.primeira { "Agora não" } else { "Cancelar" }, false).clicked() {
+                            fechar = true;
+                        }
+                    }
+                });
+                if !d.primeira && !testando {
+                    ui.add_space(10.0);
+                    ui.label(egui::RichText::new("Deixar um campo em branco e salvar apaga aquela lista deste computador.").font(normal(13.0)).color(super::APAGADO));
+                }
+            });
+        });
+    if testando {
+        ctx.request_repaint_after(Duration::from_millis(100));
+    }
+    if mudou && d.fase == listas::Fase::Falhou {
+        d.fase = listas::Fase::Editando;
+        d.falhas.clear();
+        d.invalido = false;
+    }
+    if fechar {
+        app.dialogo_listas = None;
+    } else {
+        app.dialogo_listas = Some(d);
+        if salvar {
+            app.salvar_listas(sem_teste);
+        }
     }
 }

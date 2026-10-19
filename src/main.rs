@@ -27,7 +27,7 @@ mod bateria;
 mod connect;
 mod controle;
 mod rede;
-mod origens;
+mod listas;
 mod telemetria;
 
 use catalogo::Canal;
@@ -100,6 +100,8 @@ fn main() -> eframe::Result<()> {
 enum Recado {
     Catalogo(Vec<Canal>),
     Restritos(Vec<Canal>),
+    /// O resultado do teste dos endereços da janela de listas (true = abriu).
+    ListasTestadas(Vec<(listas::Lista, bool)>),
     /// A agenda com os placares; `None` quando a agenda não veio.
     Eventos(Option<Vec<eventos::Jogo>>),
     Logo(String, egui::ColorImage),
@@ -434,6 +436,8 @@ struct App {
     connect: Receiver<connect::Pedido>,
     /// Celulares esperando o "Permitir": o cliente, o nome e desde quando.
     pub aprovacoes: std::collections::VecDeque<(u64, String, Instant)>,
+    /// A janela "Endereço das listas", quando aberta.
+    pub dialogo_listas: Option<listas::Dialogo>,
     /// Quando o estado foi publicado para os celulares pela última vez.
     connect_publicado: Instant,
     /// O filme ou episódio que o celular mandou abrir, a caminho.
@@ -463,6 +467,52 @@ const BAIXADORES_DE_IMAGEM: usize = 6;
 /// Pedidos além disto são os mais velhos, de capas que já saíram da tela.
 const MAXIMO_NA_FILA_DE_IMAGENS: usize = 120;
 
+/// Baixa catálogo e restritos do endereço de canais; no-op sem endereço.
+fn buscar_canais(emissor: &std::sync::mpsc::Sender<Recado>) {
+    if listas::canais().is_none() {
+        return;
+    }
+    for (arquivo, monta) in [
+        ("catalogo.txt", Recado::Catalogo as fn(Vec<Canal>) -> Recado),
+        ("restritos.txt", Recado::Restritos as fn(Vec<Canal>) -> Recado),
+    ] {
+        let emissor = emissor.clone();
+        std::thread::spawn(move || {
+            if let Some(lista) = catalogo::baixar(arquivo) {
+                let _ = emissor.send(monta(lista));
+            }
+        });
+    }
+}
+
+/// Baixa o índice, a busca e os gêneros do endereço de filmes; no-op sem endereço.
+fn buscar_filmes(emissor: &std::sync::mpsc::Sender<Recado>) {
+    if listas::filmes().is_none() {
+        return;
+    }
+    // O índice do acervo é pequeno e dá as bases dos endereços; sem ele
+    // nenhum filme abre.
+    let emissor = emissor.clone();
+    std::thread::spawn(move || {
+        let gavetas = vod::indice();
+        if !gavetas.is_empty() {
+            let _ = emissor.send(Recado::Gavetas(gavetas));
+        }
+        // O índice de busca são uns 800 KB para trinta mil títulos:
+        // procurar no acervo inteiro sem baixar o acervo.
+        let acervo = vod::busca();
+        if !acervo.is_empty() {
+            let _ = emissor.send(Recado::Acervo(acervo));
+        }
+        // Os gêneros vêm do mesmo lugar, e só servem para a régua do
+        // acervo: podem chegar depois de tudo.
+        let lidos = generos::baixar();
+        if !lidos.vazio() {
+            let _ = emissor.send(Recado::Generos(lidos));
+        }
+    });
+}
+
 impl App {
     fn novo(cc: &eframe::CreationContext<'_>) -> Self {
         let (emissor, recados) = channel();
@@ -475,22 +525,15 @@ impl App {
 
         telemetria::iniciar();
 
+        // Caches de lista de versões anteriores saem uma vez só.
+        listas::migrar();
         let canais = catalogo::em_cache("catalogo.txt");
         let restritos = catalogo::em_cache("restritos.txt");
         let favoritos = ler_favoritos();
 
-        // Lista publicada e versão nova, sem segurar a abertura.
-        for (arquivo, monta) in [
-            ("catalogo.txt", Recado::Catalogo as fn(Vec<Canal>) -> Recado),
-            ("restritos.txt", Recado::Restritos as fn(Vec<Canal>) -> Recado),
-        ] {
-            let emissor = emissor.clone();
-            std::thread::spawn(move || {
-                if let Some(lista) = catalogo::baixar(arquivo) {
-                    let _ = emissor.send(monta(lista));
-                }
-            });
-        }
+        // Lista publicada e versão nova, sem segurar a abertura. Sem endereço
+        // de canais não há pedido nenhum.
+        buscar_canais(&emissor);
         {
             let emissor = emissor.clone();
             std::thread::spawn(move || {
@@ -511,29 +554,7 @@ impl App {
                 std::thread::sleep(std::time::Duration::from_secs(600));
             });
         }
-        {
-            // O índice do acervo é pequeno e dá as bases dos endereços; sem ele
-            // nenhum filme abre.
-            let emissor = emissor.clone();
-            std::thread::spawn(move || {
-                let gavetas = vod::indice();
-                if !gavetas.is_empty() {
-                    let _ = emissor.send(Recado::Gavetas(gavetas));
-                }
-                // O índice de busca são uns 800 KB para trinta mil títulos:
-                // procurar no acervo inteiro sem baixar o acervo.
-                let acervo = vod::busca();
-                if !acervo.is_empty() {
-                    let _ = emissor.send(Recado::Acervo(acervo));
-                }
-                // Os gêneros vêm do mesmo lugar, e só servem para a régua do
-                // acervo: podem chegar depois de tudo.
-                let lidos = generos::baixar();
-                if !lidos.vazio() {
-                    let _ = emissor.send(Recado::Generos(lidos));
-                }
-            });
-        }
+        buscar_filmes(&emissor);
 
         let mut app = App {
             mpv,
@@ -640,10 +661,15 @@ impl App {
             pedir_foco_na_busca: false,
             connect: connect::iniciar(cc.egui_ctx.clone()),
             aprovacoes: std::collections::VecDeque::new(),
+            dialogo_listas: None,
             connect_publicado: Instant::now(),
             remoto: controle::Remoto::default(),
         };
         app.ligar_baixadores_de_imagem(&cc.egui_ctx);
+        // Nenhum endereço guardado: a primeira abertura pergunta.
+        if listas::nenhum() {
+            app.dialogo_listas = Some(listas::Dialogo::novo(true));
+        }
         app.reordenar();
         if app.upscaling > 0 {
             app.aplicar_upscaling();
@@ -707,6 +733,144 @@ impl App {
             }
         }
         self.foco = self.foco.min(self.canais.len().saturating_sub(1));
+    }
+
+    // MARK: - Endereço das listas
+
+    /// Abre a janela "Endereço das listas" pelos Ajustes.
+    pub fn abrir_dialogo_listas(&mut self) {
+        self.dialogo_listas = Some(listas::Dialogo::novo(false));
+    }
+
+    /// Salvar da janela. Cada campo é normalizado; os preenchidos são testados
+    /// fora da thread do desenho, a não ser com `sem_teste` ("Salvar mesmo assim").
+    pub fn salvar_listas(&mut self, sem_teste: bool) {
+        let Some(d) = self.dialogo_listas.as_mut() else { return };
+        let mut alvos: Vec<(listas::Lista, Option<String>)> = Vec::new();
+        let mut falhas = Vec::new();
+        for (lista, texto) in [(listas::Lista::Canais, d.canais.clone()), (listas::Lista::Filmes, d.filmes.clone())] {
+            match listas::normalizar(&texto) {
+                Ok(base) => alvos.push((lista, base)),
+                Err(_) => falhas.push(lista),
+            }
+        }
+        if !falhas.is_empty() {
+            d.fase = listas::Fase::Falhou;
+            d.falhas = falhas;
+            d.invalido = true;
+            return;
+        }
+        d.invalido = false;
+        let a_testar: Vec<(listas::Lista, String)> = alvos
+            .iter()
+            .filter_map(|(l, b)| b.clone().map(|b| (*l, b)))
+            .collect();
+        if sem_teste || a_testar.is_empty() {
+            self.aplicar_listas(alvos);
+            return;
+        }
+        d.fase = listas::Fase::Testando;
+        d.falhas.clear();
+        let emissor = self.emissor.clone();
+        std::thread::spawn(move || {
+            let resultado = a_testar.iter().map(|(l, b)| (*l, listas::testar(*l, b))).collect();
+            let _ = emissor.send(Recado::ListasTestadas(resultado));
+        });
+    }
+
+    fn listas_testadas(&mut self, resultado: Vec<(listas::Lista, bool)>) {
+        let Some(d) = self.dialogo_listas.as_mut() else { return };
+        if d.fase != listas::Fase::Testando {
+            return;
+        }
+        let falhas: Vec<listas::Lista> = resultado.iter().filter(|(_, ok)| !ok).map(|(l, _)| *l).collect();
+        if !falhas.is_empty() {
+            d.fase = listas::Fase::Falhou;
+            d.falhas = falhas;
+            return;
+        }
+        let alvos = [(listas::Lista::Canais, d.canais.clone()), (listas::Lista::Filmes, d.filmes.clone())]
+            .into_iter()
+            .filter_map(|(l, t)| listas::normalizar(&t).ok().map(|b| (l, b)))
+            .collect();
+        self.aplicar_listas(alvos);
+    }
+
+    /// Guarda os endereços, apaga os dados do que mudou ou foi apagado e recarrega.
+    fn aplicar_listas(&mut self, alvos: Vec<(listas::Lista, Option<String>)>) {
+        self.dialogo_listas = None;
+        for (lista, base) in alvos {
+            let mudou = listas::endereco(lista) != base;
+            if mudou {
+                listas::apagar_dados(lista);
+                match lista {
+                    listas::Lista::Canais => self.esvaziar_canais(),
+                    listas::Lista::Filmes => self.esvaziar_filmes(),
+                }
+            }
+            listas::guardar(lista, base.as_deref());
+            if base.is_some() {
+                match lista {
+                    listas::Lista::Canais => buscar_canais(&self.emissor),
+                    listas::Lista::Filmes => {
+                        buscar_filmes(&self.emissor);
+                        if matches!(self.aba, Aba::Inicio | Aba::OnDemand | Aba::Buscar) || self.aba.de_tipo() {
+                            self.carregando_filas = true;
+                            let emissor = self.emissor.clone();
+                            std::thread::spawn(move || {
+                                let _ = emissor.send(Recado::Destaques(destaques::filas()));
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        // Reabre a seção atual: ela pede de novo o que lhe faltar.
+        let aba = self.aba;
+        if aba != Aba::Ajustes && aba != Aba::Canais {
+            self.abrir_secao(aba);
+        }
+        self.aviso = Some(("Listas atualizadas".into(), Instant::now()));
+    }
+
+    /// Volta ao estado vazio dos canais: lista, guia, rádios e o que tocava.
+    fn esvaziar_canais(&mut self) {
+        self.parar_o_que_toca();
+        self.canal_parado = None;
+        self.publicados.clear();
+        self.restritos.clear();
+        self.canais.clear();
+        self.radios.clear();
+        self.foco = 0;
+        epg::limpar();
+    }
+
+    /// Volta ao estado vazio dos filmes e séries.
+    fn esvaziar_filmes(&mut self) {
+        if self.tocando_vod.is_some() {
+            self.parar_o_que_toca();
+        }
+        vod::esquecer();
+        self.gavetas.clear();
+        self.filmes.clear();
+        self.series.clear();
+        self.serie_aberta = None;
+        self.episodios.clear();
+        self.episodios_colecao.clear();
+        self.filas.clear();
+        self.generos = generos::Generos::default();
+        self.genero.clear();
+        self.acervo.clear();
+        self.colecoes.clear();
+        self.colecoes_pedidas = false;
+        self.series_da_letra = None;
+        self.carregando_vod = false;
+        self.carregando_filas = false;
+        self.heroi = None;
+        self.letra = "A".into();
+        self.foco_vod = 0;
+        self.foco_fila = 0;
+        self.versao_dados = self.versao_dados.wrapping_add(1);
     }
 
     /// Manda montar o guia com a lista que está na tela.
@@ -1484,6 +1648,7 @@ impl App {
                 }
                 Recado::Catalogo(lista) => self.trocar_lista(lista, false),
                 Recado::Restritos(lista) => self.trocar_lista(lista, true),
+                Recado::ListasTestadas(resultado) => self.listas_testadas(resultado),
                 Recado::Eventos(lidos) => {
                     self.buscando_eventos = false;
                     self.eventos_carregados = true;
@@ -1845,7 +2010,9 @@ impl App {
                 self.abrir_secao(proxima);
             }
             egui::Key::Escape => {
-                if self.ficha_aberta.is_some() {
+                if self.dialogo_listas.is_some() {
+                    self.dialogo_listas = None;
+                } else if self.ficha_aberta.is_some() {
                     if self.ficha_ator.is_some() {
                         self.ficha_ator = None;
                         self.filmografia.clear();
@@ -3024,6 +3191,9 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
     static ESCOLHIDA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let antes = std::env::var("SAIMO_FOTO_ANTES").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
     if inicio.elapsed() > Duration::from_secs(antes) && !ESCOLHIDA.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        if std::env::var("SAIMO_FOTO_SEM_DIALOGO").is_ok() {
+            app.dialogo_listas = None;
+        }
         match std::env::var("SAIMO_FOTO_TELA").unwrap_or_default().as_str() {
             "inicio" => app.abrir_secao(Aba::Inicio),
             "ondemand" => app.abrir_secao(Aba::OnDemand),

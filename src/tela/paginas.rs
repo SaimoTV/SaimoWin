@@ -784,7 +784,24 @@ pub fn pagina(app: &mut App, ui: &mut egui::Ui) {
     destaque(app, ui, area, altura_do_destaque);
 
     let lista = Rect::from_min_max(Pos2::new(area.left(), area.top() + altura_do_destaque), area.max);
-    if filas.is_empty() {
+    if filas.is_empty() || (app.aba.de_tipo() && crate::listas::filmes().is_none()) {
+        let sem_filmes = crate::listas::filmes().is_none();
+        let sem_canais = crate::listas::canais().is_none();
+        let sem_lista = match app.aba {
+            Aba::Inicio | Aba::OnDemand | Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas => sem_filmes,
+            Aba::Radios => sem_canais,
+            Aba::Buscar => sem_filmes && sem_canais,
+            _ => false,
+        };
+        if sem_lista {
+            let aviso = match app.aba {
+                Aba::Radios => "Nenhuma rádio. Informe o endereço da lista de canais em Ajustes > Listas.",
+                Aba::Buscar => "Nada para buscar. Informe os endereços das listas em Ajustes > Listas.",
+                _ => "Nenhum filme ou série. Informe o endereço da lista de filmes e séries em Ajustes > Listas.",
+            };
+            super::vazio_com_atalho(app, ui, lista.center() - egui::vec2(0.0, 40.0), aviso);
+            return;
+        }
         let aviso = if buscando {
             if app.busca_vod.trim().chars().count() < 2 {
                 "Digite o nome — os resultados aparecem enquanto você digita."

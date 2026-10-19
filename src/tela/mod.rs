@@ -154,6 +154,17 @@ fn ajustar_escala(ctx: &egui::Context) {
     }
 }
 
+/// Estado vazio de uma lista sem endereço: o texto e o atalho para Ajustes.
+pub fn vazio_com_atalho(app: &mut App, ui: &mut egui::Ui, centro: Pos2, aviso: &str) {
+    ui.painter().text(centro, Align2::CENTER_CENTER, aviso, normal(17.0), SECUNDARIO);
+    let area = Rect::from_center_size(centro + egui::vec2(0.0, 50.0), egui::vec2(220.0, 46.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
+        if botao(ui, Some(Icone::Ajustes), "Abrir Ajustes", true).clicked() {
+            app.abrir_secao(Aba::Ajustes);
+        }
+    });
+}
+
 pub fn desenhar(app: &mut App, ui: &mut egui::Ui) {
     let ctx = &ui.ctx().clone();
     if !app.pip {
@@ -186,6 +197,9 @@ pub fn desenhar(app: &mut App, ui: &mut egui::Ui) {
     }
     janelas::atualizacao(app, ctx);
     janelas::aprovacao(app, ctx);
+    if app.dialogo_listas.is_some() {
+        janelas::listas(app, ctx);
+    }
 }
 
 // MARK: - Fundo do app

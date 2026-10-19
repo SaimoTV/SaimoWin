@@ -23,6 +23,16 @@ pub fn texto(url: &str) -> Option<String> {
     agente().get(url).call().ok()?.into_body().with_config().limit(LIMITE_TEXTO).read_to_string().ok()
 }
 
+/// `true` quando o endereço responde 200. Não lê o corpo.
+pub fn existe(url: &str) -> bool {
+    let agente: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(15)))
+        .user_agent(crate::AGENTE)
+        .build()
+        .into();
+    agente.get(url).call().map(|r| r.status().as_u16() == 200).unwrap_or(false)
+}
+
 pub fn bytes(url: &str, limite: usize) -> Option<Vec<u8>> {
     let resposta = agente().get(url).call().ok()?;
     let mut dados = Vec::new();

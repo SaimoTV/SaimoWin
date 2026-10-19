@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-const VOD: &str = crate::origens::FILMES;
 const OPENSUBTITLES: &str = "https://opensubtitles-v3.strem.io/subtitles";
 const FRAGMENTOS: u32 = 100;
 
@@ -45,7 +44,8 @@ fn imdb_de(tmdb: u32, serie: bool) -> Option<String> {
     }
     // Sem o fragmento (rede fora, título ainda não mapeado) não guarda nada:
     // a próxima abertura tenta de novo.
-    let texto = crate::rede::texto(&format!("{VOD}imdb/{nome}.txt"))?;
+    let base = crate::listas::filmes()?;
+    let texto = crate::rede::texto(&format!("{base}imdb/{nome}.txt"))?;
     let mut mapa = HashMap::new();
     for linha in texto.lines() {
         let mut partes = linha.split('\t');

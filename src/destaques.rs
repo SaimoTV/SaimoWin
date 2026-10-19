@@ -75,10 +75,12 @@ fn texto() -> Option<String> {
         }
     }
 
-    if let Some(baixado) = crate::rede::texto(&format!("{}{ARQUIVO}", crate::origens::FILMES)) {
-        if !baixado.trim().is_empty() {
-            let _ = std::fs::write(&local, &baixado);
-            return Some(baixado);
+    if let Some(base) = crate::listas::filmes() {
+        if let Some(baixado) = crate::rede::texto(&format!("{base}{ARQUIVO}")) {
+            if !baixado.trim().is_empty() {
+                let _ = std::fs::write(&local, &baixado);
+                return Some(baixado);
+            }
         }
     }
     // Rede fora: o que está em disco, mesmo vencido, é melhor que nada.

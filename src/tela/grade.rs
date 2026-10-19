@@ -119,6 +119,16 @@ fn grade(app: &mut App, ui: &mut egui::Ui) {
     let itens = app.itens_na_tela();
     let total = itens.len();
     let area = ui.max_rect();
+    if total == 0 && crate::listas::filmes().is_none() && app.aba != Aba::Favoritos {
+        let aviso = match app.aba {
+            Aba::Series => "Nenhuma série. Informe o endereço da lista de filmes e séries em Ajustes > Listas.",
+            Aba::Animes => "Nenhum anime. Informe o endereço da lista de filmes e séries em Ajustes > Listas.",
+            Aba::Doramas => "Nenhum dorama. Informe o endereço da lista de filmes e séries em Ajustes > Listas.",
+            _ => "Nenhum filme. Informe o endereço da lista de filmes e séries em Ajustes > Listas.",
+        };
+        super::vazio_com_atalho(app, ui, area.center() - egui::vec2(0.0, 60.0), aviso);
+        return;
+    }
     if app.carregando_vod && total == 0 {
         ui.painter().text(area.center() - egui::vec2(0.0, 60.0), Align2::CENTER_CENTER, "Carregando…", normal(17.0), SECUNDARIO);
         return;
@@ -264,6 +274,22 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
                 acao = Some(2);
             }
             ui.add_space(18.0);
+            rotulo_de_secao(ui, "Listas");
+            ui.add_space(4.0);
+            let mostra = |l: Option<String>| l.unwrap_or_else(|| "Não informado".to_string());
+            if linha(ui, "Lista de canais", &mostra(crate::listas::canais()), Icone::Link)
+                .on_hover_text("Ver, editar ou apagar o endereço")
+                .clicked()
+            {
+                acao = Some(9);
+            }
+            if linha(ui, "Lista de filmes e séries", &mostra(crate::listas::filmes()), Icone::Link)
+                .on_hover_text("Ver, editar ou apagar o endereço")
+                .clicked()
+            {
+                acao = Some(9);
+            }
+            ui.add_space(18.0);
             rotulo_de_secao(ui, "Legendas");
             ui.add_space(4.0);
             let idioma = legendas::idioma_guardado();
@@ -319,6 +345,7 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             let atual = ordem.iter().position(|c| *c == legendas::idioma_guardado()).unwrap_or(0);
             legendas::guardar_idioma(ordem[(atual + 1) % ordem.len()]);
         }
+        Some(9) => app.abrir_dialogo_listas(),
         Some(4) => app.procurar_atualizacao_agora(),
         Some(5) => app.ajuda_aberta = true,
         Some(6) => app.alternar_tela_cheia(ui.ctx()),

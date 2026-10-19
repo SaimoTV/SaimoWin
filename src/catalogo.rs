@@ -7,8 +7,6 @@
 
 use std::path::PathBuf;
 
-pub const BASE: &str = crate::origens::CANAIS;
-
 /// Ordem das seções, igual à do Mac, do TV Box e do site.
 pub const ORDEM: [&str; 10] = [
     "TV Aberta", "Filmes e Séries", "Esportes", "Notícias", "Infantil",
@@ -40,33 +38,8 @@ impl Canal {
     pub fn secao(&self) -> &str {
         match self.categoria.as_deref() {
             Some(c) if !c.is_empty() => c,
-            _ => secao_pelo_nome(&self.nome),
+            _ => "Outros",
         }
-    }
-}
-
-/// Sem `categoria:` declarada, a seção sai do nome — mesma regra dos outros.
-fn secao_pelo_nome(nome: &str) -> &'static str {
-    let n = nome.to_lowercase();
-    let tem = |lista: &[&str]| lista.iter().any(|p| n.contains(p));
-    if tem(&["sexy hot", "playboy", "adulto", "venus", "hustler", "private", "sex"]) {
-        "Adulto"
-    } else if tem(&["pluto"]) {
-        "Pluto TV"
-    } else if tem(&["espn", "sportv", "premiere", "combate", "band sports", "cazé", "caze", "nsports", "xsports"]) {
-        "Esportes"
-    } else if tem(&["news", "globonews", "cnn", "record news", "jovem pan", "terra viva"]) {
-        "Notícias"
-    } else if tem(&["cartoon", "nick", "discovery kids", "gloob", "infantil", "kids", "boomerang"]) {
-        "Infantil"
-    } else if tem(&["discovery", "history", "animal planet", "natgeo", "national geographic", "investigação"]) {
-        "Documentários"
-    } else if tem(&["hbo", "telecine", "megapix", "paramount", "tnt", "space", "universal", "amc", "cinemax", "star"]) {
-        "Filmes e Séries"
-    } else if tem(&["globo", "sbt", "record", "band", "rede tv", "redetv", "cultura", "gazeta"]) {
-        "TV Aberta"
-    } else {
-        "Variedades"
     }
 }
 
@@ -183,7 +156,8 @@ pub fn em_cache(arquivo: &str) -> Vec<Canal> {
 }
 
 pub fn baixar(arquivo: &str) -> Option<Vec<Canal>> {
-    let url = format!("{BASE}{arquivo}");
+    // Sem endereço de canais não há pedido de rede.
+    let url = format!("{}{arquivo}", crate::listas::canais()?);
     let texto = crate::rede::texto(&url)?;
     let canais = parse(&texto);
     if canais.is_empty() {
@@ -191,4 +165,17 @@ pub fn baixar(arquivo: &str) -> Option<Vec<Canal>> {
     }
     let _ = std::fs::write(pasta().join(arquivo), &texto);
     Some(canais)
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    #[test]
+    fn secao_vem_da_categoria_e_sem_ela_e_outros() {
+        let texto = "canal: Globo\ncategoria: TV Aberta\nfonte: https://a/1.m3u8\ncanal: SporTV\nfonte: https://a/2.m3u8\n";
+        let canais = parse(texto);
+        assert_eq!(canais[0].secao(), "TV Aberta");
+        assert_eq!(canais[1].secao(), "Outros");
+    }
 }
