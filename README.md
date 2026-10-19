@@ -338,3 +338,18 @@ Filmes e séries vêm do acervo publicado em `vod/`, fatiado por letra, com capa
 do TMDB (a mesma busca pontuada do TV Box), favoritos e "continuar de onde parou".
 
 A capa é procurada só para as linhas visíveis: a letra "A" tem 2.672 filmes.
+
+
+## Quando o app "abre e fecha"
+
+A pasta de dados do app (`%APPDATA%\SaimoTV`) guarda as pistas:
+
+- `inicio.txt` (e `inicio-anterior.txt`): as etapas da abertura, com a placa de vídeo e a versão do
+  OpenGL que a janela recebeu. A última linha diz até onde o app chegou.
+- `falhas.txt`: pânico do Rust, queda nativa (`queda nativa 0xC0000005 em nvoglv64.dll+0x...`, o mesmo
+  "módulo com falha" do Visualizador de Eventos) e erro ao abrir a janela (que também mostra uma caixa
+  de aviso, em vez de o app só sumir).
+- Modo seguro automático: se a abertura anterior não chegou a 90 segundos sem fechar direito, a
+  seguinte sobe com menos recursos. Cada queda seguida tira mais um: 1 = decodificação por software
+  (`hwdec=no`); 2 = sem os controles de mídia do Windows; 3 = sem o Saimo Connect. Uma abertura de 90
+  segundos (ou um fechamento normal) zera a contagem. A queda anterior vai ao monitor (evento `crash`).

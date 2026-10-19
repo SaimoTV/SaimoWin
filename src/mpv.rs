@@ -255,7 +255,7 @@ impl Mpv {
             // desenhá-lo. Só a lista segura do mpv: forçar D3D11VA/NVDEC em
             // todos os codecs (2.3.0) fechava o app em notebooks com placa
             // dedicada, e só parava abrindo pela placa integrada.
-            ("hwdec", "auto-copy-safe"),
+            ("hwdec", if crate::diagnostico::nivel() >= 1 { "no" } else { "auto-copy-safe" }),
             // Ao vivo: perder quadro é melhor que atrasar a imagem.
             ("profile", "low-latency"),
             ("cache", "yes"),
@@ -396,6 +396,7 @@ impl Mpv {
     }
 
     pub fn tocar(&self, url: &str, referer: Option<&str>, agente: Option<&str>) {
+        crate::diagnostico::etapa("mpv: abrindo um título");
         self.tocar_com_legenda(url, referer, agente, None);
     }
 
@@ -412,6 +413,7 @@ impl Mpv {
     /// carimbo de tempo dos próprios pedaços, que é como o app a leva para a
     /// régua comum.
     pub fn tocar_ao_vivo(&self, url: &str, referer: Option<&str>, agente: Option<&str>) {
+        crate::diagnostico::etapa("mpv: abrindo um canal ao vivo");
         match crate::connect::pela_regua(url, referer, agente, self.id) {
             Some(local) => self.carregar(&local, url, referer, agente, None, &["rebase-start-time=no"]),
             None => self.tocar(url, referer, agente),

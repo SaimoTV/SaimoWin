@@ -43,6 +43,16 @@ pub struct Midia {
 }
 
 impl Midia {
+    /// Sem os controles do Windows (modo seguro).
+    pub fn desligada() -> Self {
+        Midia {
+            mostrado: None,
+            conferido: Instant::now(),
+            #[cfg(windows)]
+            janela: None,
+        }
+    }
+
     /// Pega os controles da janela do app. Sem eles (Windows antigo, ou fora
     /// do Windows) o resto vira nada.
     #[allow(unused_variables)]

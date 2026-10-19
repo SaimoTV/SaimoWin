@@ -525,6 +525,11 @@ pub fn erro(detalhe: String) {
     evento("error", None, None, None, None, Some(detalhe));
 }
 
+/// Queda da abertura anterior: vai mesmo fora da amostra (o monitor aceita `crash` de qualquer aparelho).
+pub fn quebra(detalhe: String) {
+    evento("crash", None, None, None, None, Some(detalhe));
+}
+
 pub fn fechando() {
     let tocando = ESTADO.lock().unwrap().as_ref().map(|e| e.tocando.is_some()).unwrap_or(false);
     bater(false);

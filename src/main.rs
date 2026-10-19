@@ -10,6 +10,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod abertura;
+mod diagnostico;
 mod atualizacao;
 mod fontes_desativadas;
 mod fonte_preferida;
@@ -45,6 +46,20 @@ const CODIGO: &str = "1010";
 const ESPERA_DA_FONTE: Duration = Duration::from_secs(14);
 const SUMIR_LETREIRO: Duration = Duration::from_secs(6);
 
+/// Fabricante, placa e versão do OpenGL, para o `inicio.txt`.
+fn gl_info(cc: &eframe::CreationContext<'_>) -> String {
+    use eframe::glow::HasContext;
+    let Some(gl) = cc.gl.as_ref() else { return "sem contexto OpenGL".into() };
+    unsafe {
+        format!(
+            "{} | {} | OpenGL {}",
+            gl.get_parameter_string(eframe::glow::VENDOR),
+            gl.get_parameter_string(eframe::glow::RENDERER),
+            gl.get_parameter_string(eframe::glow::VERSION)
+        )
+    }
+}
+
 /// Identifica a placa de vídeo ativa (NVIDIA, AMD ou Intel) pelo contexto OpenGL.
 fn detectar_gpu(cc: &eframe::CreationContext<'_>) -> &'static str {
     use eframe::glow::HasContext;
@@ -69,6 +84,7 @@ fn detectar_gpu(cc: &eframe::CreationContext<'_>) -> &'static str {
 }
 
 fn main() -> eframe::Result<()> {
+    diagnostico::iniciar();
     // Se o app cair, a causa fica em falhas.txt (pasta de dados do app, com
     // as últimas ocorrências): sem console no Windows, sem isto um "fechou
     // sozinho" chegava sem pista nenhuma.
@@ -79,6 +95,7 @@ fn main() -> eframe::Result<()> {
         let antes: String = antes.chars().rev().take(20_000).collect::<Vec<_>>().into_iter().rev().collect();
         let quando = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
         let _ = std::fs::write(&caminho, format!("{antes}[{quando}] versão {} — {info}\n", env!("CARGO_PKG_VERSION")));
+        diagnostico::etapa(&format!("pânico: {info}"));
         padrao(info);
     }));
     let mut janela = egui::ViewportBuilder::default()
@@ -93,7 +110,12 @@ fn main() -> eframe::Result<()> {
         viewport: janela,
         ..Default::default()
     };
-    eframe::run_native("Saimo TV", opcoes, Box::new(|cc| Ok(Box::new(App::novo(cc)))))
+    diagnostico::etapa("criando a janela e o contexto OpenGL");
+    let resultado = eframe::run_native("Saimo TV", opcoes, Box::new(|cc| Ok(Box::new(App::novo(cc)))));
+    if let Err(e) = &resultado {
+        diagnostico::erro_fatal(&e.to_string());
+    }
+    resultado
 }
 
 /// Recados que chegam das threads de fundo.
@@ -516,14 +538,22 @@ fn buscar_filmes(emissor: &std::sync::mpsc::Sender<Recado>) {
 impl App {
     fn novo(cc: &eframe::CreationContext<'_>) -> Self {
         let (emissor, recados) = channel();
+        diagnostico::etapa(&format!("janela e OpenGL prontos ({})", gl_info(cc)));
         tela::aplicar_estilo(&cc.egui_ctx);
 
         let (mpv, erro_do_mpv) = match mpv::Mpv::novo(&caminho_do_mpv()) {
             Ok(m) => (Some(std::sync::Arc::new(m)), None),
             Err(e) => (None, Some(e)),
         };
+        diagnostico::etapa(&match &erro_do_mpv {
+            None => "mpv carregado".to_string(),
+            Some(e) => format!("mpv NÃO carregou: {e}"),
+        });
 
         telemetria::iniciar();
+        if let Some(queda) = diagnostico::queda_anterior() {
+            telemetria::quebra(queda);
+        }
 
         // Caches de lista de versões anteriores saem uma vez só.
         listas::migrar();
@@ -645,7 +675,7 @@ impl App {
             mpv_reserva: None,
             colecoes: HashMap::new(),
             series_da_letra: None,
-            midia: midia::Midia::nova(cc),
+            midia: if diagnostico::nivel() >= 2 { midia::Midia::desligada() } else { midia::Midia::nova(cc) },
             abertura: abertura::Abertura::nova(&caminho_do_mpv()),
             explorar: false,
             ordem_az: false,
@@ -659,7 +689,11 @@ impl App {
             episodios_no_player: false,
             temporada_aberta: 0,
             pedir_foco_na_busca: false,
-            connect: connect::iniciar(cc.egui_ctx.clone()),
+            connect: if diagnostico::nivel() >= 3 {
+                std::sync::mpsc::channel().1
+            } else {
+                connect::iniciar(cc.egui_ctx.clone())
+            },
             aprovacoes: std::collections::VecDeque::new(),
             dialogo_listas: None,
             connect_publicado: Instant::now(),
@@ -3304,6 +3338,12 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
+        {
+            static PRIMEIRO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !PRIMEIRO.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                diagnostico::etapa("primeiro quadro desenhado");
+            }
+        }
         self.cuidar_dos_recados(ctx);
         self.cuidar_dos_eventos(ctx);
         self.cuidar_do_mpv(ctx);
@@ -3338,6 +3378,7 @@ impl eframe::App for App {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.guardar_progresso(true);
         telemetria::fechando();
+        diagnostico::encerrar();
     }
 }
 
