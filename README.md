@@ -10,7 +10,7 @@ OpenGL) e vídeo pelo mpv. Não há navegador nem página HTML em lugar nenhum.
 Versão atual: **2.0.0**. O instalador sai no release único de
 [SaimoPlayer](https://github.com/gabrielsaimo/SaimoPlayer/releases/latest), e o
 programa avisa quando há versão nova, lendo `versao.json` de
-`https://github.com/saimo-tv/saimo-downloads/releases/latest/download/versao.json`
+`https://canais-saimo.pages.dev/versao.json`
 (só aceita links de release do GitHub).
 
 Os dois endereços de lista vêm de fábrica e ativos, em duas constantes de
