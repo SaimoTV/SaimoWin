@@ -16,6 +16,21 @@ type mpv_handle = c_void;
 #[allow(non_camel_case_types)]
 type mpv_render_context = c_void;
 
+static HWDEC: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// Decodificação por hardware que o mpv vai pedir. Dita pela placa (ver `main.rs`) e, depois de uma
+/// queda, pelo modo seguro: nenhuma, decodificando no processador.
+pub fn preferir_hwdec(valor: &'static str) {
+    let _ = HWDEC.set(valor);
+}
+
+fn hwdec_escolhido() -> &'static str {
+    if crate::diagnostico::nivel() >= 1 {
+        return "no";
+    }
+    HWDEC.get().copied().unwrap_or("auto-copy-safe")
+}
+
 #[repr(C)]
 struct MpvRenderParam {
     tipo: c_int,
@@ -255,7 +270,7 @@ impl Mpv {
             // desenhá-lo. Só a lista segura do mpv: forçar D3D11VA/NVDEC em
             // todos os codecs (2.3.0) fechava o app em notebooks com placa
             // dedicada, e só parava abrindo pela placa integrada.
-            ("hwdec", if crate::diagnostico::nivel() >= 1 { "no" } else { "auto-copy-safe" }),
+            ("hwdec", hwdec_escolhido()),
             // Ao vivo: perder quadro é melhor que atrasar a imagem.
             ("profile", "low-latency"),
             ("cache", "yes"),

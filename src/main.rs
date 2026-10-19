@@ -541,6 +541,13 @@ impl App {
         diagnostico::etapa(&format!("janela e OpenGL prontos ({})", gl_info(cc)));
         tela::aplicar_estilo(&cc.egui_ctx);
 
+        // NVIDIA: o `auto-copy-safe` tenta o NVDEC (CUDA) primeiro, e com o driver 617.42 numa RTX 3070
+        // o libmpv caía (acesso inválido no talloc) poucos segundos depois de abrir um título. Nas
+        // GeForce a decodificação vai pelo D3D11, que não passa pelo CUDA.
+        if detectar_gpu(cc) == "NVIDIA GPU" {
+            mpv::preferir_hwdec("d3d11va-copy");
+        }
+        diagnostico::etapa(&format!("decodificação por hardware pedida: {}", if diagnostico::nivel() >= 1 { "no (modo seguro)" } else if detectar_gpu(cc) == "NVIDIA GPU" { "d3d11va-copy" } else { "auto-copy-safe" }));
         let (mpv, erro_do_mpv) = match mpv::Mpv::novo(&caminho_do_mpv()) {
             Ok(m) => (Some(std::sync::Arc::new(m)), None),
             Err(e) => (None, Some(e)),
@@ -1580,6 +1587,17 @@ impl App {
                     }
                 }
                 continue;
+            }
+            if aviso == mpv::Aviso::Tocando {
+                static LOGADO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                if !LOGADO.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(mpv) = self.mpv.as_ref() {
+                        diagnostico::etapa(&format!(
+                            "mpv tocando; decodificação em uso: {}",
+                            mpv.ler("hwdec-current").unwrap_or_else(|| "?".into())
+                        ));
+                    }
+                }
             }
             match aviso {
                 mpv::Aviso::Tocando => {
