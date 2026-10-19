@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 /// O endereço de atualização, um só e fixo. O link de download vem do próprio
 /// `versao.json`.
-const ENDERECO: &str = "https://github.com/saimo-tv/saimo-downloads/releases/latest/download/versao.json";
+const ENDERECO: &str = "https://canais-saimo.pages.dev/versao.json";
 
 /// Plataforma deste app em `arquivos` do `versao.json`.
 const PLATAFORMA: &str = "windows";
