@@ -370,6 +370,8 @@ struct App {
     velocidade: f32,
     preencher: bool,
     pub upscaling: u8,
+    /// Altura do vídeo que está tocando (para desligar o deband em vídeo que já é do tamanho do alvo).
+    altura_do_video: u32,
     pub gpu_nome: &'static str,
     ultimo_mouse: Option<egui::Pos2>,
     /// Já voltou ao último canal nesta abertura: a lista recarrega e não pode
@@ -649,6 +651,7 @@ impl App {
             ajuda_aberta: false,
             velocidade: 1.0,
             preencher: false,
+            altura_do_video: 0,
             upscaling: std::fs::read_to_string(catalogo::pasta().join("upscaling.txt"))
                 .ok()
                 .and_then(|s| s.trim().parse::<u8>().ok())
@@ -1664,7 +1667,14 @@ impl App {
                 let carregando = pulando || mpv.ler("paused-for-cache").as_deref() == Some("yes");
                 // A altura só muda quando troca a variante: não precisa ler todo quadro.
                 let qualidade = if self.quadro.is_multiple_of(120) {
-                    mpv.ler("height").and_then(|h| h.parse::<u32>().ok()).filter(|h| *h > 0).map(|h| format!("{h}p"))
+                    let altura = mpv.ler("height").and_then(|h| h.parse::<u32>().ok()).filter(|h| *h > 0);
+                    if let Some(h) = altura {
+                        if h != self.altura_do_video {
+                            self.altura_do_video = h;
+                            Self::deband_pela_altura(mpv, self.upscaling, h);
+                        }
+                    }
+                    altura.map(|h| format!("{h}p"))
                 } else {
                     None
                 };
@@ -2618,6 +2628,9 @@ impl App {
         self.upscaling = (self.upscaling + 1) % 3;
         let _ = std::fs::write(catalogo::pasta().join("upscaling.txt"), self.upscaling.to_string());
         self.aplicar_upscaling();
+        if let Some(mpv) = self.mpv.as_ref() {
+            Self::deband_pela_altura(mpv, self.upscaling, self.altura_do_video);
+        }
         self.aviso = Some((format!("Super Resolução: {}", self.rotulo_upscaling()), Instant::now()));
     }
 
@@ -2636,7 +2649,8 @@ impl App {
         mpv.definir("vf", "");
         match modo {
             1 => {
-                let shader = Self::garantir_shader_gpu("saimo_cas_hd.glsl", "0.55");
+                // Só roda ampliando vídeo abaixo de 1080p (HOOKED = vídeo, OUTPUT = tamanho na janela).
+                let shader = Self::garantir_shader_gpu("saimo_cas_hd.glsl", "0.55", "HOOKED.h 1080 < OUTPUT.h HOOKED.h > *");
                 mpv.definir("scale", "spline36");
                 mpv.definir("cscale", "spline36");
                 mpv.definir("dscale", "mitchell");
@@ -2649,7 +2663,9 @@ impl App {
                 mpv.definir("glsl-shaders", &shader);
             }
             2 => {
-                let shader = Self::garantir_shader_gpu("saimo_fsr_ultra.glsl", "0.85");
+                // Só roda quando a imagem é de fato ampliada: num filme 4K o shader de 9 amostras em
+                // cada quadro 4K não acrescenta nada e fazia travar.
+                let shader = Self::garantir_shader_gpu("saimo_fsr_ultra.glsl", "0.85", "OUTPUT.h HOOKED.h >");
                 mpv.definir("scale", "ewa_lanczossharp");
                 mpv.definir("cscale", "ewa_lanczossharp");
                 mpv.definir("dscale", "mitchell");
@@ -2674,13 +2690,25 @@ impl App {
         }
     }
 
+    /// O deband roda na resolução do vídeo: num filme que já chega na altura do alvo (4K no modo
+    /// 4K, 1080p no modo HD) ele só gasta a placa a cada quadro. Desliga ali e volta quando o vídeo
+    /// for menor.
+    fn deband_pela_altura(mpv: &mpv::Mpv, modo: u8, altura: u32) {
+        if modo == 0 || altura == 0 {
+            return;
+        }
+        let alvo = if modo == 2 { 2160 } else { 1080 };
+        mpv.definir("deband", if altura >= alvo { "no" } else { "yes" });
+    }
+
     /// Grava o shader GLSL de Super Resolução em luminância com trava anti-halo
     /// para execução direta nas placas de vídeo NVIDIA, AMD e Intel via libmpv.
-    fn garantir_shader_gpu(nome: &str, nitidez: &str) -> String {
+    fn garantir_shader_gpu(nome: &str, nitidez: &str, quando: &str) -> String {
         let caminho = catalogo::pasta().join(nome);
         let codigo = format!(
             r#"//!HOOK MAIN
 //!BIND HOOKED
+//!WHEN {quando}
 //!DESC Saimo GPU Luminance Anti-Ringing CAS ({nitidez})
 
 float saimo_luma(vec3 rgb) {{
