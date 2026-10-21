@@ -371,6 +371,7 @@ struct App {
     preencher: bool,
     pub upscaling: u8,
     pub audio_inteligente: bool,
+    pub zero_delay: u8,
     /// Altura do vídeo que está tocando (para desligar o deband em vídeo que já é do tamanho do alvo).
     altura_do_video: u32,
     pub gpu_nome: &'static str,
@@ -662,6 +663,10 @@ impl App {
                 .ok()
                 .map(|s| s.trim() != "0")
                 .unwrap_or(true),
+            zero_delay: std::fs::read_to_string(catalogo::pasta().join("zero_delay.txt"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u8>().ok())
+                .unwrap_or(0),
             gpu_nome: detectar_gpu(cc),
             ultimo_mouse: None,
             retomou_canal: false,
@@ -720,6 +725,7 @@ impl App {
             app.aplicar_upscaling();
         }
         app.aplicar_audio_inteligente();
+        app.aplicar_zero_delay();
         // Só para conferir telas fora do Windows: SAIMO_ABA=inicio|filmes|series.
         if let Ok(aba) = std::env::var("SAIMO_ABA") {
             match aba.as_str() {
@@ -2678,6 +2684,58 @@ impl App {
         }
     }
 
+    pub fn rotulo_zero_delay(&self) -> String {
+        match self.zero_delay {
+            1 => "Equilibrado (Recomendado · Menor atraso)".to_string(),
+            2 => "Agressivo (Ultra Ao Vivo · Máximo tempo real)".to_string(),
+            _ => "Desligado".to_string(),
+        }
+    }
+
+    pub fn alternar_zero_delay(&mut self) {
+        self.zero_delay = (self.zero_delay + 1) % 3;
+        let _ = std::fs::write(catalogo::pasta().join("zero_delay.txt"), self.zero_delay.to_string());
+        self.aplicar_zero_delay();
+        self.aviso = Some((format!("Zero Delay: {}", self.rotulo_zero_delay()), Instant::now()));
+    }
+
+    pub fn aplicar_zero_delay(&self) {
+        if let Some(mpv) = self.mpv.as_ref() {
+            Self::configurar_zero_delay_mpv(mpv, self.zero_delay);
+        }
+        if let Some(outra) = self.outra_tela.as_ref() {
+            Self::configurar_zero_delay_mpv(&outra.mpv, self.zero_delay);
+        }
+    }
+
+    fn configurar_zero_delay_mpv(mpv: &mpv::Mpv, modo: u8) {
+        match modo {
+            1 => {
+                // Equilibrado: perfil de baixa latência com buffer seguro anti-travamento
+                mpv.definir("profile", "low-latency");
+                mpv.definir("cache", "yes");
+                mpv.definir("cache-secs", "3");
+                mpv.definir("demuxer-readahead-secs", "3");
+                mpv.definir("demuxer-lavf-o", "");
+            }
+            2 => {
+                // Agressivo (Ultra): sem cache intermediário e fflags nobuffer
+                mpv.definir("profile", "low-latency");
+                mpv.definir("cache", "no");
+                mpv.definir("demuxer-readahead-secs", "1");
+                mpv.definir("demuxer-lavf-o", "fflags=+nobuffer");
+            }
+            _ => {
+                // Desligado: padrão clássico do mpv
+                mpv.definir("profile", "default");
+                mpv.definir("cache", "yes");
+                mpv.definir("cache-secs", "15");
+                mpv.definir("demuxer-readahead-secs", "10");
+                mpv.definir("demuxer-lavf-o", "");
+            }
+        }
+    }
+
     fn configurar_upscaling_mpv(mpv: &mpv::Mpv, modo: u8) {
         // Nunca usa filtros de CPU (vf=lavfi=[unsharp=...]): todo o upscaling
         // e nitidez CAS rodam 100% nos shaders da GPU (NVIDIA, AMD e Intel).
@@ -3085,6 +3143,7 @@ vec4 hook() {{
         self.foco_a_direita = true;
         self.aplicar_upscaling();
         self.aplicar_audio_inteligente();
+        self.aplicar_zero_delay();
         self.ajustar_som_das_telas();
         self.aba = Aba::Canais;
         self.lista_aberta = true;
