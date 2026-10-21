@@ -267,6 +267,9 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             if linha(ui, "Super Resolução (Upscaling)", &app.rotulo_upscaling(), Icone::TelaCheia).clicked() {
                 acao = Some(7);
             }
+            if linha(ui, "Áudio Inteligente", if app.audio_inteligente { "Ligado: normaliza e equilibra o volume de todos os canais" } else { "Desligado: áudio original da transmissão" }, Icone::Som).clicked() {
+                acao = Some(10);
+            }
             if linha(ui, "Velocidade dos filmes e séries", &format!("{}×", app.velocidade), Icone::Velocidade).clicked() {
                 acao = Some(1);
             }
@@ -334,6 +337,7 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
     match acao {
         Some(0) => app.alternar_preencher(),
         Some(7) => app.alternar_upscaling(),
+        Some(10) => app.alternar_audio_inteligente(),
         Some(1) => {
             let ordem = [1.0, 1.25, 1.5, 2.0, 0.75];
             let atual = ordem.iter().position(|v| *v == app.velocidade).unwrap_or(0);

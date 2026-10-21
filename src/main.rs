@@ -370,6 +370,7 @@ struct App {
     velocidade: f32,
     preencher: bool,
     pub upscaling: u8,
+    pub audio_inteligente: bool,
     /// Altura do vídeo que está tocando (para desligar o deband em vídeo que já é do tamanho do alvo).
     altura_do_video: u32,
     pub gpu_nome: &'static str,
@@ -657,6 +658,10 @@ impl App {
                 .and_then(|s| s.trim().parse::<u8>().ok())
                 .filter(|&v| v <= 2)
                 .unwrap_or(0),
+            audio_inteligente: std::fs::read_to_string(catalogo::pasta().join("audio_inteligente.txt"))
+                .ok()
+                .map(|s| s.trim() != "0")
+                .unwrap_or(true),
             gpu_nome: detectar_gpu(cc),
             ultimo_mouse: None,
             retomou_canal: false,
@@ -714,6 +719,7 @@ impl App {
         if app.upscaling > 0 {
             app.aplicar_upscaling();
         }
+        app.aplicar_audio_inteligente();
         // Só para conferir telas fora do Windows: SAIMO_ABA=inicio|filmes|series.
         if let Ok(aba) = std::env::var("SAIMO_ABA") {
             match aba.as_str() {
@@ -2643,6 +2649,35 @@ impl App {
         }
     }
 
+    pub fn alternar_audio_inteligente(&mut self) {
+        self.audio_inteligente = !self.audio_inteligente;
+        let _ = std::fs::write(
+            catalogo::pasta().join("audio_inteligente.txt"),
+            if self.audio_inteligente { "1" } else { "0" },
+        );
+        self.aplicar_audio_inteligente();
+        let rotulo = if self.audio_inteligente { "Ligado" } else { "Desligado" };
+        self.aviso = Some((format!("Áudio Inteligente: {rotulo}"), Instant::now()));
+    }
+
+    pub fn aplicar_audio_inteligente(&self) {
+        if let Some(mpv) = self.mpv.as_ref() {
+            Self::configurar_audio_inteligente_mpv(mpv, self.audio_inteligente);
+        }
+        if let Some(outra) = self.outra_tela.as_ref() {
+            Self::configurar_audio_inteligente_mpv(&outra.mpv, self.audio_inteligente);
+        }
+    }
+
+    fn configurar_audio_inteligente_mpv(mpv: &mpv::Mpv, ativo: bool) {
+        if ativo {
+            // Dynamic Audio Normalizer (dynaudnorm) com filtro de 150ms e limite de pico a 0.95
+            mpv.definir("af", "lavfi=[dynaudnorm=f=150:g=15:m=12:p=0.95]");
+        } else {
+            mpv.definir("af", "");
+        }
+    }
+
     fn configurar_upscaling_mpv(mpv: &mpv::Mpv, modo: u8) {
         // Nunca usa filtros de CPU (vf=lavfi=[unsharp=...]): todo o upscaling
         // e nitidez CAS rodam 100% nos shaders da GPU (NVIDIA, AMD e Intel).
@@ -3049,6 +3084,7 @@ vec4 hook() {{
         self.outra_tela = Some(OutraTela { mpv: antiga, tocando });
         self.foco_a_direita = true;
         self.aplicar_upscaling();
+        self.aplicar_audio_inteligente();
         self.ajustar_som_das_telas();
         self.aba = Aba::Canais;
         self.lista_aberta = true;
