@@ -16,8 +16,8 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-const BASE: &str = "https://saimo-monitor.gabrielsaimo68.workers.dev/v1";
-const AMOSTRA_URL: &str = "https://saimo-monitor.gabrielsaimo68.workers.dev/telemetria.json";
+const BASE: &str = "https://saimo-tv.pages.dev/api/online/v1";
+const AMOSTRA_URL: &str = "https://saimo-tv.pages.dev/telemetria.json";
 /// Sem leitura nenhuma do percentual, vale o mesmo do servidor hoje.
 const AMOSTRA_PADRAO: f64 = 5.0;
 /// O percentual é relido no máximo uma vez por dia.
