@@ -42,15 +42,39 @@ impl Generos {
     /// dentro do nome do filme, mas guarda o da série num campo à parte. Quem
     /// chama nem sempre sabe de qual dos dois veio, então procura-se o nome
     /// como ele chegou e, não achando, sem o ano.
+    fn chaves_candidatas(&self, marca: &str, titulo: &str) -> Vec<String> {
+        let s_ano = sem_ano(titulo);
+        let mut chaves = Vec::new();
+        let base_titulos = [titulo, &s_ano];
+        for t in base_titulos {
+            if t.is_empty() { continue; }
+            chaves.push(format!("{marca}|{t}"));
+            if t.contains(',') {
+                let com_espaco = t.replace(',', ", ");
+                let normalizado_com_espaco = com_espaco.split_whitespace().collect::<Vec<_>>().join(" ");
+                chaves.push(format!("{marca}|{normalizado_com_espaco}"));
+                let sem_espaco = t.replace(", ", ",");
+                chaves.push(format!("{marca}|{sem_espaco}"));
+            }
+            if t.contains(':') {
+                let com_espaco = t.replace(':', ": ");
+                let normalizado = com_espaco.split_whitespace().collect::<Vec<_>>().join(" ");
+                chaves.push(format!("{marca}|{normalizado}"));
+                let sem_espaco = t.replace(": ", ":");
+                chaves.push(format!("{marca}|{sem_espaco}"));
+            }
+        }
+        chaves
+    }
+
     pub fn de(&self, titulo: &str, serie: bool) -> &[String] {
         let marca = if serie { "s" } else { "f" };
-        if let Some(lista) = self.mapa.get(&format!("{marca}|{titulo}")) {
-            return lista;
+        for c in self.chaves_candidatas(marca, titulo) {
+            if let Some(lista) = self.mapa.get(&c) {
+                return lista;
+            }
         }
-        self.mapa
-            .get(&format!("{marca}|{}", sem_ano(titulo)))
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+        &[]
     }
 
     pub fn tem(&self, titulo: &str, serie: bool, genero: &str) -> bool {
@@ -65,10 +89,12 @@ impl Generos {
     /// O id do TMDB de um título, quando o gerador o resolveu.
     pub fn id(&self, titulo: &str, serie: bool) -> Option<u32> {
         let marca = if serie { "s" } else { "f" };
-        self.ids
-            .get(&format!("{marca}|{titulo}"))
-            .or_else(|| self.ids.get(&format!("{marca}|{}", sem_ano(titulo))))
-            .copied()
+        for c in self.chaves_candidatas(marca, titulo) {
+            if let Some(&id) = self.ids.get(&c) {
+                return Some(id);
+            }
+        }
+        None
     }
 
     /// O título do acervo que corresponde a um id do TMDB, se houver.
@@ -79,10 +105,12 @@ impl Generos {
 
     pub fn capa(&self, titulo: &str, serie: bool) -> Option<&str> {
         let marca = if serie { "s" } else { "f" };
-        self.capas
-            .get(&format!("{marca}|{titulo}"))
-            .or_else(|| self.capas.get(&format!("{marca}|{}", sem_ano(titulo))))
-            .map(String::as_str)
+        for c in self.chaves_candidatas(marca, titulo) {
+            if let Some(c_str) = self.capas.get(&c) {
+                return Some(c_str.as_str());
+            }
+        }
+        None
     }
 }
 
