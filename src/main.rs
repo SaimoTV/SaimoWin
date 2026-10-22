@@ -333,6 +333,7 @@ struct App {
     pip: bool,
     tamanho_antes_pip: Option<egui::Vec2>,
     posicao_antes_pip: Option<egui::Pos2>,
+    tamanho_pip: Option<egui::Vec2>,
     guia_aberto: bool,
     /// A lista publicada como ela chegou, sem nada peneirado: é dela que a
     /// lista visível é remontada quando um servidor é religado.
@@ -628,6 +629,7 @@ impl App {
             pip: false,
             tamanho_antes_pip: None,
             posicao_antes_pip: None,
+            tamanho_pip: None,
             guia_aberto: false,
             publicados: canais.clone(),
             gavetas: Vec::new(),
@@ -2577,8 +2579,13 @@ impl App {
             ctx.set_zoom_factor(1.0);
             // Libera o tamanho mínimo para permitir redimensionar janelinha pequena (sem isso o Windows trava em 800x480):
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize([200.0, 112.0].into()));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([400.0, 225.0].into()));
+            let tamanho_janelinha = self.tamanho_pip.unwrap_or_else(|| [400.0, 225.0].into());
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(tamanho_janelinha));
         } else {
+            // Lembrar o tamanho que o usuário redimensionou no PiP para a próxima vez:
+            if let Some(ret) = ctx.input(|i| i.viewport().inner_rect) {
+                self.tamanho_pip = Some(ret.size());
+            }
             // Restaura o tamanho mínimo da janela grande:
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize([800.0, 480.0].into()));
             let tamanho = self.tamanho_antes_pip.take().unwrap_or_else(|| [1280.0, 720.0].into());
@@ -2592,160 +2599,175 @@ impl App {
     /// Gerencia redimensionamento por bordas/cantos, duplo clique para restaurar,
     /// controles sobrepostos em hover e arrasto da janelinha PiP.
     pub fn interacao_janelinha_pip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let rect = ui.max_rect();
+        let rect = ctx.content_rect();
         let pintor = ui.painter();
 
         // Borda sutil de 1px para destacar a janelinha PiP contra qualquer fundo
         pintor.rect_stroke(
             rect,
             0.0,
-            egui::Stroke::new(1.0, egui::Color32::from_white_alpha(40)),
+            egui::Stroke::new(1.0, egui::Color32::from_white_alpha(45)),
             egui::StrokeKind::Inside,
         );
 
-        // Se o usuário clicou duas vezes, restaura a janela ao tamanho normal
+        let hover_pos = ctx.input(|i| i.pointer.hover_pos());
+        let Some(p) = hover_pos else { return };
+        if !rect.contains(p) {
+            return;
+        }
+
+        // 1. Áreas dos botões de controle na janelinha
+        let barra_top = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 34.0));
+        let ret_fechar = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 32.0, rect.top() + 4.0),
+            egui::vec2(26.0, 26.0),
+        );
+        let ret_restaurar = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 62.0, rect.top() + 4.0),
+            egui::vec2(26.0, 26.0),
+        );
+        let ret_play = egui::Rect::from_center_size(rect.center(), egui::vec2(44.0, 44.0));
+
+        // Sempre desenhar a barra superior e os controles se o mouse estiver sobre a janelinha
+        pintor.rect_filled(barra_top, 0.0, egui::Color32::from_black_alpha(150));
+
+        let hover_fechar = ret_fechar.contains(p);
+        let hover_restaurar = ret_restaurar.contains(p);
+        let hover_play = ret_play.contains(p);
+
+        // Botão Fechar
+        if hover_fechar {
+            pintor.rect_filled(ret_fechar, 6.0, egui::Color32::from_rgb(220, 50, 50));
+        } else {
+            pintor.rect_filled(ret_fechar, 6.0, egui::Color32::from_black_alpha(60));
+        }
+        pintor.text(
+            ret_fechar.center(),
+            egui::Align2::CENTER_CENTER,
+            "✕",
+            tela::forte(13.0),
+            egui::Color32::WHITE,
+        );
+
+        // Botão Restaurar
+        if hover_restaurar {
+            pintor.rect_filled(ret_restaurar, 6.0, egui::Color32::from_white_alpha(60));
+        } else {
+            pintor.rect_filled(ret_restaurar, 6.0, egui::Color32::from_black_alpha(60));
+        }
+        pintor.text(
+            ret_restaurar.center(),
+            egui::Align2::CENTER_CENTER,
+            "⤢",
+            tela::forte(15.0),
+            egui::Color32::WHITE,
+        );
+
+        // Botão Play/Pause
+        if hover_play {
+            pintor.circle_filled(ret_play.center(), 22.0, egui::Color32::from_black_alpha(180));
+            pintor.circle_stroke(ret_play.center(), 22.0, egui::Stroke::new(1.5, tela::ACENTO));
+        } else {
+            pintor.circle_filled(ret_play.center(), 20.0, egui::Color32::from_black_alpha(130));
+        }
+        let icone_play = if self.pausado { "▶" } else { "⏸" };
+        pintor.text(
+            ret_play.center(),
+            egui::Align2::CENTER_CENTER,
+            icone_play,
+            tela::forte(16.0),
+            if hover_play { tela::ACENTO } else { egui::Color32::from_white_alpha(200) },
+        );
+
+        // 2. Interações diretas com os botões (tem prioridade absoluta sobre bordas de resize)
+        if hover_fechar {
+            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+            if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+                self.alternar_janelinha(ctx);
+                self.parar_o_que_toca();
+            }
+            return;
+        }
+
+        if hover_restaurar {
+            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+            if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+                self.alternar_janelinha(ctx);
+            }
+            return;
+        }
+
+        if hover_play {
+            ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+            if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
+                self.alternar_pausa();
+            }
+            return;
+        }
+
+        // 3. Duplo clique no corpo da janela restaura ao tamanho normal
         if ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
             self.alternar_janelinha(ctx);
             return;
         }
 
-        // Detectar se o mouse está nas bordas ou cantos para redimensionar
+        // 4. Detecção de bordas e cantos para redimensionamento
         const BORDA: f32 = 8.0;
-        const CANTO: f32 = 18.0;
+        const CANTO: f32 = 20.0;
 
-        let hover_pos = ctx.input(|i| i.pointer.hover_pos());
+        let em_cima = p.y < rect.top() + BORDA;
+        let em_baixo = p.y > rect.bottom() - BORDA;
+        let na_esquerda = p.x < rect.left() + BORDA;
+        let na_direita = p.x > rect.right() - BORDA;
+
+        let perto_topo = p.y < rect.top() + CANTO;
+        let perto_base = p.y > rect.bottom() - CANTO;
+        let perto_esq = p.x < rect.left() + CANTO;
+        let perto_dir = p.x > rect.right() - CANTO;
+
         let mut direcao_resize = None;
-        let mut cursor = egui::CursorIcon::Default;
+        let mut cursor_resize = None;
 
-        if let Some(p) = hover_pos {
-            if rect.contains(p) {
-                let em_cima = p.y < rect.top() + BORDA;
-                let em_baixo = p.y > rect.bottom() - BORDA;
-                let na_esquerda = p.x < rect.left() + BORDA;
-                let na_direita = p.x > rect.right() - BORDA;
-
-                let perto_topo = p.y < rect.top() + CANTO;
-                let perto_base = p.y > rect.bottom() - CANTO;
-                let perto_esq = p.x < rect.left() + CANTO;
-                let perto_dir = p.x > rect.right() - CANTO;
-
-                if perto_dir && perto_base {
-                    direcao_resize = Some(egui::viewport::ResizeDirection::SouthEast);
-                    cursor = egui::CursorIcon::ResizeSouthEast;
-                } else if perto_esq && perto_base {
-                    direcao_resize = Some(egui::viewport::ResizeDirection::SouthWest);
-                    cursor = egui::CursorIcon::ResizeSouthWest;
-                } else if perto_dir && perto_topo {
-                    direcao_resize = Some(egui::viewport::ResizeDirection::NorthEast);
-                    cursor = egui::CursorIcon::ResizeNorthEast;
-                } else if perto_esq && perto_topo {
-                    direcao_resize = Some(egui::viewport::ResizeDirection::NorthWest);
-                    cursor = egui::CursorIcon::ResizeNorthWest;
-                } else if na_direita {
-                    direcao_resize = Some(egui::viewport::ResizeDirection::East);
-                    cursor = egui::CursorIcon::ResizeEast;
-                } else if na_esquerda {
-                    direcao_resize = Some(egui::viewport::ResizeDirection::West);
-                    cursor = egui::CursorIcon::ResizeWest;
-                } else if em_baixo {
-                    direcao_resize = Some(egui::viewport::ResizeDirection::South);
-                    cursor = egui::CursorIcon::ResizeSouth;
-                } else if em_cima {
-                    direcao_resize = Some(egui::viewport::ResizeDirection::North);
-                    cursor = egui::CursorIcon::ResizeNorth;
-                }
-            }
+        if (na_direita || em_baixo) && perto_dir && perto_base {
+            direcao_resize = Some(egui::viewport::ResizeDirection::SouthEast);
+            cursor_resize = Some(egui::CursorIcon::ResizeSouthEast);
+        } else if (na_esquerda || em_baixo) && perto_esq && perto_base {
+            direcao_resize = Some(egui::viewport::ResizeDirection::SouthWest);
+            cursor_resize = Some(egui::CursorIcon::ResizeSouthWest);
+        } else if (na_direita || em_cima) && perto_dir && perto_topo {
+            direcao_resize = Some(egui::viewport::ResizeDirection::NorthEast);
+            cursor_resize = Some(egui::CursorIcon::ResizeNorthEast);
+        } else if (na_esquerda || em_cima) && perto_esq && perto_topo {
+            direcao_resize = Some(egui::viewport::ResizeDirection::NorthWest);
+            cursor_resize = Some(egui::CursorIcon::ResizeNorthWest);
+        } else if na_direita {
+            direcao_resize = Some(egui::viewport::ResizeDirection::East);
+            cursor_resize = Some(egui::CursorIcon::ResizeEast);
+        } else if na_esquerda {
+            direcao_resize = Some(egui::viewport::ResizeDirection::West);
+            cursor_resize = Some(egui::CursorIcon::ResizeWest);
+        } else if em_baixo {
+            direcao_resize = Some(egui::viewport::ResizeDirection::South);
+            cursor_resize = Some(egui::CursorIcon::ResizeSouth);
+        } else if em_cima {
+            direcao_resize = Some(egui::viewport::ResizeDirection::North);
+            cursor_resize = Some(egui::CursorIcon::ResizeNorth);
         }
 
+        // 5. Iniciar redimensionamento ou arrasto da janela
         if let Some(direcao) = direcao_resize {
-            ctx.set_cursor_icon(cursor);
-            if ui.input(|i| i.pointer.any_pressed()) {
+            if let Some(cursor) = cursor_resize {
+                ctx.set_cursor_icon(cursor);
+            }
+            // Disparar APENAS no clique inicial (button_pressed), nunca continuamente durante drag
+            if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direcao));
             }
-        } else if let Some(p) = hover_pos {
-            if rect.contains(p) {
-                let mut interagiu_com_botao = false;
-
-                // Barra superior de controle (Restaurar e Fechar)
-                let barra_top = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 34.0));
-                pintor.rect_filled(
-                    barra_top,
-                    0.0,
-                    egui::Color32::from_black_alpha(150),
-                );
-
-                // Botão de fechar (canto superior direito)
-                let ret_fechar = egui::Rect::from_min_size(
-                    egui::pos2(rect.right() - 30.0, rect.top() + 4.0),
-                    egui::vec2(26.0, 26.0),
-                );
-                let hover_fechar = ret_fechar.contains(p);
-                if hover_fechar {
-                    pintor.rect_filled(ret_fechar, 6.0, egui::Color32::from_rgb(220, 50, 50));
-                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-                    interagiu_com_botao = true;
-                    if ui.input(|i| i.pointer.primary_clicked()) {
-                        self.alternar_janelinha(ctx);
-                        self.parar_o_que_toca();
-                        return;
-                    }
-                }
-                pintor.text(
-                    ret_fechar.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "✕",
-                    tela::forte(13.0),
-                    egui::Color32::WHITE,
-                );
-
-                // Botão de restaurar (ao lado do fechar)
-                let ret_restaurar = egui::Rect::from_min_size(
-                    egui::pos2(rect.right() - 60.0, rect.top() + 4.0),
-                    egui::vec2(26.0, 26.0),
-                );
-                let hover_restaurar = ret_restaurar.contains(p);
-                if hover_restaurar {
-                    pintor.rect_filled(ret_restaurar, 6.0, egui::Color32::from_white_alpha(60));
-                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-                    interagiu_com_botao = true;
-                    if ui.input(|i| i.pointer.primary_clicked()) {
-                        self.alternar_janelinha(ctx);
-                        return;
-                    }
-                }
-                pintor.text(
-                    ret_restaurar.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "⤢",
-                    tela::forte(15.0),
-                    egui::Color32::WHITE,
-                );
-
-                // Botão de Play/Pause no centro
-                let ret_play = egui::Rect::from_center_size(rect.center(), egui::vec2(40.0, 40.0));
-                let hover_play = ret_play.contains(p);
-                if hover_play {
-                    pintor.circle_filled(ret_play.center(), 20.0, egui::Color32::from_black_alpha(180));
-                    pintor.circle_stroke(ret_play.center(), 20.0, egui::Stroke::new(1.5, tela::ACENTO));
-                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-                    interagiu_com_botao = true;
-                    if ui.input(|i| i.pointer.primary_clicked()) {
-                        self.alternar_pausa();
-                    }
-                }
-                let icone_play = if self.pausado { "▶" } else { "⏸" };
-                pintor.text(
-                    ret_play.center(),
-                    egui::Align2::CENTER_CENTER,
-                    icone_play,
-                    tela::forte(16.0),
-                    if hover_play { tela::ACENTO } else { egui::Color32::from_white_alpha(180) },
-                );
-
-                // Se não clicou num botão, arrasta a janela com o botão esquerdo
-                if !interagiu_com_botao && ui.input(|i| i.pointer.primary_down()) {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                }
+        } else {
+            // Se clicou no corpo da janela (fora de botões e bordas de resize), arrasta a janela.
+            // Disparar APENAS no clique inicial para não cancelar nem conflitar com o redimensionamento do Windows.
+            if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
         }
     }
