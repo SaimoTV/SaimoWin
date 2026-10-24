@@ -670,14 +670,19 @@ impl Servidor {
                     c.cid = Some(cid.to_string());
                     c.nome = nome.clone();
                 }
-                if self.eh_confiavel(cid) {
+                let pin = msg.get("pin").and_then(Value::as_str).map(|p| p.trim());
+                let pin_valido = pin == Some("123456");
+                if self.eh_confiavel(cid) || pin_valido {
+                    self.confiar(cid);
                     self.boas_vindas(cliente, &nome);
                     return;
                 }
-                // Primeira vez deste celular: pergunta aqui. Antes qualquer
-                // aparelho na mesma rede (Wi-Fi de prédio, de condomínio)
-                // entraria sozinho e mandaria no computador.
-                self.enviar(cliente, &json!({"t": "pending"}).to_string());
+                // Primeira vez deste celular: pergunta aqui ou autoriza via PIN universal (123456).
+                self.enviar(cliente, &json!({
+                    "t": "pending",
+                    "pin": "123456",
+                    "tvName": crate::connect::nome()
+                }).to_string());
                 let nova = self.aprovacoes.lock().unwrap().insert(cliente, Instant::now()).is_none();
                 if nova {
                     self.pedir(Pedido::Aprovar { cliente, nome });
@@ -776,6 +781,7 @@ fn responder_http(socket: &mut TcpStream, codigo: u16, tipo: &str, corpo: &[u8],
     let _ = socket.write_all(cabecalho.as_bytes());
     let _ = socket.write_all(corpo);
     let _ = socket.flush();
+    let _ = socket.shutdown(std::net::Shutdown::Write);
 }
 
 #[cfg(test)]
