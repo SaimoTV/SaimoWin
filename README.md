@@ -113,6 +113,12 @@ na TV Box: o mesmo servidor do `Connect.kt`, na porta **8999**
   nem pergunta na tela. Ele fica lembrado
   (`connect-celulares.txt`); **Ajustes > Saimo Connect > Esquecer todos os
   celulares** apaga a lista e derruba quem está ligado.
+- **Setas do celular = teclado**: setas, OK e Voltar entram como teclas de
+  verdade no quadro seguinte (`teclas_do_celular` + `raw_input_hook`), então
+  valem a lógica do app e a navegação de foco do egui, igual ao teclado físico.
+  Ajustes (sem foco próprio) foca a primeira linha na primeira seta; a linha
+  acende com o foco (`tela::aceso`). Só campo de texto conta como "escrevendo"
+  (`text_edit_focused`): antes, qualquer botão em foco perdia o foco na seta.
 - **Controle remoto** (WebSocket `/ws`, escrito à mão como o da TV Box):
   trocar de canal (inclusive em cada metade da multi tela), ligar e desligar a
   multi tela, escolher a tela em foco, abrir filme ou episódio do acervo (pela

@@ -428,6 +428,14 @@ struct App {
     pub outra_tela: Option<OutraTela>,
     /// Na multi tela, a tela em foco é a da direita.
     pub foco_a_direita: bool,
+    /// Setas, OK e Voltar do controle do celular esperando o próximo quadro:
+    /// entram pelo `raw_input_hook` como teclas de verdade, para valer também
+    /// a navegação de foco do egui (Eventos, Rádios, Ajustes, abas), igual ao
+    /// teclado físico.
+    pub teclas_do_celular: Vec<egui::Key>,
+    /// Ajustes não tem foco próprio: a primeira seta do celular foca a
+    /// primeira linha, e daí as setas andam com o foco do egui.
+    pub focar_primeira_linha: bool,
     /// O mpv da segunda tela entre um uso e outro: subir um mpv custa.
     mpv_reserva: Option<std::sync::Arc<mpv::Mpv>>,
     /// Animes e doramas já baixados nesta abertura: voltar à seção não
@@ -698,6 +706,8 @@ impl App {
             canal_parado: None,
             outra_tela: None,
             foco_a_direita: false,
+            teclas_do_celular: Vec::new(),
+            focar_primeira_linha: false,
             mpv_reserva: None,
             colecoes: HashMap::new(),
             series_da_letra: None,
@@ -1968,7 +1978,9 @@ impl App {
             self.ultimo_mouse = mouse;
             self.mostrar_controles();
         }
-        let escrevendo = ctx.memory(|m| m.focused().is_some());
+        // Só campo de texto conta como escrevendo: um botão em foco (setas do
+        // controle do celular em Ajustes) não pode perder o foco na seta.
+        let escrevendo = ctx.text_edit_focused();
 
         // Número de canal, e o código que revela a lista restrita.
         if !escrevendo && self.aba == Aba::Canais {
@@ -3669,6 +3681,20 @@ fn gravar_lista(nome: &str, itens: &[String]) {
 }
 
 impl eframe::App for App {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        for key in self.teclas_do_celular.drain(..) {
+            for pressed in [true, false] {
+                raw_input.events.push(egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+    }
+
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         if self.abertura.is_some() {
             let [r, g, b] = abertura::MARINHO;

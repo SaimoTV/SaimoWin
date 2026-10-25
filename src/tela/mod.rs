@@ -336,7 +336,10 @@ pub fn texto_numa_linha(pintor: &egui::Painter, conteudo: &str, fonte: FontId, c
 /// O quanto um elemento está "aceso" (passando o mouse ou em foco), de 0 a 1,
 /// com a transição suave do egui.
 pub fn aceso(ui: &egui::Ui, id: egui::Id, ligado: bool) -> f32 {
-    ui.ctx().animate_bool_with_time(id, ligado, 0.14)
+    // Também acende com o foco do teclado (setas do controle do celular), não
+    // só com o mouse em cima.
+    let focado = ui.ctx().memory(|m| m.has_focus(id));
+    ui.ctx().animate_bool_with_time(id, ligado || focado, 0.14)
 }
 
 /// O contorno de foco da TV Box (`row_focus`): véu claro e borda ciano.

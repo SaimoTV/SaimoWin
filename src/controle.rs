@@ -430,7 +430,17 @@ impl App {
             }
             _ => return,
         };
-        self.tecla(ctx, tecla, nada);
+        // Ajustes anda com o foco do egui, que só se move com algo já focado:
+        // a primeira seta foca a primeira linha (o Tab aqui troca de seção).
+        let seta = matches!(tecla, egui::Key::ArrowUp | egui::Key::ArrowDown | egui::Key::ArrowLeft | egui::Key::ArrowRight);
+        if self.aba == Aba::Ajustes && seta && ctx.memory(|m| m.focused().is_none()) {
+            self.focar_primeira_linha = true;
+            ctx.request_repaint();
+        } else {
+            // Como tecla de verdade no próximo quadro (ver `teclas_do_celular`).
+            self.teclas_do_celular.push(tecla);
+        }
+        ctx.request_repaint();
         self.mostrar_controles();
     }
 

@@ -261,7 +261,11 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(34.0);
             rotulo_de_secao(ui, "Reprodução");
             ui.add_space(4.0);
-            if linha(ui, "Preencher a tela", if app.preencher { "Ligado: corta as bordas, sem faixas pretas" } else { "Desligado: o vídeo inteiro, com faixas se preciso" }, Icone::Preencher).clicked() {
+            let primeira = linha(ui, "Preencher a tela", if app.preencher { "Ligado: corta as bordas, sem faixas pretas" } else { "Desligado: o vídeo inteiro, com faixas se preciso" }, Icone::Preencher);
+            if std::mem::take(&mut app.focar_primeira_linha) {
+                primeira.request_focus();
+            }
+            if primeira.clicked() {
                 acao = Some(0);
             }
             if linha(ui, "Super Resolução (Upscaling)", &app.rotulo_upscaling(), Icone::TelaCheia).clicked() {
