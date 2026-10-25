@@ -20,6 +20,7 @@ const BASE: &str = "https://saimo-tv.pages.dev/api/online/v1";
 const AMOSTRA_URL: &str = "https://saimo-tv.pages.dev/telemetria.json";
 /// Sem leitura nenhuma do percentual, vale o mesmo do servidor hoje.
 const AMOSTRA_PADRAO: f64 = 5.0;
+const DESLIGADA: bool = true;
 /// O percentual é relido no máximo uma vez por dia.
 const AMOSTRA_VALIDADE_S: u64 = 24 * 3600;
 /// Batida extra (pausa, troca de título, parada) no máximo uma a cada 30 s:
@@ -183,6 +184,10 @@ fn enviar(rota: &str, mut corpo: serde_json::Value) {
     let estado = ESTADO.lock().unwrap();
     let Some(estado) = estado.as_ref() else { return };
     // Fora da amostra só o relatório de quebra sai.
+    // Telemetria desligada (2.5.4): nada sai do aparelho, nem quebra.
+    if DESLIGADA {
+        return;
+    }
     let quebra = rota == "event" && corpo.get("type").and_then(|t| t.as_str()) == Some("crash");
     if !estado.na_amostra() && !quebra {
         return;
