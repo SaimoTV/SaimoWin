@@ -670,23 +670,10 @@ impl Servidor {
                     c.cid = Some(cid.to_string());
                     c.nome = nome.clone();
                 }
-                let pin = msg.get("pin").and_then(Value::as_str).map(|p| p.trim());
-                let pin_valido = pin == Some("123456");
-                if self.eh_confiavel(cid) || pin_valido {
-                    self.confiar(cid);
-                    self.boas_vindas(cliente, &nome);
-                    return;
-                }
-                // Primeira vez deste celular: pergunta aqui ou autoriza via PIN universal (123456).
-                self.enviar(cliente, &json!({
-                    "t": "pending",
-                    "pin": "123456",
-                    "tvName": crate::connect::nome()
-                }).to_string());
-                let nova = self.aprovacoes.lock().unwrap().insert(cliente, Instant::now()).is_none();
-                if nova {
-                    self.pedir(Pedido::Aprovar { cliente, nome });
-                }
+                // Igual à TV Box: na rede local o celular entra direto, sem PIN
+                // nem pergunta na tela.
+                self.confiar(cid);
+                self.boas_vindas(cliente, &nome);
             }
             "ping" => {
                 // Com o relógio daqui: o celular estima a diferença entre os

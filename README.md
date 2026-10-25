@@ -109,9 +109,8 @@ na TV Box: o mesmo servidor do `Connect.kt`, na porta **8999**
   (`"app": "saimo-tv"`, o id deste computador, gravado em
   `%APPDATA%\SaimoTV\connect-id.txt`, e o nome "Saimo TV - <nome do PC>").
   Não há anúncio mDNS: o app do celular não procura por ele, só pela varredura.
-- **Permissão**: celular novo só entra depois de alguém clicar em **Permitir**
-  na janela que abre aqui (o ícone pisca na barra de tarefas). Sem resposta em
-  um minuto, fica de fora. O aprovado fica lembrado
+- **Permissão**: igual à TV Box, o celular na mesma rede entra direto, sem PIN
+  nem pergunta na tela. Ele fica lembrado
   (`connect-celulares.txt`); **Ajustes > Saimo Connect > Esquecer todos os
   celulares** apaga a lista e derruba quem está ligado.
 - **Controle remoto** (WebSocket `/ws`, escrito à mão como o da TV Box):
