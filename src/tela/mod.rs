@@ -500,13 +500,6 @@ pub fn relogio(segundos: f64) -> String {
     if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m:02}:{s:02}") }
 }
 
-/// O servidor de onde vem um endereço ("cdn.exemplo.com"), sem porta nem "www.".
-pub fn servidor(url: &str) -> String {
-    let resto = url.split("://").nth(1).unwrap_or(url);
-    let host = resto.split(['/', ':', '?']).next().unwrap_or("");
-    host.strip_prefix("www.").unwrap_or(host).to_string()
-}
-
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -520,8 +513,7 @@ mod testes {
     }
 
     #[test]
-    fn servidor_sem_www_nem_porta() {
-        assert_eq!(servidor("https://www.exemplo.com:8080/a.m3u8"), "exemplo.com");
+    fn relogio_e_inicial() {
         assert_eq!(relogio(3725.0), "1:02:05");
         assert_eq!(inicial("#Alive"), "A");
     }

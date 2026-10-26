@@ -747,15 +747,15 @@ fn barra_do_ao_vivo(app: &mut App, ui: &mut egui::Ui, area: Rect) {
     });
 }
 
-/// Resolução e fonte: "1080p · fonte 2/3 · cdn.exemplo.com".
+/// Resolução e fonte: "1080p · fonte 2/3". O servidor e o endereço nunca aparecem.
 fn info_da_fonte(app: &App) -> Option<String> {
-    let (atual, total, url, pronto, nome) = if let Some(t) = app.tocando.as_ref() {
+    let (atual, total, pronto, nome) = if let Some(t) = app.tocando.as_ref() {
         let canal = app.canais.get(t.canal)?;
         let fonte = canal.fontes.get(t.fonte);
-        (t.fonte, canal.fontes.len(), fonte.map(|f| f.url.clone()).unwrap_or_default(), t.confirmado, fonte.and_then(|f| f.nome.clone()))
+        (t.fonte, canal.fontes.len(), t.confirmado, fonte.and_then(|f| f.nome.clone()))
     } else {
         let f = app.tocando_vod.as_ref()?;
-        (f.fonte, f.urls.len(), f.urls.get(f.fonte).cloned().unwrap_or_default(), f.confirmado, None)
+        (f.fonte, f.urls.len(), f.confirmado, None)
     };
     let mut partes = Vec::new();
     if let Some(altura) = app.mpv.as_ref().and_then(|m| m.ler("video-params/h")) {
@@ -764,10 +764,6 @@ fn info_da_fonte(app: &App) -> Option<String> {
     // Canal 24h: a temporada no ar no lugar do número da fonte.
     let qual = nome.unwrap_or_else(|| format!("fonte {}/{}", atual + 1, total));
     partes.push(if pronto { qual } else { format!("carregando {qual}") });
-    let host = super::servidor(&url);
-    if !host.is_empty() {
-        partes.push(host);
-    }
     Some(partes.join(" · "))
 }
 
@@ -1170,15 +1166,12 @@ fn menu_de_fontes(app: &mut App, ui: &mut egui::Ui) {
             ui.label(egui::RichText::new("FONTES").font(forte(12.0)).color(ACENTO).extra_letter_spacing(1.0));
             for i in 0..total {
                 // Como na TV Box: o nome da fonte (a temporada, nos canais 24h)
-                // ou o número, a qualidade quando informada e o servidor.
+                // ou o número e a qualidade quando informada. Nunca o servidor.
                 let fonte = app.tocando.as_ref().and_then(|t| app.canais.get(t.canal)).and_then(|c| c.fontes.get(i));
                 let nome = fonte.and_then(|f| f.nome.clone()).unwrap_or_else(|| format!("Fonte {}", i + 1));
                 let mut partes = vec![nome];
                 if let Some(q) = fonte.and_then(|f| f.qualidade.as_deref()).filter(|q| *q != "Qualidade não informada") {
                     partes.push(q.to_string());
-                }
-                if let Some(f) = fonte {
-                    partes.push(super::servidor(&f.url));
                 }
                 if ui.selectable_label(i == atual, partes.join(" · ")).clicked() {
                     app.escolher_fonte(i);

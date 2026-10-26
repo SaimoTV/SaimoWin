@@ -101,6 +101,10 @@ Aplicativo).
 
 ## Saimo Connect (controle pelo celular)
 
+Fontes sem endereço à mostra: as listas de fontes (canais e filmes) mostram só
+"Fonte N", o nome da fonte (ex.: "Temporada 3") e a qualidade; nunca o servidor
+nem o endereço.
+
 O app Saimo do celular acha este computador e manda nele exatamente como manda
 na TV Box: o mesmo servidor do `Connect.kt`, na porta **8999**
 (`src/connect/`, e o lado do app em `src/controle.rs`).
