@@ -175,12 +175,44 @@ fn ler(texto: &str) -> Generos {
 /// O título sem o ano final, que é como a lista de gêneros o guarda.
 pub fn sem_ano(titulo: &str) -> String {
     let cortado = titulo.trim_end();
-    if cortado.ends_with(')') && cortado.len() > 6 {
-        let inicio = cortado.len() - 6;
-        let cauda = &cortado[inicio..];
-        if cauda.starts_with('(') && cauda[1..5].chars().all(|c| c.is_ascii_digit()) {
-            return cortado[..inicio].trim_end().to_string();
+    // O ano são 6 caracteres ASCII, "(2026)": conferido pelos bytes do final,
+    // sem fatiar o texto (um título como "Fulano (Ação)" tem acento nessa ponta
+    // e fatiar no byte errado derrubava o app inteiro ao abrir o On Demand).
+    let b = cortado.as_bytes();
+    if b.len() > 6 {
+        let cauda = &b[b.len() - 6..];
+        if cauda[0] == b'(' && cauda[5] == b')' && cauda[1..5].iter().all(u8::is_ascii_digit) {
+            // Os 6 últimos bytes são ASCII, então este corte é sempre uma fronteira.
+            return cortado[..cortado.len() - 6].trim_end().to_string();
         }
     }
     cortado.to_string()
+}
+
+#[cfg(test)]
+mod testes_sem_ano {
+    use super::sem_ano;
+
+    #[test]
+    fn tira_o_ano_do_fim() {
+        assert_eq!(sem_ano("Duna: Parte Dois (2024)"), "Duna: Parte Dois");
+        assert_eq!(sem_ano("Moana (2016)  "), "Moana");
+    }
+
+    #[test]
+    fn titulo_com_acento_na_ponta_nao_derruba() {
+        // Os 6 últimos bytes caem no meio do "ç"/"é": fatiar ali dava pânico.
+        assert_eq!(sem_ano("Fulano (Ação)"), "Fulano (Ação)");
+        assert_eq!(sem_ano("Lupin (Série)"), "Lupin (Série)");
+        assert_eq!(sem_ano("Cidade de Deus (Nacional)"), "Cidade de Deus (Nacional)");
+        assert_eq!(sem_ano("Ô (é)"), "Ô (é)");
+        assert_eq!(sem_ano("(ãéíóú)"), "(ãéíóú)");
+    }
+
+    #[test]
+    fn nao_confunde_parenteses_que_nao_sao_ano() {
+        assert_eq!(sem_ano("Algo (20x6)"), "Algo (20x6)");
+        assert_eq!(sem_ano("(2026)"), "(2026)");
+        assert_eq!(sem_ano(""), "");
+    }
 }

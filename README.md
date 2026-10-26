@@ -113,6 +113,15 @@ na TV Box: o mesmo servidor do `Connect.kt`, na porta **8999**
   nem pergunta na tela. Ele fica lembrado
   (`connect-celulares.txt`); **Ajustes > Saimo Connect > Esquecer todos os
   celulares** apaga a lista e derruba quem está ligado.
+- **Queda ao abrir o On Demand (2.5.10)**: `generos::sem_ano` fatiava o título pelos
+  últimos 6 *bytes*; um título terminado em `)` com letra acentuada nessa ponta
+  ("Como Vender Drogas Online (Rápido)") caía no meio do `á` e o pânico, dentro do
+  laço de eventos do Windows, abortava o app. Agora confere o ano pelos bytes sem
+  fatiar o texto (testes em `generos::testes_sem_ano`), os outros cortes por byte
+  de texto vindo da rede usam `.get()`, e o desenho de cada tela roda em
+  `catch_unwind` (`App::ui`): se uma tela cair, o quadro é descartado, a queda vai
+  para `falhas.txt` e o app volta para o Ao vivo; só 3 quadros seguidos com falha
+  deixam o pânico subir.
 - **Setas do celular = teclado**: setas, OK e Voltar entram como teclas de
   verdade no quadro seguinte (`teclas_do_celular` + `raw_input_hook`), então
   valem a lógica do app e a navegação de foco do egui, igual ao teclado físico.

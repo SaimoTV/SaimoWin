@@ -284,11 +284,8 @@ fn ler_guiadetv(html: &str) -> Vec<Programa> {
     for pedaco in html.split("<li") {
         let Some(dt) = entre(pedaco, "datetime=\"", "\"") else { continue };
         if dt.len() < 19 { continue; }
-        let ano: i64 = dt[0..4].parse().unwrap_or(0);
-        let mes: i64 = dt[5..7].parse().unwrap_or(0);
-        let dia: i64 = dt[8..10].parse().unwrap_or(0);
-        let hora: i64 = dt[11..13].parse().unwrap_or(0);
-        let minuto: i64 = dt[14..16].parse().unwrap_or(0);
+        let parte = |a: usize, b: usize| dt.get(a..b).and_then(|t| t.parse::<i64>().ok()).unwrap_or(0);
+        let (ano, mes, dia, hora, minuto) = (parte(0, 4), parte(5, 7), parte(8, 10), parte(11, 13), parte(14, 16));
         if ano < 2000 || mes < 1 || mes > 12 || dia < 1 || dia > 31 { continue; }
 
         let inicio = epoch(ano, mes, dia, hora, minuto, 0) + 3 * 3600;
@@ -762,10 +759,11 @@ fn data_xmltv(texto: &str) -> Option<i64> {
     let (hora, minuto, segundo) = (numero(8, 10)?, numero(10, 12)?, numero(12, 14)?);
 
     let mut fuso = 0i64;
-    let cauda = texto[14..].trim();
+    // Os 14 primeiros caracteres são dígitos ASCII, então 14 é fronteira.
+    let cauda = texto.get(14..).unwrap_or("").trim();
     if cauda.len() >= 5 {
         let sinal = if cauda.starts_with('-') { -1 } else { 1 };
-        if let (Ok(hh), Ok(mm)) = (cauda[1..3].parse::<i64>(), cauda[3..5].parse::<i64>()) {
+        if let (Some(Ok(hh)), Some(Ok(mm))) = (cauda.get(1..3).map(str::parse::<i64>), cauda.get(3..5).map(str::parse::<i64>)) {
             fuso = sinal * (hh * 3600 + mm * 60);
         }
     }

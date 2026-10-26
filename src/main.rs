@@ -329,6 +329,8 @@ struct App {
     nova_versao: Option<atualizacao::Versao>,
     ultima_checagem: Instant,
     aviso: Option<(String, Instant)>,
+    /// Quadros seguidos em que o desenho da tela caiu (ver `ui`).
+    quadros_com_falha: u8,
     aba: Aba,
     pip: bool,
     tamanho_antes_pip: Option<egui::Vec2>,
@@ -633,6 +635,7 @@ impl App {
             nova_versao: None,
             ultima_checagem: Instant::now(),
             aviso: None,
+            quadros_com_falha: 0,
             aba: Aba::Canais,
             pip: false,
             tamanho_antes_pip: None,
@@ -1808,7 +1811,7 @@ impl App {
                         match caminho {
                             Some(c) => {
                                 let c = c.to_string_lossy().to_string();
-                                mpv.legenda_externa(&c, &opcao.rotulo, &opcao.idioma[..2]);
+                                mpv.legenda_externa(&c, &opcao.rotulo, opcao.idioma.get(..2).unwrap_or(&opcao.idioma));
                                 mpv.atraso_da_legenda(0.0);
                                 legendas::guardar_idioma(&opcao.idioma);
                                 t.legenda_escolhida = Some((opcao, c));
@@ -3724,7 +3727,29 @@ impl eframe::App for App {
         self.baixar_logos_pendentes();
 
         foto_de_teste(self, ctx);
-        tela::desenhar(self, ui);
+        // Um erro de programação ao desenhar uma tela (um corte de texto no meio
+        // de uma letra acentuada, uma conta fora da lista) não pode fechar o
+        // app: o pânico dentro do laço de eventos do Windows aborta o processo
+        // sem aviso. Aqui o quadro é descartado, a queda vai para falhas.txt e o
+        // app volta para a tela principal; só se ela também cair é que o erro sobe.
+        let desenho = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tela::desenhar(self, ui)));
+        match desenho {
+            Ok(()) => self.quadros_com_falha = 0,
+            Err(erro) => {
+                self.quadros_com_falha = self.quadros_com_falha.saturating_add(1);
+                diagnostico::etapa(&format!("tela {:?} caiu ao desenhar (quadro {})", self.aba, self.quadros_com_falha));
+                if self.quadros_com_falha >= 3 {
+                    std::panic::resume_unwind(erro);
+                }
+                let destino = if self.aba == Aba::Canais { Aba::Inicio } else { Aba::Canais };
+                self.explorar = false;
+                self.serie_aberta = None;
+                self.ficha_aberta = None;
+                self.aba = destino;
+                self.aviso = Some(("Essa tela teve um problema e foi fechada. Já anotamos o erro.".into(), Instant::now()));
+                ctx.request_repaint();
+            }
+        }
         if let Some(a) = self.abertura.as_ref() {
             tela::veu_da_abertura(ctx, a.veu());
         }
