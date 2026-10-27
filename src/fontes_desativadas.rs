@@ -122,9 +122,6 @@ pub fn servidor(url: &str) -> Option<String> {
 }
 
 pub fn desligado(url: &str) -> bool {
-    if url.contains("/error.txt") || url.contains(".s25-cloudfront-net.lat") {
-        return true;
-    }
     let hosts = hosts();
     if hosts.is_empty() {
         return false;
