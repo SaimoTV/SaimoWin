@@ -1,0 +1,26 @@
+[package]
+name = "saimo-tv"
+version = "2.5.12"
+edition = "2021"
+description = "Saimo TV para Windows"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+egui = "0.36"
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip", "json"] }
+serde_json = "1"
+libloading = "0.9"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+serde = { version = "1.0.229", features = ["derive"] }
+chrono = "0.4.45"
+
+# Os controles de mídia do Windows (o quadro de "tocando agora" do sistema).
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+windows = { version = "0.62", features = ["Foundation", "Media", "Storage_Streams", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_Controls_Dialogs"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

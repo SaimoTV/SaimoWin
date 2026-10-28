@@ -1,0 +1,448 @@
+//! A ficha de um título: sinopse, duração, classificação, gêneros e elenco.
+//!
+//! O catálogo publicado traz nome e endereço; o arquivo de fichas acrescenta
+//! o id do TMDB, o pôster e os gêneros. É o bastante para desenhar a grade, e
+//! pouco demais para quem parou num cartaz e quer saber do que se trata antes
+//! de gastar dois minutos abrindo o filme.
+//!
+//! O resto só existe no endereço do próprio título no TMDB, e é um pedido por
+//! título aberto — não por título listado. Com o id vindo da ficha não há
+//! busca nem desempate: pergunta-se direto pelo número certo.
+//!
+//! Os mesmos campos, com os mesmos nomes, são o que o celular, o Mac, a TV Box
+//! e o site mostram.
+
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
+
+const CHAVE: &str = "15d2ea6d0dc1d476efbca3eba2b9bbfb";
+const BASE: &str = "https://api.themoviedb.org/3";
+const IMAGENS: &str = "https://image.tmdb.org/t/p/";
+
+#[derive(Clone, Debug, Default)]
+pub struct Pessoa {
+    pub id: u32,
+    pub nome: String,
+    pub papel: String,
+    pub foto: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Ficha {
+    pub sinopse: String,
+    pub frase: String,
+    /// Minutos: do filme, ou de um episódio da série.
+    pub duracao: Option<u32>,
+    pub classificacao: Option<String>,
+    pub nota: f64,
+    pub ano: String,
+    pub generos: Vec<String>,
+    /// Quem dirigiu o filme, ou quem criou a série.
+    pub assinatura: String,
+    pub roteiro: String,
+    pub produtora: String,
+    pub elenco: Vec<Pessoa>,
+    pub capa: Option<String>,
+    /// A imagem larga do título, para o fundo da ficha.
+    pub fundo: Option<String>,
+    /// Quantas temporadas a série tem, segundo o TMDB.
+    pub temporadas: Option<u32>,
+    /// O nome do título desenhado (PNG transparente), como na TV Box: é o que
+    /// vai no quadro de "tocando agora" do Windows.
+    pub logo: Option<String>,
+}
+
+fn guardadas() -> &'static Mutex<HashMap<String, Ficha>> {
+    static MAPA: OnceLock<Mutex<HashMap<String, Ficha>>> = OnceLock::new();
+    MAPA.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// A ficha já guardada, se alguma thread já a trouxe.
+pub fn conhecida(titulo: &str, serie: bool) -> Option<Ficha> {
+    guardadas().lock().ok()?.get(&chave(titulo, serie)).cloned()
+}
+
+fn chave(titulo: &str, serie: bool) -> String {
+    format!("{}{titulo}", if serie { "s:" } else { "f:" })
+}
+
+/// A logo do título, se a ficha dele já chegou. Barata: é consultada a cada
+/// quadro enquanto o título toca.
+pub fn logo(titulo: &str, serie: bool) -> Option<String> {
+    guardadas().lock().ok()?.get(&chave(titulo, serie))?.logo.clone()
+}
+
+/// A logo em português, senão em inglês, senão a sem idioma — a mesma
+/// escolha da TV Box.
+fn logo_de(json: &serde_json::Value) -> Option<String> {
+    let logos = json["images"]["logos"].as_array()?;
+    let escolhida = ["pt", "en", ""].iter().find_map(|lingua| {
+        logos.iter().find(|l| match l["iso_639_1"].as_str() {
+            Some(l) => l == *lingua || (lingua.is_empty() && l == "null"),
+            None => lingua.is_empty(),
+        })
+    })?;
+    let caminho = escolhida["file_path"].as_str().filter(|c| !c.is_empty())?;
+    Some(format!("{IMAGENS}w300{caminho}"))
+}
+
+/// Busca a ficha. Chamada de uma thread: fala com a rede.
+pub fn baixar(titulo: &str, serie: bool, id: u32) -> Option<Ficha> {
+    if let Some(pronta) = conhecida(titulo, serie) {
+        return Some(pronta);
+    }
+    let tipo = if serie { "tv" } else { "movie" };
+    let extras = if serie { "credits,content_ratings,images" } else { "credits,release_dates,images" };
+    // Sem o filtro de idioma as imagens viriam só em pt-BR, e quase nenhum
+    // título tem logo traduzida.
+    let json = crate::rede::json(&format!(
+        "{BASE}/{tipo}/{id}?api_key={CHAVE}&language=pt-BR&append_to_response={extras}&include_image_language=pt,en,null"
+    ))?;
+
+    let texto = |campo: &str| json[campo].as_str().unwrap_or("").to_string();
+    let data = texto(if serie { "first_air_date" } else { "release_date" });
+
+    let creditos = &json["credits"];
+    let mut direcao: Vec<String> = Vec::new();
+    let mut roteiro: Vec<String> = Vec::new();
+    if let Some(equipe) = creditos["crew"].as_array() {
+        for pessoa in equipe {
+            let nome = pessoa["name"].as_str().unwrap_or("").to_string();
+            match pessoa["job"].as_str().unwrap_or("") {
+                "Director" => direcao.push(nome),
+                "Screenplay" | "Writer" | "Story" => roteiro.push(nome),
+                _ => {}
+            }
+        }
+    }
+    // Série não tem diretor único: quem a assina é quem a criou.
+    let criadores: Vec<String> = json["created_by"]
+        .as_array()
+        .map(|lista| {
+            lista.iter().filter_map(|p| p["name"].as_str().map(str::to_string)).collect()
+        })
+        .unwrap_or_default();
+    let assinatura = if direcao.is_empty() { criadores } else { direcao };
+    roteiro.dedup();
+
+    let elenco = creditos["cast"]
+        .as_array()
+        .map(|lista| {
+            lista
+                .iter()
+                .take(20)
+                .map(|p| Pessoa {
+                    id: p["id"].as_u64().unwrap_or(0) as u32,
+                    nome: p["name"].as_str().unwrap_or("").to_string(),
+                    papel: p["character"].as_str().unwrap_or("").to_string(),
+                    foto: p["profile_path"]
+                        .as_str()
+                        .map(|caminho| format!("{IMAGENS}w185{caminho}")),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let duracao = if serie {
+        json["episode_run_time"].as_array().and_then(|l| l.first()).and_then(|v| v.as_u64())
+    } else {
+        json["runtime"].as_u64()
+    }
+    .filter(|m| *m > 0)
+    .map(|m| m as u32);
+
+    let ficha = Ficha {
+        sinopse: texto("overview"),
+        frase: texto("tagline"),
+        duracao,
+        classificacao: classificacao_br(&json, serie),
+        nota: json["vote_average"].as_f64().unwrap_or(0.0),
+        ano: data.chars().take(4).collect(),
+        generos: json["genres"]
+            .as_array()
+            .map(|lista| {
+                lista.iter().filter_map(|g| g["name"].as_str().map(str::to_string)).collect()
+            })
+            .unwrap_or_default(),
+        assinatura: assinatura.into_iter().take(2).collect::<Vec<_>>().join(", "),
+        roteiro: roteiro.into_iter().take(2).collect::<Vec<_>>().join(", "),
+        produtora: json["production_companies"][0]["name"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        elenco,
+        capa: json["poster_path"].as_str().map(|c| format!("{IMAGENS}w342{c}")),
+        fundo: json["backdrop_path"].as_str().map(|c| format!("{IMAGENS}w1280{c}")),
+        temporadas: if serie {
+            json["number_of_seasons"].as_u64().filter(|n| *n > 0).map(|n| n as u32)
+        } else {
+            None
+        },
+        logo: logo_de(&json),
+    };
+
+    if let Ok(mut mapa) = guardadas().lock() {
+        mapa.insert(chave(titulo, serie), ficha.clone());
+    }
+    Some(ficha)
+}
+
+/// Um trabalho de uma pessoa, como o TMDB o devolve.
+#[derive(Clone, Debug)]
+pub struct Credito {
+    pub id: u32,
+    pub serie: bool,
+    /// A capa que o TMDB já manda junto — a do arquivo de fichas falta para
+    /// boa parte da filmografia.
+    pub capa: Option<String>,
+    pub papel: String,
+}
+
+/// Um trabalho que existe no acervo, pronto para desenhar e abrir.
+#[derive(Clone, Debug)]
+pub struct Trabalho {
+    pub achado: crate::vod::Achado,
+    pub capa: Option<String>,
+    pub papel: String,
+}
+
+/// Os trabalhos de um ator, em ordem de popularidade.
+///
+/// Só a ida à rede mora aqui. O cruzamento com o acervo é local e acontece na
+/// thread do desenho, onde estão o índice e as fichas — mandar a rede junto
+/// congelaria a janela pelo tempo do pedido.
+pub fn creditos_de(ator: u32) -> Vec<Credito> {
+    let Some(json) = crate::rede::json(&format!(
+        "{BASE}/person/{ator}/combined_credits?api_key={CHAVE}&language=pt-BR"
+    )) else {
+        return Vec::new();
+    };
+
+    let mut trabalhos: Vec<&serde_json::Value> = Vec::new();
+    for campo in ["cast", "crew"] {
+        if let Some(lista) = json[campo].as_array() {
+            trabalhos.extend(lista.iter());
+        }
+    }
+    trabalhos.sort_by(|a, b| {
+        b["popularity"]
+            .as_f64()
+            .unwrap_or(0.0)
+            .partial_cmp(&a["popularity"].as_f64().unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut saida = Vec::new();
+    let mut vistos: HashSet<(u32, bool)> = HashSet::new();
+    for trabalho in trabalhos {
+        let Some(id) = trabalho["id"].as_u64() else { continue };
+        let serie = trabalho["media_type"].as_str() == Some("tv");
+        if !vistos.insert((id as u32, serie)) {
+            continue;
+        }
+        let papel = trabalho["character"]
+            .as_str()
+            .filter(|p| !p.is_empty())
+            .or_else(|| trabalho["job"].as_str())
+            .unwrap_or("")
+            .to_string();
+        saida.push(Credito {
+            id: id as u32,
+            serie,
+            capa: trabalho["poster_path"].as_str().map(|c| format!("{IMAGENS}w185{c}")),
+            papel,
+        });
+    }
+    saida
+}
+
+/// O que um ator fez **e que existe neste acervo**.
+///
+/// A filmografia inteira do TMDB não serve de dentro do aplicativo: listar
+/// oitenta títulos dos quais setenta não abrem é uma lista que frustra. O
+/// cruzamento é pelo id do TMDB, que o arquivo de fichas já traz para cada
+/// título daqui — nome igual não engana, refilmagem não vira o original.
+pub fn no_acervo(
+    creditos: &[Credito],
+    generos: &crate::generos::Generos,
+    acervo: &[crate::vod::Achado],
+) -> Vec<Trabalho> {
+    let mut por_nome: HashMap<String, &crate::vod::Achado> = HashMap::new();
+    for achado in acervo {
+        por_nome.insert(chave(&achado.titulo, achado.serie), achado);
+    }
+
+    let mut vistos: HashSet<String> = HashSet::new();
+    let mut saida = Vec::new();
+    for credito in creditos {
+        let Some(titulo) = generos.titulo_de(credito.id, credito.serie) else { continue };
+        let achado = por_nome
+            .get(&chave(titulo, credito.serie))
+            .or_else(|| por_nome.get(&chave(&crate::generos::sem_ano(titulo), credito.serie)));
+        let Some(achado) = achado else { continue };
+        if !vistos.insert(chave(&achado.titulo, achado.serie)) {
+            continue;
+        }
+        let capa = credito
+            .capa
+            .clone()
+            .or_else(|| generos.capa(&achado.titulo, achado.serie).map(str::to_string));
+        saida.push(Trabalho { achado: (*achado).clone(), capa, papel: credito.papel.clone() });
+    }
+    saida
+}
+
+/// Quem é a pessoa: foto grande, biografia, nascimento, de onde é.
+#[derive(Clone, Debug, Default)]
+pub struct Perfil {
+    pub nome: String,
+    pub foto: Option<String>,
+    pub biografia: String,
+    /// "Atuação  ·  1956 · 70 anos  ·  Concord, California, USA"
+    pub dados: String,
+}
+
+/// A biografia em português falta para quase todo mundo que não é
+/// brasileiro; sem ela vale a em inglês — melhor que um vazio sob a foto.
+pub fn perfil(id: u32) -> Option<Perfil> {
+    let json = crate::rede::json(&format!("{BASE}/person/{id}?api_key={CHAVE}&language=pt-BR"))?;
+    let texto = |campo: &str| json[campo].as_str().unwrap_or("").to_string();
+    let mut biografia = texto("biography");
+    if biografia.is_empty() {
+        if let Some(ingles) =
+            crate::rede::json(&format!("{BASE}/person/{id}?api_key={CHAVE}&language=en-US"))
+        {
+            biografia = ingles["biography"].as_str().unwrap_or("").to_string();
+        }
+    }
+    let mut partes: Vec<String> = Vec::new();
+    let conhecida = match json["known_for_department"].as_str() {
+        Some("Acting") => "Atuação",
+        Some("Directing") => "Direção",
+        Some("Writing") => "Roteiro",
+        Some("Production") => "Produção",
+        Some("Sound") => "Música",
+        _ => "",
+    };
+    if !conhecida.is_empty() {
+        partes.push(conhecida.to_string());
+    }
+    let nasceu: Option<i32> = texto("birthday").get(..4).and_then(|a| a.parse().ok());
+    let morreu: Option<i32> = texto("deathday").get(..4).and_then(|a| a.parse().ok());
+    if let Some(nasceu) = nasceu {
+        match morreu {
+            Some(morreu) => partes.push(format!("{nasceu} – {morreu}")),
+            None => {
+                let agora = ano_atual();
+                partes.push(format!("{nasceu} · {} anos", agora - nasceu));
+            }
+        }
+    }
+    let local = texto("place_of_birth");
+    if !local.is_empty() {
+        partes.push(local);
+    }
+    Some(Perfil {
+        nome: texto("name"),
+        foto: json["profile_path"].as_str().map(|c| format!("{IMAGENS}h632{c}")),
+        biografia,
+        dados: partes.join("  ·  "),
+    })
+}
+
+/// O ano de agora, sem trazer uma biblioteca de datas só para isso.
+fn ano_atual() -> i32 {
+    let segundos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // 365,2425 dias por ano: o erro não chega a um dia em séculos.
+    1970 + (segundos as f64 / 31_556_952.0) as i32
+}
+
+fn classificacao_br(json: &serde_json::Value, serie: bool) -> Option<String> {
+    let listas = if serie {
+        json["content_ratings"]["results"].as_array()?
+    } else {
+        json["release_dates"]["results"].as_array()?
+    };
+    let br = listas.iter().find(|item| item["iso_3166_1"].as_str() == Some("BR"))?;
+    if serie {
+        return br["rating"].as_str().filter(|n| !n.is_empty()).map(str::to_string);
+    }
+    br["release_dates"]
+        .as_array()?
+        .iter()
+        .filter_map(|d| d["certification"].as_str())
+        .find(|n| !n.is_empty())
+        .map(str::to_string)
+}
+
+/// Um episódio como o TMDB descreve: nome, sinopse, a imagem da cena e a
+/// duração. É o que a TV Box mostra no cartão do episódio.
+#[derive(Clone, Debug, Default)]
+pub struct EpisodioTmdb {
+    pub numero: u32,
+    pub nome: String,
+    pub sinopse: String,
+    pub imagem: Option<String>,
+    pub duracao: Option<u32>,
+}
+
+/// As temporadas já trazidas, por (id da série, número da temporada).
+type Temporadas = Mutex<HashMap<(u32, u32), Vec<EpisodioTmdb>>>;
+
+fn temporadas_guardadas() -> &'static Temporadas {
+    static GUARDADAS: OnceLock<Temporadas> = OnceLock::new();
+    GUARDADAS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// A temporada já trazida, se alguma thread já a buscou.
+pub fn temporada_conhecida(id: u32, numero: u32) -> Option<Vec<EpisodioTmdb>> {
+    temporadas_guardadas().lock().ok()?.get(&(id, numero)).cloned()
+}
+
+/// Busca os episódios de uma temporada. Chamada de uma thread: fala com a rede.
+/// Falha de rede guarda a lista vazia: o cartão fica sem imagem, e não se pede
+/// de novo a cada quadro.
+pub fn temporada(id: u32, numero: u32) -> Vec<EpisodioTmdb> {
+    if let Some(pronta) = temporada_conhecida(id, numero) {
+        return pronta;
+    }
+    let temporada_tmdb = if id == 30984 {
+        if numero == 17 { 2 } else { 1 }
+    } else {
+        numero
+    };
+    let mut lista = buscar_temporada_tmdb(id, temporada_tmdb);
+    if temporada_tmdb > 1 {
+        let base1 = buscar_temporada_tmdb(id, 1);
+        for ep in base1 {
+            if !lista.iter().any(|x| x.numero == ep.numero) {
+                lista.push(ep);
+            }
+        }
+    }
+    if let Ok(mut mapa) = temporadas_guardadas().lock() {
+        mapa.insert((id, numero), lista.clone());
+    }
+    lista
+}
+
+fn buscar_temporada_tmdb(id: u32, numero: u32) -> Vec<EpisodioTmdb> {
+    crate::rede::json(&format!("{BASE}/tv/{id}/season/{numero}?api_key={CHAVE}&language=pt-BR"))
+        .and_then(|json| json["episodes"].as_array().cloned())
+        .map(|episodios| {
+            episodios
+                .iter()
+                .map(|e| EpisodioTmdb {
+                    numero: e["episode_number"].as_u64().unwrap_or(0) as u32,
+                    nome: e["name"].as_str().unwrap_or("").to_string(),
+                    sinopse: e["overview"].as_str().unwrap_or("").to_string(),
+                    imagem: e["still_path"].as_str().map(|c| format!("{IMAGENS}w300{c}")),
+                    duracao: e["runtime"].as_u64().filter(|m| *m > 0).map(|m| m as u32),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
