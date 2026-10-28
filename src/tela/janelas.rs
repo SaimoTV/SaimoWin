@@ -240,6 +240,7 @@ pub fn listas(app: &mut App, ctx: &egui::Context) {
                         egui::TextEdit::singleline(texto)
                             .id(id)
                             .font(normal(16.0))
+                            .text_color(TEXTO)
                             .hint_text(egui::RichText::new(dica).font(normal(16.0)).color(super::APAGADO))
                             .margin(egui::Margin::symmetric(12, 10))
                             .desired_width(f32::INFINITY),

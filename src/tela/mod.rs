@@ -124,10 +124,16 @@ pub fn aplicar_estilo(ctx: &egui::Context) {
     }
     visual.widgets.inactive.weak_bg_fill = branco(38);
     visual.widgets.inactive.bg_fill = branco(38);
+    visual.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXTO);
+    visual.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXTO);
     visual.widgets.hovered.weak_bg_fill = branco(64);
     visual.widgets.hovered.bg_fill = branco(64);
+    visual.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXTO);
     visual.widgets.active.weak_bg_fill = ACENTO.gamma_multiply(0.5);
+    visual.widgets.active.fg_stroke = Stroke::new(1.0, TEXTO);
+    visual.widgets.open.fg_stroke = Stroke::new(1.0, TEXTO);
     visual.widgets.hovered.bg_stroke = Stroke::new(1.0, ACENTO.gamma_multiply(0.6));
+    visual.text_cursor.stroke = Stroke::new(2.0, ACENTO);
     visual.slider_trailing_fill = true;
     estilo.visuals = visual;
     estilo.spacing.item_spacing = egui::vec2(8.0, 6.0);
@@ -135,7 +141,8 @@ pub fn aplicar_estilo(ctx: &egui::Context) {
     estilo.spacing.slider_width = 110.0;
     estilo.spacing.menu_margin = egui::Margin::same(10);
     estilo.animation_time = 0.16;
-    ctx.set_global_style(estilo);
+    ctx.set_theme(egui::Theme::Dark);
+    ctx.all_styles_mut(|s| *s = estilo.clone());
     // Ctrl + e Ctrl − são do volume aqui, não do tamanho da letra.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
 }
@@ -416,8 +423,11 @@ pub fn pilula(ui: &mut egui::Ui, icone: Option<Icone>, rotulo: &str, ativa: bool
 
 /// O campo de busca da TV Box (`bg_campo`): claro, com o contorno ciano no foco.
 pub fn campo_de_busca(ui: &mut egui::Ui, conteudo: &mut String, dica: &str, id: &str, largura: f32, altura: f32) -> egui::Response {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(largura, altura), Sense::hover());
+    let (rect, clique_fundo) = ui.allocate_exact_size(egui::vec2(largura, altura), Sense::click());
     let id_campo = egui::Id::new(id);
+    if clique_fundo.clicked() {
+        ui.memory_mut(|m| m.request_focus(id_campo));
+    }
     let focado = ui.memory(|m| m.has_focus(id_campo));
     let t = aceso(ui, id_campo.with("foco"), focado);
     ui.painter().rect_filled(rect, 12.0, branco(31 + (7.0 * t) as u8));
@@ -434,6 +444,7 @@ pub fn campo_de_busca(ui: &mut egui::Ui, conteudo: &mut String, dica: &str, id: 
                 egui::TextEdit::singleline(conteudo)
                     .id(id_campo)
                     .font(normal(tamanho_letra))
+                    .text_color(TEXTO)
                     .hint_text(egui::RichText::new(dica).font(normal(tamanho_letra)).color(APAGADO))
                     .frame(egui::Frame::NONE)
                     .desired_width(f32::INFINITY),

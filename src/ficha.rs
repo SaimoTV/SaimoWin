@@ -409,7 +409,28 @@ pub fn temporada(id: u32, numero: u32) -> Vec<EpisodioTmdb> {
     if let Some(pronta) = temporada_conhecida(id, numero) {
         return pronta;
     }
-    let lista: Vec<EpisodioTmdb> = crate::rede::json(&format!("{BASE}/tv/{id}/season/{numero}?api_key={CHAVE}&language=pt-BR"))
+    let temporada_tmdb = if id == 30984 {
+        if numero == 17 { 2 } else { 1 }
+    } else {
+        numero
+    };
+    let mut lista = buscar_temporada_tmdb(id, temporada_tmdb);
+    if temporada_tmdb > 1 {
+        let base1 = buscar_temporada_tmdb(id, 1);
+        for ep in base1 {
+            if !lista.iter().any(|x| x.numero == ep.numero) {
+                lista.push(ep);
+            }
+        }
+    }
+    if let Ok(mut mapa) = temporadas_guardadas().lock() {
+        mapa.insert((id, numero), lista.clone());
+    }
+    lista
+}
+
+fn buscar_temporada_tmdb(id: u32, numero: u32) -> Vec<EpisodioTmdb> {
+    crate::rede::json(&format!("{BASE}/tv/{id}/season/{numero}?api_key={CHAVE}&language=pt-BR"))
         .and_then(|json| json["episodes"].as_array().cloned())
         .map(|episodios| {
             episodios
@@ -423,9 +444,5 @@ pub fn temporada(id: u32, numero: u32) -> Vec<EpisodioTmdb> {
                 })
                 .collect()
         })
-        .unwrap_or_default();
-    if let Ok(mut mapa) = temporadas_guardadas().lock() {
-        mapa.insert((id, numero), lista.clone());
-    }
-    lista
+        .unwrap_or_default()
 }
