@@ -9,7 +9,7 @@
 use crate::catalogo::{self, Canal, Fonte};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -385,6 +385,7 @@ pub enum Erro {
     NaoELista,
     SemCanais,
     Limite,
+    Arquivo,
 }
 
 impl Erro {
@@ -395,6 +396,7 @@ impl Erro {
             Erro::NaoELista => "Isso não parece uma lista .m3u",
             Erro::SemCanais => "Essa lista não tem canais",
             Erro::Limite => "Você já tem 10 listas. Remova uma para adicionar outra",
+            Erro::Arquivo => "Não consegui ler esse arquivo",
         }
     }
 }
@@ -428,6 +430,17 @@ fn baixar_texto(link: &str) -> Result<String, Erro> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// Lê o arquivo da pessoa: até 30 MB, UTF-8 (byte inválido vira "�" em vez de falhar).
+pub fn ler_arquivo(caminho: &Path) -> Result<String, Erro> {
+    let mut f = std::fs::File::open(caminho).map_err(|_| Erro::Arquivo)?;
+    let mut bytes = Vec::new();
+    (&mut f).take(LIMITE_BYTES + 1).read_to_end(&mut bytes).map_err(|_| Erro::Arquivo)?;
+    if bytes.len() as u64 > LIMITE_BYTES {
+        return Err(Erro::Arquivo);
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// Texto baixado -> canais, com os erros da especificação.
 pub fn interpretar(texto: &str) -> Result<Vec<CanalM3u>, Erro> {
     if !parece_lista(texto) {
@@ -446,7 +459,9 @@ pub fn interpretar(texto: &str) -> Result<Vec<CanalM3u>, Erro> {
 pub struct Lista {
     pub id: String,
     pub nome: String,
-    pub link: String,
+    /// `None` quando a lista veio de arquivo (não há o que baixar de novo).
+    #[serde(default)]
+    pub link: Option<String>,
     #[serde(rename = "atualizadaEm")]
     pub atualizada_em: u64,
     pub ativa: bool,
@@ -512,6 +527,19 @@ pub fn adicionar(link: &str, nome: &str) -> Result<(), Erro> {
         return Err(Erro::Limite);
     }
     let canais = interpretar(&baixar_texto(link)?)?;
+    guardar_nova(&canais, Some(link.to_string()), nome)
+}
+
+/// Adiciona uma lista a partir de um arquivo .m3u/.m3u8 (sem link guardado).
+pub fn adicionar_arquivo(caminho: &Path, nome: &str) -> Result<(), Erro> {
+    if listar().len() >= MAXIMO_DE_LISTAS {
+        return Err(Erro::Limite);
+    }
+    let canais = interpretar(&ler_arquivo(caminho)?)?;
+    guardar_nova(&canais, None, nome)
+}
+
+fn guardar_nova(canais: &[CanalM3u], link: Option<String>, nome: &str) -> Result<(), Erro> {
     let _g = TRAVA.lock();
     let mut listas = ler_indice();
     if listas.len() >= MAXIMO_DE_LISTAS {
@@ -523,25 +551,36 @@ pub fn adicionar(link: &str, nome: &str) -> Result<(), Erro> {
     }
     let nome = nome.trim();
     let nome = if nome.is_empty() { format!("Lista {}", listas.len() + 1) } else { nome.to_string() };
-    gravar_canais(&id, &canais);
-    listas.push(Lista { id, nome, link: link.to_string(), atualizada_em: agora(), ativa: true, canais: canais.len() });
+    gravar_canais(&id, canais);
+    listas.push(Lista { id, nome, link, atualizada_em: agora(), ativa: true, canais: canais.len() });
     gravar_indice(&listas);
     Ok(())
 }
 
 /// Baixa de novo. Se falhar, a versão guardada continua.
 pub fn atualizar(id: &str) -> Result<(), Erro> {
-    let link = listar().into_iter().find(|l| l.id == id).map(|l| l.link).ok_or(Erro::Download)?;
+    let link = listar().into_iter().find(|l| l.id == id).and_then(|l| l.link).ok_or(Erro::Download)?;
     let canais = interpretar(&baixar_texto(&link)?)?;
+    substituir_canais(id, &canais);
+    Ok(())
+}
+
+/// Atualiza uma lista de arquivo com outro arquivo. Se falhar, a versão guardada continua.
+pub fn atualizar_arquivo(id: &str, caminho: &Path) -> Result<(), Erro> {
+    let canais = interpretar(&ler_arquivo(caminho)?)?;
+    substituir_canais(id, &canais);
+    Ok(())
+}
+
+fn substituir_canais(id: &str, canais: &[CanalM3u]) {
     let _g = TRAVA.lock();
     let mut listas = ler_indice();
     if let Some(l) = listas.iter_mut().find(|l| l.id == id) {
-        gravar_canais(id, &canais);
+        gravar_canais(id, canais);
         l.atualizada_em = agora();
         l.canais = canais.len();
         gravar_indice(&listas);
     }
-    Ok(())
 }
 
 pub fn definir_ativa(id: &str, ativa: bool) {
@@ -564,7 +603,7 @@ pub fn remover(id: &str) {
 /// As listas ativas com mais de 12 h.
 pub fn vencidas() -> Vec<String> {
     let agora = agora();
-    listar().into_iter().filter(|l| l.ativa && agora.saturating_sub(l.atualizada_em) > VALIDADE_S).map(|l| l.id).collect()
+    listar().into_iter().filter(|l| l.ativa && l.link.is_some() && agora.saturating_sub(l.atualizada_em) > VALIDADE_S).map(|l| l.id).collect()
 }
 
 /// "atualizada há 3 h" e companhia.
@@ -705,6 +744,37 @@ mod testes {
         assert_eq!(c[1].secao(), SECAO);
         assert_eq!(c[1].fontes[0].qualidade.as_deref(), Some("720p"));
         assert_eq!(id_do_canal("ab", "Cine HD"), "minha-ab-cinehd");
+    }
+
+    #[test]
+    fn arquivo_le_e_erra() {
+        let d = std::env::temp_dir().join(format!("saimo-ml-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let bom = d.join("a.m3u");
+        std::fs::write(&bom, "\u{feff}#EXTM3U\n#EXTINF:-1,Canal \u{e9}\nhttps://a/1.m3u8\n").unwrap();
+        assert_eq!(interpretar(&ler_arquivo(&bom).unwrap()).unwrap().len(), 1);
+        let latin = d.join("l.m3u"); // byte inválido em UTF-8 não derruba
+        std::fs::write(&latin, b"#EXTM3U\n#EXTINF:-1,Caf\xe9\nhttps://a/1.m3u8\n").unwrap();
+        assert_eq!(interpretar(&ler_arquivo(&latin).unwrap()).unwrap().len(), 1);
+        let lixo = d.join("b.txt");
+        std::fs::write(&lixo, "ola mundo").unwrap();
+        assert_eq!(interpretar(&ler_arquivo(&lixo).unwrap()), Err(Erro::NaoELista));
+        let vazio = d.join("c.m3u");
+        std::fs::write(&vazio, "#EXTM3U\n").unwrap();
+        assert_eq!(interpretar(&ler_arquivo(&vazio).unwrap()), Err(Erro::SemCanais));
+        assert_eq!(ler_arquivo(&d.join("nao-existe.m3u")), Err(Erro::Arquivo));
+        let grande = d.join("g.m3u");
+        std::fs::write(&grande, vec![b'a'; LIMITE_BYTES as usize + 1]).unwrap();
+        assert_eq!(ler_arquivo(&grande), Err(Erro::Arquivo));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn lista_antiga_com_link_texto_continua_lendo() {
+        let l: Lista = serde_json::from_str(r#"{"id":"1","nome":"x","link":"http://a/b.m3u","atualizadaEm":5,"ativa":true}"#).unwrap();
+        assert_eq!(l.link.as_deref(), Some("http://a/b.m3u"));
+        let l: Lista = serde_json::from_str(r#"{"id":"1","nome":"x","link":null,"atualizadaEm":5,"ativa":true}"#).unwrap();
+        assert!(l.link.is_none());
     }
 
     /// Rede local: `python3 -m http.server 8766` numa pasta com br.m3u e adulto.m3u.

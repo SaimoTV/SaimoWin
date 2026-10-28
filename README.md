@@ -226,14 +226,18 @@ abre o app sem o servidor. O servidor de verdade, com um cliente de fora:
 
 ## Minhas listas
 
-Em Ajustes > Minhas listas a pessoa cola o link de uma lista `.m3u` comum; os
+Em Ajustes > Minhas listas a pessoa cola o link de uma lista `.m3u` comum ou toca em "Escolher arquivo"
+(`.m3u`, `.m3u8`, `.txt`; até 30 MB); os
 canais entram em Ao vivo na seção "Minhas listas" (até 10 listas, 20.000 canais
 cada) e tocam pelo mpv como os demais, com referer, agente e filtros do app. A
 lista fica só neste computador, em `SaimoTV/minhas-listas` (`indice.json` + um
 arquivo por lista), abre sem rede e é baixada de novo ao abrir o app quando passa
 de 12 h. Canais com grupo ou nome adulto (exceto "Adult Swim") vão para "Adulto",
 que só aparece depois do desbloqueio; fontes ClearKey saem (o mpv não monta
-licença). Não há seletor de arquivo (o projeto não tem a crate `rfd`): só o link.
+licença). O seletor é o nativo do
+Windows (`GetOpenFileNameW`, em `src/seletor.rs`, pela crate `windows` que o projeto já usa;
+roda numa thread). Lista de arquivo não guarda caminho nem link, não se atualiza
+sozinha e "Atualizar" reabre o seletor.
 Código: `src/minhas_listas.rs` (leitor, download, armazenamento; testes contra
 `tests/dados/edge.*` e, quando existe, o `br.m3u` do scratchpad) e
 `src/minhas_listas_tela.rs` (a janela). `SAIMO_FOTO_TELA=minhas-listas` fotografa a janela.

@@ -26,6 +26,7 @@ impl Dialogo {
 
 enum Acao {
     Adicionar,
+    Arquivo,
     Atualizar(String),
     Alternar(String),
     Remover(String),
@@ -69,7 +70,7 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                     ui.label(egui::RichText::new("Minhas listas").font(forte(26.0)).color(TEXTO));
                     ui.add_space(8.0);
                     ui.label(
-                        egui::RichText::new("Cole o link de uma lista .m3u. Ela fica só neste aparelho.")
+                        egui::RichText::new("Cole o link de uma lista .m3u ou escolha o arquivo. Ela fica só neste aparelho.")
                             .font(normal(15.0))
                             .color(SECUNDARIO),
                     );
@@ -141,9 +142,13 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                         if ocupado && !app.minhas_ocupadas.is_empty() && app.minhas_adicionando {
                             ui.add(egui::Spinner::new().color(ACENTO));
                             ui.add_space(8.0);
-                            ui.label(egui::RichText::new("Baixando a lista…").font(normal(14.0)).color(SECUNDARIO));
+                            ui.label(egui::RichText::new("Lendo a lista…").font(normal(14.0)).color(SECUNDARIO));
                         } else if botao(ui, Some(Icone::Certo), "Adicionar lista", true).clicked() {
                             acao = Some(Acao::Adicionar);
+                        }
+                        ui.add_space(8.0);
+                        if !ocupado && botao(ui, None, "Escolher arquivo", false).clicked() {
+                            acao = Some(Acao::Arquivo);
                         }
                         ui.add_space(8.0);
                         if botao(ui, None, "Fechar", false).clicked() {
@@ -174,6 +179,10 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                 }
             }
         }
+        Some(Acao::Arquivo) => match app.minhas_adicionar_arquivo(&d.nome) {
+            Ok(()) => d.erro = None,
+            Err(e) => d.erro = Some(e.mensagem()),
+        },
         Some(Acao::Atualizar(id)) => {
             d.erro = None;
             app.minhas_atualizar(&id, false);

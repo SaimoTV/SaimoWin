@@ -31,6 +31,7 @@ mod rede;
 mod listas;
 mod minhas_listas;
 mod minhas_listas_tela;
+mod seletor;
 mod telemetria;
 
 use catalogo::Canal;
@@ -885,11 +886,39 @@ impl App {
         Ok(())
     }
 
+    /// Abre o seletor de arquivo (numa thread) e adiciona a lista escolhida. Cancelar não muda nada.
+    pub fn minhas_adicionar_arquivo(&mut self, nome: &str) -> Result<(), minhas_listas::Erro> {
+        if self.minhas_adicionando {
+            return Ok(());
+        }
+        if self.minhas_meta.len() >= minhas_listas::MAXIMO_DE_LISTAS {
+            return Err(minhas_listas::Erro::Limite);
+        }
+        let nome = nome.to_string();
+        self.minhas_em_fundo(None, false, move || match seletor::escolher_lista() {
+            Some(c) => minhas_listas::adicionar_arquivo(&c, &nome),
+            None => Ok(()),
+        });
+        Ok(())
+    }
+
     pub fn minhas_atualizar(&mut self, id: &str, silencioso: bool) {
         if self.minhas_ocupadas.iter().any(|i| i == id) {
             return;
         }
         let alvo = id.to_string();
+        let de_arquivo = self.minhas_meta.iter().any(|l| l.id == id && l.link.is_none());
+        if de_arquivo {
+            // Lista de arquivo: "Atualizar" pede o arquivo de novo (nunca roda sozinho).
+            if silencioso {
+                return;
+            }
+            self.minhas_em_fundo(Some(alvo.clone()), false, move || match seletor::escolher_lista() {
+                Some(c) => minhas_listas::atualizar_arquivo(&alvo, &c),
+                None => Ok(()),
+            });
+            return;
+        }
         self.minhas_em_fundo(Some(id.to_string()), silencioso, move || minhas_listas::atualizar(&alvo));
     }
 

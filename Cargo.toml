@@ -17,7 +17,7 @@ chrono = "0.4.45"
 # Os controles de mídia do Windows (o quadro de "tocando agora" do sistema).
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-windows = { version = "0.62", features = ["Foundation", "Media", "Storage_Streams", "Win32_Foundation", "Win32_System_WinRT"] }
+windows = { version = "0.62", features = ["Foundation", "Media", "Storage_Streams", "Win32_Foundation", "Win32_System_WinRT", "Win32_UI_Controls_Dialogs"] }
 
 [profile.release]
 opt-level = "s"
