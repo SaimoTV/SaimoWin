@@ -29,6 +29,8 @@ mod connect;
 mod controle;
 mod rede;
 mod listas;
+mod minhas_listas;
+mod minhas_listas_tela;
 mod telemetria;
 
 use catalogo::Canal;
@@ -124,6 +126,9 @@ enum Recado {
     Restritos(Vec<Canal>),
     /// O resultado do teste dos endereços da janela de listas (true = abriu).
     ListasTestadas(Vec<(listas::Lista, bool)>),
+    /// Terminou um download de "Minhas listas": a lista (se já existia), o erro
+    /// (se houve) e se foi a atualização automática, que não incomoda ninguém.
+    MinhasListas { id: Option<String>, erro: Option<minhas_listas::Erro>, silencioso: bool },
     /// A agenda com os placares; `None` quando a agenda não veio.
     Eventos(Option<Vec<eventos::Jogo>>),
     Logo(String, egui::ColorImage),
@@ -477,6 +482,12 @@ struct App {
     pub aprovacoes: std::collections::VecDeque<(u64, String, Instant)>,
     /// A janela "Endereço das listas", quando aberta.
     pub dialogo_listas: Option<listas::Dialogo>,
+    /// "Minhas listas": a janela, os dados das listas, os canais delas e o que está baixando.
+    pub minhas_dialogo: Option<minhas_listas_tela::Dialogo>,
+    pub minhas_meta: Vec<minhas_listas::Lista>,
+    minhas: Vec<Canal>,
+    pub minhas_ocupadas: Vec<String>,
+    pub minhas_adicionando: bool,
     /// Quando o estado foi publicado para os celulares pela última vez.
     connect_publicado: Instant,
     /// O filme ou episódio que o celular mandou abrir, a caminho.
@@ -735,6 +746,11 @@ impl App {
             },
             aprovacoes: std::collections::VecDeque::new(),
             dialogo_listas: None,
+            minhas_dialogo: None,
+            minhas_meta: minhas_listas::listar(),
+            minhas: minhas_listas::canais_ativos(),
+            minhas_ocupadas: Vec::new(),
+            minhas_adicionando: false,
             connect_publicado: Instant::now(),
             remoto: controle::Remoto::default(),
         };
@@ -758,6 +774,14 @@ impl App {
                 "eventos" => app.abrir_secao(Aba::Eventos),
                 _ => {}
             }
+        }
+        // Minhas listas: aparecem já na abertura (sem rede) e as com mais de 12 h
+        // são baixadas de novo em segundo plano, sem avisar ninguém se falhar.
+        if !app.minhas.is_empty() {
+            app.reordenar();
+        }
+        for id in minhas_listas::vencidas() {
+            app.minhas_atualizar(&id, true);
         }
         app
     }
@@ -794,6 +818,12 @@ impl App {
         } else {
             lista.retain(|c| c.secao() != "Adulto");
         }
+        // Os canais do usuário: os restritos (seção "Adulto") só depois do desbloqueio.
+        for c in &self.minhas {
+            if self.liberado || c.secao() != "Adulto" {
+                lista.push(c.clone());
+            }
+        }
         catalogo::ordenar(&mut lista, &self.favoritos);
         self.canais = lista;
         if let Some(nome) = atual {
@@ -804,6 +834,104 @@ impl App {
             }
         }
         self.foco = self.foco.min(self.canais.len().saturating_sub(1));
+    }
+
+    // MARK: - Minhas listas
+
+    pub fn abrir_minhas_listas(&mut self) {
+        self.minhas_dialogo = Some(minhas_listas_tela::Dialogo::novo());
+    }
+
+    /// Relê do disco as listas e seus canais e remonta a lista da tela.
+    fn recarregar_minhas(&mut self) {
+        let tocando = self.tocando.as_ref().and_then(|t| self.canais.get(t.canal)).map(|c| c.nome.clone());
+        let era_minha = tocando.as_ref().is_some_and(|n| self.minhas.iter().any(|c| &c.nome == n));
+        self.minhas_meta = minhas_listas::listar();
+        self.minhas = minhas_listas::canais_ativos();
+        self.reordenar();
+        if era_minha && tocando.is_some_and(|n| !self.canais.iter().any(|c| c.nome == n)) {
+            self.parar_o_que_toca();
+        }
+    }
+
+    fn minhas_em_fundo(&mut self, id: Option<String>, silencioso: bool, trabalho: impl FnOnce() -> Result<(), minhas_listas::Erro> + Send + 'static) {
+        match &id {
+            Some(i) => self.minhas_ocupadas.push(i.clone()),
+            None => {
+                self.minhas_adicionando = true;
+                self.minhas_ocupadas.push(String::new());
+            }
+        }
+        let emissor = self.emissor.clone();
+        std::thread::spawn(move || {
+            let erro = trabalho().err();
+            let _ = emissor.send(Recado::MinhasListas { id, erro, silencioso });
+        });
+    }
+
+    /// Adiciona pelo link. O erro de link ruim volta na hora; o resto, pelo recado.
+    pub fn minhas_adicionar(&mut self, link: &str, nome: &str) -> Result<(), minhas_listas::Erro> {
+        if !link.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("http://")) && !link.get(..8).is_some_and(|p| p.eq_ignore_ascii_case("https://")) {
+            return Err(minhas_listas::Erro::Esquema);
+        }
+        if self.minhas_adicionando {
+            return Ok(());
+        }
+        if self.minhas_meta.len() >= minhas_listas::MAXIMO_DE_LISTAS {
+            return Err(minhas_listas::Erro::Limite);
+        }
+        let (link, nome) = (link.to_string(), nome.to_string());
+        self.minhas_em_fundo(None, false, move || minhas_listas::adicionar(&link, &nome));
+        Ok(())
+    }
+
+    pub fn minhas_atualizar(&mut self, id: &str, silencioso: bool) {
+        if self.minhas_ocupadas.iter().any(|i| i == id) {
+            return;
+        }
+        let alvo = id.to_string();
+        self.minhas_em_fundo(Some(id.to_string()), silencioso, move || minhas_listas::atualizar(&alvo));
+    }
+
+    pub fn minhas_alternar(&mut self, id: &str) {
+        let ativa = self.minhas_meta.iter().find(|l| l.id == id).map(|l| l.ativa).unwrap_or(true);
+        minhas_listas::definir_ativa(id, !ativa);
+        self.recarregar_minhas();
+    }
+
+    pub fn minhas_remover(&mut self, id: &str) {
+        minhas_listas::remover(id);
+        self.recarregar_minhas();
+    }
+
+    fn minhas_prontas(&mut self, id: Option<String>, erro: Option<minhas_listas::Erro>, silencioso: bool) {
+        match &id {
+            Some(i) => {
+                if let Some(p) = self.minhas_ocupadas.iter().position(|x| x == i) {
+                    self.minhas_ocupadas.remove(p);
+                }
+            }
+            None => {
+                self.minhas_adicionando = false;
+                if let Some(p) = self.minhas_ocupadas.iter().position(|x| x.is_empty()) {
+                    self.minhas_ocupadas.remove(p);
+                }
+            }
+        }
+        match erro {
+            None => {
+                if id.is_none() {
+                    if let Some(d) = self.minhas_dialogo.as_mut() {
+                        d.link.clear();
+                        d.nome.clear();
+                        d.erro = None;
+                    }
+                }
+                self.recarregar_minhas();
+            }
+            Some(e) if !silencioso => minhas_listas_tela::mostrar_erro(self, e),
+            Some(_) => {}
+        }
     }
 
     // MARK: - Endereço das listas
@@ -1738,6 +1866,7 @@ impl App {
                 Recado::Catalogo(lista) => self.trocar_lista(lista, false),
                 Recado::Restritos(lista) => self.trocar_lista(lista, true),
                 Recado::ListasTestadas(resultado) => self.listas_testadas(resultado),
+                Recado::MinhasListas { id, erro, silencioso } => self.minhas_prontas(id, erro, silencioso),
                 Recado::Eventos(lidos) => {
                     self.buscando_eventos = false;
                     self.eventos_carregados = true;
@@ -2101,7 +2230,9 @@ impl App {
                 self.abrir_secao(proxima);
             }
             egui::Key::Escape => {
-                if self.dialogo_listas.is_some() {
+                if self.minhas_dialogo.is_some() {
+                    self.minhas_dialogo = None;
+                } else if self.dialogo_listas.is_some() {
                     self.dialogo_listas = None;
                 } else if self.ficha_aberta.is_some() {
                     if self.ficha_ator.is_some() {
@@ -3598,8 +3729,16 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
                 app.busca_vod = std::env::var("SAIMO_FOTO_BUSCA").unwrap_or_else(|_| "amor".into());
             }
             "ajustes" => app.abrir_secao(Aba::Ajustes),
+            "minhas-listas" => {
+                app.abrir_secao(Aba::Ajustes);
+                app.abrir_minhas_listas();
+            }
             "favoritos-vazio" => app.abrir_secao(Aba::Favoritos),
             "aovivo" => app.lista_aberta = true,
+            "aovivo-busca" => {
+                app.lista_aberta = true;
+                app.busca = std::env::var("SAIMO_FOTO_BUSCA").unwrap_or_default();
+            }
             "aovivo-sem-lista" => app.lista_aberta = false,
             "serie" => {
                 let titulo = std::env::var("SAIMO_FOTO_TITULO").unwrap_or_else(|_| "Ted Lasso".into());

@@ -300,6 +300,17 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
                 acao = Some(9);
             }
             ui.add_space(18.0);
+            rotulo_de_secao(ui, "Minhas listas");
+            ui.add_space(4.0);
+            let resumo = match app.minhas_meta.len() {
+                0 => "Cole o link de uma lista .m3u. Ela fica só neste aparelho.".to_string(),
+                1 => format!("1 lista · {} canais", app.minhas_meta[0].canais),
+                n => format!("{n} listas · {} canais", app.minhas_meta.iter().map(|l| l.canais).sum::<usize>()),
+            };
+            if linha(ui, "Minhas listas", &resumo, Icone::Link).on_hover_text("Adicionar, atualizar ou remover listas .m3u").clicked() {
+                acao = Some(12);
+            }
+            ui.add_space(18.0);
             rotulo_de_secao(ui, "Legendas");
             ui.add_space(4.0);
             let idioma = legendas::idioma_guardado();
@@ -358,6 +369,7 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             legendas::guardar_idioma(ordem[(atual + 1) % ordem.len()]);
         }
         Some(9) => app.abrir_dialogo_listas(),
+        Some(12) => app.abrir_minhas_listas(),
         Some(4) => app.procurar_atualizacao_agora(),
         Some(5) => app.ajuda_aberta = true,
         Some(6) => app.alternar_tela_cheia(ui.ctx()),
@@ -367,4 +379,5 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         }
         _ => {}
     }
+    crate::minhas_listas_tela::dialogo(app, ui.ctx());
 }
