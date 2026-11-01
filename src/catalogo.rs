@@ -75,8 +75,13 @@ pub fn parse(texto: &str) -> Vec<Canal> {
             }
             "fonte" => {
                 if let Some(c) = canais.last_mut() {
+                    let url = if valor.starts_with("curtitv://") {
+                        format!("https://saimo-tv.pages.dev/api/curtitv?stream={}", &valor["curtitv://".len()..])
+                    } else {
+                        valor.to_string()
+                    };
                     c.fontes.push(Fonte {
-                        url: valor.to_string(),
+                        url,
                         qualidade: None,
                         nome: None,
                         referer: None,
