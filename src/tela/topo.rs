@@ -22,6 +22,7 @@ fn abas(app: &App) -> Vec<(Aba, &'static str, Icone)> {
         (Aba::OnDemand, "On Demand", Icone::Filmes),
         (Aba::Favoritos, "Favoritos", Icone::Estrela),
         (Aba::Radios, "Rádios", Icone::Radio),
+        (Aba::Apoie, "Apoie", Icone::Coracao),
     ];
     if app.liberado {
         abas.push((Aba::Extras, "+18", Icone::Mais));
@@ -44,6 +45,9 @@ fn aba(ui: &mut egui::Ui, rotulo: &str, icone: Icone, atual: bool) -> egui::Resp
     let pintor = ui.painter();
     if atual {
         pintor.rect_filled(rect, 20.0, branco(31));
+    } else if rotulo == "Apoie" {
+        // Apoie fica sempre em destaque, chamando atenção no menu.
+        pintor.rect_filled(rect, 20.0, Color32::from_rgb(15, 168, 154));
     }
     if t > 0.01 {
         pintor.rect_filled(rect.expand(t), 20.0, Color32::WHITE.gamma_multiply(t));

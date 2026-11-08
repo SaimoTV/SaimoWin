@@ -188,6 +188,8 @@ pub enum Aba {
     OnDemand,
     Radios,
     Buscar,
+    /// Apoie o Saimo TV: doação por QR code ou pelo navegador.
+    Apoie,
     Ajustes,
 }
 

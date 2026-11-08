@@ -117,6 +117,8 @@ fn link_oficial(link: &str) -> bool {
                 && !partes[4].is_empty()
         }
         "objects.githubusercontent.com" | "release-assets.githubusercontent.com" => caminho.len() > 1,
+        // A página de doação da tela Apoie, e só ela.
+        "deflow.exchange" => caminho == "/pt/qr/saimo-tv",
         _ => false,
     }
 }

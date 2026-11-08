@@ -14,6 +14,7 @@
 
 pub mod icones;
 mod aovivo;
+mod apoie;
 mod ficha;
 mod grade;
 mod janelas;
@@ -191,6 +192,8 @@ pub fn desenhar(app: &mut App, ui: &mut egui::Ui) {
                 ficha::serie(app, ui, &serie);
             } else if app.aba == Aba::Ajustes {
                 grade::ajustes(app, ui);
+            } else if app.aba == Aba::Apoie {
+                apoie::tela(ui);
             } else if paginas::em_fileiras(app) {
                 paginas::pagina(app, ui);
             } else {
