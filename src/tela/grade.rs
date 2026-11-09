@@ -6,7 +6,7 @@
 
 use super::paginas::{self, cartao_de_titulo, desenhar_cartao, medidas, Tipo, ESPACO, MARGEM};
 use super::{aceso, botao_redondo, forte, normal, pilula, rotulo_de_secao, Icone, ACENTO, FUNDO, SECUNDARIO, TEXTO};
-use crate::{legendas, Aba, App, Destino};
+use crate::{legendas, Aba, App, Destino, OrdemExtra};
 use eframe::egui::{self, Align2, Pos2, Rect, Sense};
 
 /// O nome da grade que está aberta.
@@ -75,13 +75,26 @@ pub fn grade_tela(app: &mut App, ui: &mut egui::Ui) {
                         }
                         ui.add_space(12.0);
                     } else if app.aba != Aba::Favoritos {
-                        if pilula(ui, Some(Icone::Historico), "Mais novos", !app.ordem_az, 34.0).clicked() {
+                        let extra = app.ordem_extra;
+                        if pilula(ui, Some(Icone::Historico), "Mais novos", !app.ordem_az && extra.is_none(), 34.0).clicked() {
                             app.ordem_az = false;
+                            app.ordem_extra = None;
                             app.foco_vod = 0;
                         }
-                        if pilula(ui, Some(Icone::Ordenar), "A a Z", app.ordem_az, 34.0).clicked() {
+                        if pilula(ui, Some(Icone::Ordenar), "A a Z", app.ordem_az && extra.is_none(), 34.0).clicked() {
                             app.ordem_az = true;
+                            app.ordem_extra = None;
                             app.foco_vod = 0;
+                        }
+                        if !app.info.vazio() {
+                            if pilula(ui, None, "Populares", extra == Some(OrdemExtra::Populares), 34.0).clicked() {
+                                app.ordem_extra = Some(OrdemExtra::Populares);
+                                app.foco_vod = 0;
+                            }
+                            if pilula(ui, None, "Mais bem avaliados", extra == Some(OrdemExtra::Melhores), 34.0).clicked() {
+                                app.ordem_extra = Some(OrdemExtra::Melhores);
+                                app.foco_vod = 0;
+                            }
                         }
                         ui.add_space(12.0);
                     }
@@ -109,6 +122,54 @@ pub fn grade_tela(app: &mut App, ui: &mut egui::Ui) {
         app.foco_vod = 0;
     }
     topo = filtros.bottom() + 10.0;
+
+    // Ano, idade e nota (detalhes.txt), numa segunda régua.
+    if !app.info.vazio() && !matches!(app.aba, Aba::Favoritos | Aba::Extras) {
+        let segunda = Rect::from_min_size(Pos2::new(conteudo.left(), topo), egui::vec2(conteudo.width(), 38.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(segunda), |ui| {
+            egui::ScrollArea::horizontal()
+                .id_salt("filtros-detalhes")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let mut mudou = false;
+                        if pilula(ui, None, "Todos os anos", app.filtro_anos.is_none(), 34.0).clicked() {
+                            app.filtro_anos = None;
+                            mudou = true;
+                        }
+                        for (rotulo, faixa) in faixas_de_ano() {
+                            let ativo = app.filtro_anos == Some(faixa);
+                            if pilula(ui, None, &rotulo, ativo, 34.0).clicked() {
+                                app.filtro_anos = if ativo { None } else { Some(faixa) };
+                                app.rotulo_anos = rotulo.clone();
+                                mudou = true;
+                            }
+                        }
+                        ui.add_space(12.0);
+                        for (rotulo, idade) in [("Livre", 0i8), ("Até 10", 10), ("Até 12", 12), ("Até 14", 14), ("Até 16", 16)] {
+                            let ativo = app.filtro_idade == Some(idade);
+                            if pilula(ui, None, rotulo, ativo, 34.0).on_hover_text("Classificação indicativa").clicked() {
+                                app.filtro_idade = if ativo { None } else { Some(idade) };
+                                mudou = true;
+                            }
+                        }
+                        ui.add_space(12.0);
+                        for nota in [6u8, 7, 8] {
+                            let ativo = app.filtro_nota == nota;
+                            if pilula(ui, Some(Icone::Estrela), &format!("{nota}+"), ativo, 34.0).on_hover_text("Nota mínima").clicked() {
+                                app.filtro_nota = if ativo { 0 } else { nota };
+                                mudou = true;
+                            }
+                        }
+                        if mudou {
+                            app.foco_vod = 0;
+                        }
+                    });
+                });
+        });
+        topo = segunda.bottom() + 10.0;
+    }
 
     let lista = Rect::from_min_max(Pos2::new(area.left(), topo), area.max);
     ui.scope_builder(egui::UiBuilder::new().max_rect(lista), |ui| grade(app, ui));
@@ -380,4 +441,22 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         _ => {}
     }
     crate::minhas_listas_tela::dialogo(app, ui.ctx());
+}
+
+/// Faixas de ano do filtro: os três últimos anos, as décadas e antes de 1990.
+fn faixas_de_ano() -> Vec<(String, (u32, u32))> {
+    use chrono::Datelike;
+    let atual = chrono::Local::now().year() as u32;
+    let mut out: Vec<(String, (u32, u32))> = (0..3).map(|k| ((atual - k).to_string(), (atual - k, atual - k))).collect();
+    let decada = atual / 10 * 10;
+    if atual >= decada + 3 {
+        out.push((format!("{decada}–{}", atual - 3), (decada, atual - 3)));
+    }
+    let mut d = decada - 10;
+    while d >= 1990 {
+        out.push((format!("Anos {d}"), (d, d + 9)));
+        d -= 10;
+    }
+    out.push(("Antes de 1990".to_string(), (1, 1989)));
+    out
 }

@@ -41,7 +41,10 @@ O mesmo desenho da TV Box, refeito para mouse e teclado (`src/tela/`):
 - **On Demand**: as quatro categorias, "Continue assistindo", os destaques, os
   gêneros de filmes e o "Explorar" com cada acervo de A a Z. Cada categoria
   abre a página dela (lançamentos, um gênero por fileira com "Ver todos") e a
-  grade de A a Z com busca, ordem (mais novos ou A a Z) e gêneros em pílulas.
+  grade de A a Z com busca, ordem (mais novos, A a Z, mais populares, mais bem
+  avaliados), gêneros em pílulas e uma segunda régua com ano, idade
+  (classificação indicativa) e nota mínima, do `detalhes.txt` do catálogo
+  (`src/info_titulos.rs`).
 - **Ao vivo**: o vídeo na janela inteira; a lista de canais por cima com as
   seções em pílulas, número, logo, programa e andamento; embaixo, o canal com
   o programa, o que vem a seguir e os botões redondos (canais, lista, guia,

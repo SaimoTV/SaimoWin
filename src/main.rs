@@ -16,6 +16,7 @@ mod fontes_desativadas;
 mod fonte_preferida;
 mod destaques;
 mod generos;
+mod info_titulos;
 mod ficha;
 mod catalogo;
 mod mpv;
@@ -143,6 +144,7 @@ enum Recado {
     Colecao(Aba, Vec<(vod::Serie, Vec<vod::Episodio>)>),
     Destaques(Vec<destaques::Fila>),
     Generos(generos::Generos),
+    Info(info_titulos::InfoDosTitulos),
     Episodios(String, Vec<vod::Episodio>),
     Acervo(Vec<vod::Achado>),
     /// A lista de servidores desligados mudou: a lista de canais muda junto.
@@ -168,6 +170,13 @@ enum Recado {
     Temporada,
     /// A procura pedida nos Ajustes não achou versão nova.
     SemAtualizacao,
+}
+
+/// Ordem da grade pelos detalhes do TMDB.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OrdemExtra {
+    Populares,
+    Melhores,
 }
 
 /// O que ocupa a área principal: o vídeo, ou uma das seções do acervo —
@@ -461,6 +470,14 @@ struct App {
     pub explorar: bool,
     /// A grade em ordem alfabética, em vez dos mais novos primeiro.
     pub ordem_az: bool,
+    /// Ordem por popularidade ou nota (detalhes.txt), no lugar de ano e A a Z.
+    pub ordem_extra: Option<OrdemExtra>,
+    /// Filtros da grade: faixa de anos, idade máxima (0 = Livre) e nota mínima.
+    pub filtro_anos: Option<(u32, u32)>,
+    pub rotulo_anos: String,
+    pub filtro_idade: Option<i8>,
+    pub filtro_nota: u8,
+    pub info: info_titulos::InfoDosTitulos,
     /// O que o destaque do topo das páginas mostra: o cartão em foco.
     pub heroi: Option<tela::Heroi>,
     /// Fichas já pedidas para o destaque, para não pedir duas vezes.
@@ -562,6 +579,11 @@ fn buscar_filmes(emissor: &std::sync::mpsc::Sender<Recado>) {
         let lidos = generos::baixar();
         if !lidos.vazio() {
             let _ = emissor.send(Recado::Generos(lidos));
+        }
+        // Ano, nota e classificação: os filtros da grade.
+        let info = info_titulos::baixar();
+        if !info.vazio() {
+            let _ = emissor.send(Recado::Info(info));
         }
     });
 }
@@ -732,6 +754,12 @@ impl App {
             abertura: abertura::Abertura::nova(&caminho_do_mpv()),
             explorar: false,
             ordem_az: false,
+            ordem_extra: None,
+            filtro_anos: None,
+            rotulo_anos: String::new(),
+            filtro_idade: None,
+            filtro_nota: 0,
+            info: info_titulos::InfoDosTitulos::default(),
             heroi: None,
             fichas_pedidas: std::collections::HashSet::new(),
             temporadas_pedidas: std::collections::HashSet::new(),
@@ -2011,6 +2039,9 @@ impl App {
                         self.abrir_o_que_esperava();
                     }
                 }
+                Recado::Info(info) => {
+                    self.info = info;
+                }
                 Recado::Generos(lidos) => {
                     self.generos = lidos;
                 }
@@ -2442,6 +2473,11 @@ impl App {
         self.letra.hash(&mut h);
         self.liberado.hash(&mut h);
         self.ordem_az.hash(&mut h);
+        self.ordem_extra.hash(&mut h);
+        self.filtro_anos.hash(&mut h);
+        self.filtro_idade.hash(&mut h);
+        self.filtro_nota.hash(&mut h);
+        self.info.vazio().hash(&mut h);
         self.favoritos_vod.hash(&mut h);
         (self.acervo.len(), self.filmes.len(), self.series.len()).hash(&mut h);
         h.finish()
@@ -2489,6 +2525,7 @@ impl App {
             .filter(|a| self.aba != Aba::Favoritos || self.favoritos_vod.contains(&a.titulo))
             .filter(|a| busca.is_empty() || catalogo::chave_de_ordem(&a.titulo).contains(&busca))
             .filter(|a| self.generos.tem(&a.titulo, a.serie, &self.genero))
+            .filter(|a| self.passa_filtros(&a.titulo, a.serie, &a.ano))
             .map(|a| ItemNaTela {
                 titulo: a.titulo.clone(),
                 detalhe: a.ano.clone(),
@@ -2496,6 +2533,17 @@ impl App {
                 letra: a.letra.clone(),
             })
             .collect();
+        if let Some(o) = self.ordem_extra {
+            itens.sort_by_cached_key(|i| {
+                let d = self.info.de(&i.titulo, i.serie).unwrap_or_default();
+                let valor = match o {
+                    OrdemExtra::Populares => d.popularidade,
+                    OrdemExtra::Melhores => (d.nota * 10.0) as u32,
+                };
+                (std::cmp::Reverse(valor), catalogo::chave_de_ordem(&i.titulo))
+            });
+            return itens;
+        }
         // Sem busca, o mais novo primeiro: é o que a pessoa procura ao abrir
         // Filmes, e não "#Alive" só porque "#" vem antes de "A".
         if busca.is_empty() && self.ordem_az {
@@ -2519,6 +2567,31 @@ impl App {
             });
         }
         itens
+    }
+
+    /// O título passa nos filtros de ano, idade e nota da grade?
+    fn passa_filtros(&self, titulo: &str, serie: bool, ano_do_indice: &str) -> bool {
+        if self.filtro_anos.is_none() && self.filtro_idade.is_none() && self.filtro_nota == 0 {
+            return true;
+        }
+        let d = self.info.de(titulo, serie);
+        if let Some((de, ate)) = self.filtro_anos {
+            let ano = d.map(|d| d.ano).filter(|a| *a > 0)
+                .or_else(|| ano_do_indice.get(..4).and_then(|a| a.parse().ok()))
+                .unwrap_or(0);
+            if ano < de || ano > ate {
+                return false;
+            }
+        }
+        if let Some(max) = self.filtro_idade {
+            if !d.is_some_and(|d| d.idade >= 0 && d.idade <= max) {
+                return false;
+            }
+        }
+        if self.filtro_nota > 0 && !d.is_some_and(|d| d.nota >= self.filtro_nota as f32) {
+            return false;
+        }
+        true
     }
 
     /// Abre um título da grade: a letra dele pode ainda não ter chegado, e aí
