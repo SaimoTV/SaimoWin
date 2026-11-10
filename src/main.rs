@@ -32,6 +32,7 @@ mod rede;
 mod listas;
 mod minhas_listas;
 mod minhas_listas_tela;
+mod xtream;
 mod seletor;
 mod sincronia;
 mod telemetria;
@@ -622,7 +623,6 @@ impl App {
 
         // Caches de lista de versões anteriores saem uma vez só.
         listas::migrar();
-        listas::guardar_padroes_de_quem_nunca_escolheu();
         let canais = catalogo::em_cache("catalogo.txt");
         let restritos = catalogo::em_cache("restritos.txt");
         let favoritos = ler_favoritos();

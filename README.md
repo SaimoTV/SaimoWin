@@ -13,13 +13,24 @@ programa avisa quando há versão nova, lendo o `versao.json` anexado à última
 (`src/atualizacao.rs`, independente das listas)
 (só aceita links de release do GitHub).
 
-Os dois endereços de lista vêm de fábrica e ativos, em duas constantes de
-`src/listas.rs` (`https://canais-saimo.pages.dev/` e
-`https://filmes-saimo.pages.dev/`), e o app nunca pergunta nada ao abrir. Em
-Ajustes > Listas dá para trocá-los (o link novo é testado antes), "Restaurar
-padrão" volta aos de fábrica e salvar um campo em branco desliga aquela lista
-(arquivo `link-canais.txt`/`link-filmes.txt` com a marca `desativado`; desde a 2.8.0 o endereço de fábrica de quem nunca escolheu também fica gravado nesses arquivos, na abertura). Lista desligada: estado vazio e nenhum pedido de
-rede. O endereço de canais serve `catalogo.txt`, `restritos.txt`, `radios.txt` e
+O app não traz endereço de lista nenhum. Na primeira abertura as telas mostram
+"Bem-vindo ao Saimo!" com **Adicionar lista** e **Endereços do Saimo**:
+
+- **Adicionar lista** (`src/minhas_listas_tela.rs`): um link **M3U** (só ele já
+  basta) ou **servidor + usuário + senha** (Xtream; usuário e senha são opcionais,
+  só para listas que pedem login). Cole direto um link
+  `…/get.php?username=…&password=…` e o app o reconhece como conta Xtream
+  (`src/xtream.rs`): lê os canais pela API do servidor (`player_api.php`, com as
+  categorias) ou, se ela não responde, pelo M3U. Cada canal ganha as fontes
+  `.m3u8` e `.ts`. A conta é guardada como esse link, então viaja pelo Saimo
+  Connect como qualquer outra lista.
+- **Endereços do Saimo** (Ajustes > Listas, `src/listas.rs`): os dois endereços
+  no formato do Saimo (o link novo é testado antes); salvar um campo em branco
+  desliga aquela lista (arquivo `link-canais.txt`/`link-filmes.txt` com a marca
+  `desativado`). Quem já usava um endereço o mantém. Na sincronia pelo Saimo
+  Connect, quem nunca escolheu (`listas-em.txt` 0) adota o que o outro enviou.
+
+Lista desligada: estado vazio e nenhum pedido de rede. No formato do Saimo, O endereço de canais serve `catalogo.txt`, `restritos.txt`, `radios.txt` e
 `guia.txt` (tabelas do guia por canal); o de filmes serve a pasta `vod/`.
 
 ## Visual

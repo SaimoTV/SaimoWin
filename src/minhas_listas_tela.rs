@@ -11,6 +11,8 @@ use std::time::Duration;
 #[derive(Clone, Debug, Default)]
 pub struct Dialogo {
     pub link: String,
+    pub usuario: String,
+    pub senha: String,
     pub nome: String,
     pub erro: Option<&'static str>,
     /// A lista que espera o "Sim, remover".
@@ -34,8 +36,13 @@ enum Acao {
 }
 
 fn campo(ui: &mut egui::Ui, texto: &mut String, id: &str, dica: &str) -> egui::Response {
+    campo_com(ui, texto, id, dica, false)
+}
+
+fn campo_com(ui: &mut egui::Ui, texto: &mut String, id: &str, dica: &str, senha: bool) -> egui::Response {
     ui.add(
         egui::TextEdit::singleline(texto)
+            .password(senha)
             .id(egui::Id::new(id))
             .font(normal(16.0))
             .text_color(TEXTO)
@@ -70,7 +77,7 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                     ui.label(egui::RichText::new("Minhas listas").font(forte(26.0)).color(TEXTO));
                     ui.add_space(8.0);
                     ui.label(
-                        egui::RichText::new("Cole o link de uma lista .m3u ou escolha o arquivo. Ela fica só neste aparelho.")
+                        egui::RichText::new("Cole o link da sua lista M3U (só isso já basta) ou escolha o arquivo. Usuário e senha são opcionais, para listas que pedem login. Ela fica só neste aparelho.")
                             .font(normal(15.0))
                             .color(SECUNDARIO),
                     );
@@ -114,7 +121,7 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                         });
                         ui.add_space(10.0);
                     }
-                    ui.label(egui::RichText::new("Link da lista (.m3u)").font(forte(14.0)).color(SECUNDARIO));
+                    ui.label(egui::RichText::new("Link da lista (M3U) ou servidor").font(forte(14.0)).color(SECUNDARIO));
                     ui.add_space(4.0);
                     let r = campo(ui, &mut d.link, "minhas-link", "http://… ou https://…");
                     if d.focar {
@@ -125,6 +132,16 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                     if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         acao = Some(Acao::Adicionar);
                     }
+                    ui.add_space(10.0);
+                    ui.label(egui::RichText::new("Usuário (opcional: deixe em branco se a lista é só um link)").font(forte(14.0)).color(SECUNDARIO));
+                    ui.add_space(4.0);
+                    let r = campo(ui, &mut d.usuario, "minhas-usuario", "Só para listas com usuário e senha");
+                    mudou |= r.changed();
+                    ui.add_space(10.0);
+                    ui.label(egui::RichText::new("Senha (opcional)").font(forte(14.0)).color(SECUNDARIO));
+                    ui.add_space(4.0);
+                    let r = campo_com(ui, &mut d.senha, "minhas-senha", "Só com usuário", true);
+                    mudou |= r.changed();
                     ui.add_space(10.0);
                     ui.label(egui::RichText::new("Nome (opcional)").font(forte(14.0)).color(SECUNDARIO));
                     ui.add_space(4.0);
@@ -169,13 +186,17 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
             return;
         }
         Some(Acao::Adicionar) => {
-            let (link, nome) = (d.link.trim().to_string(), d.nome.clone());
-            if link.is_empty() {
+            let nome = d.nome.clone();
+            if d.link.trim().is_empty() {
                 d.erro = Some("Cole o link da lista");
             } else {
-                match app.minhas_adicionar(&link, &nome) {
-                    Ok(()) => d.erro = None,
-                    Err(e) => d.erro = Some(e.mensagem()),
+                // Com usuário e senha, o campo de cima é o servidor; sem eles, é o link da lista.
+                match crate::xtream::link_do_formulario(&d.link, &d.usuario, &d.senha) {
+                    Err(m) => d.erro = Some(m),
+                    Ok(link) => match app.minhas_adicionar(&link, &nome) {
+                        Ok(()) => d.erro = None,
+                        Err(e) => d.erro = Some(e.mensagem()),
+                    },
                 }
             }
         }

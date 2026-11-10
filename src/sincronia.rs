@@ -175,15 +175,12 @@ impl App {
                 c = canais;
                 f = filmes;
             } else if local == 0 {
-                // Aqui nunca se escolheu nada: fica o que o outro escolheu, sem
-                // trocar um endereço próprio por um padrão.
-                let fraco = |v: &Option<String>, padrao: &str| v.as_deref().map_or(true, |x| x == padrao);
-                let pc = listas::Lista::Canais.padrao();
-                let pf = listas::Lista::Filmes.padrao();
-                if fraco(&c, pc) && !fraco(&canais, pc) {
+                // Aqui nunca se escolheu nada: fica o que o outro escolheu (e um
+                // endereço que o outro não tem não apaga o daqui).
+                if canais.is_some() {
                     c = canais;
                 }
-                if fraco(&f, pf) && !fraco(&filmes, pf) {
+                if filmes.is_some() {
                     f = filmes;
                 }
             }

@@ -1,18 +1,14 @@
 //! Os dois endereços de onde o app lê as listas: canais, e filmes e séries.
 //!
-//! Os dois endereços já vêm de fábrica (as duas constantes abaixo, o único
-//! lugar do app com endereço de lista) e ativos. Quem usa pode trocá-los em
-//! Ajustes > Listas; guardar vazio desliga a lista (marca "desativado" no
-//! arquivo, diferente de "nunca mexeu", que é arquivo ausente). Desligada, não
-//! há pedido de rede para a lista.
+//! O app não traz endereço nenhum: quem usa informa em Ajustes > Listas (ou
+//! adiciona uma lista M3U / com usuário e senha em "Minhas listas"). Sem
+//! endereço, ou com a marca "desativado" no arquivo, a lista fica desligada e
+//! não há pedido de rede. Quem já usava um endereço o tem gravado e continua
+//! com ele.
 
 use std::path::PathBuf;
 use std::sync::RwLock;
 
-/// Endereço de fábrica da lista de canais.
-pub const PADRAO_CANAIS: &str = "https://canais-saimo.pages.dev/";
-/// Endereço de fábrica da lista de filmes e séries.
-pub const PADRAO_FILMES: &str = "https://filmes-saimo.pages.dev/";
 const DESATIVADO: &str = "desativado";
 
 const ARQUIVO_CANAIS: &str = "link-canais.txt";
@@ -30,13 +26,6 @@ impl Lista {
         match self {
             Lista::Canais => ARQUIVO_CANAIS,
             Lista::Filmes => ARQUIVO_FILMES,
-        }
-    }
-
-    pub fn padrao(self) -> &'static str {
-        match self {
-            Lista::Canais => PADRAO_CANAIS,
-            Lista::Filmes => PADRAO_FILMES,
         }
     }
 
@@ -138,17 +127,18 @@ fn ler_do_disco(lista: Lista) -> Option<String> {
     interpretar(texto.as_deref(), lista)
 }
 
-/// Sem arquivo (ou arquivo ilegível): o endereço de fábrica. Marca
-/// "desativado": lista desligada. Senão, o endereço guardado.
+/// Sem arquivo, arquivo ilegível ou marca "desativado": lista desligada. Senão,
+/// o endereço guardado.
 fn interpretar(texto: Option<&str>, lista: Lista) -> Option<String> {
-    let Some(texto) = texto else { return Some(lista.padrao().to_string()) };
+    let _ = lista;
+    let texto = texto?;
     if texto.trim() == DESATIVADO {
         return None;
     }
     // Normaliza de novo: um arquivo editado à mão não pode quebrar a leitura.
     match normalizar(texto) {
         Ok(Some(base)) => Some(base),
-        _ => Some(lista.padrao().to_string()),
+        _ => None,
     }
 }
 
@@ -182,7 +172,7 @@ pub fn filmes() -> Option<String> {
 }
 
 /// Guarda o endereço (já normalizado). `None` desliga a lista (marca
-/// "desativado"). O endereço de fábrica também é gravado (desde a 2.8.0).
+/// "desativado").
 pub fn guardar(lista: Lista, base: Option<&str>) {
     carregar_se_preciso();
     let caminho = pasta().join(lista.arquivo());
@@ -235,23 +225,6 @@ pub fn apagar_dados(lista: Lista) {
     }
 }
 
-/// 2.8.0: quem nunca escolheu fica com o endereço de fábrica GRAVADO, e não só
-/// implícito no código; o app segue com a mesma lista mesmo quando o padrão
-/// sair de uma versão futura. Quem desligou (marca "desativado") ou trocou não
-/// é mexido, e a data da escolha (`listas-em.txt`) não muda.
-pub fn guardar_padroes_de_quem_nunca_escolheu() {
-    guardar_padroes_em(&pasta());
-}
-
-fn guardar_padroes_em(dir: &std::path::Path) {
-    for lista in [Lista::Canais, Lista::Filmes] {
-        let caminho = dir.join(lista.arquivo());
-        if !caminho.exists() {
-            let _ = std::fs::write(&caminho, lista.padrao());
-        }
-    }
-}
-
 /// Na primeira execução desta versão apaga os caches de lista das anteriores.
 pub fn migrar() {
     let marca = pasta().join(MARCA_MIGRADO);
@@ -275,33 +248,12 @@ mod testes {
     }
 
     #[test]
-    fn guarda_o_padrao_so_de_quem_nunca_escolheu() {
-        let dir = std::env::temp_dir().join(format!("saimo-listas-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        // Canais desligada, filmes sem arquivo.
-        std::fs::write(dir.join(ARQUIVO_CANAIS), DESATIVADO).unwrap();
-        guardar_padroes_em(&dir);
-        assert_eq!(std::fs::read_to_string(dir.join(ARQUIVO_CANAIS)).unwrap(), DESATIVADO);
-        assert_eq!(std::fs::read_to_string(dir.join(ARQUIVO_FILMES)).unwrap(), PADRAO_FILMES);
-        // Trocada continua trocada.
-        std::fs::write(dir.join(ARQUIVO_FILMES), "https://outra.dev/").unwrap();
-        guardar_padroes_em(&dir);
-        assert_eq!(std::fs::read_to_string(dir.join(ARQUIVO_FILMES)).unwrap(), "https://outra.dev/");
-        // E o que foi gravado lê de volta como o padrão.
-        assert_eq!(interpretar(Some(PADRAO_CANAIS), Lista::Canais), ok(PADRAO_CANAIS));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn padrao_sem_arquivo_desativado_com_marca() {
-        assert_eq!(interpretar(None, Lista::Canais), ok(PADRAO_CANAIS));
-        assert_eq!(interpretar(None, Lista::Filmes), ok(PADRAO_FILMES));
+    fn sem_arquivo_ou_desativado_nao_ha_endereco() {
+        assert_eq!(interpretar(None, Lista::Canais), None);
+        assert_eq!(interpretar(None, Lista::Filmes), None);
         assert_eq!(interpretar(Some("desativado"), Lista::Canais), None);
         assert_eq!(interpretar(Some("http://localhost:8101"), Lista::Canais), ok("http://localhost:8101/"));
-        assert_eq!(interpretar(Some("lixo ftp://"), Lista::Filmes), ok(PADRAO_FILMES));
-        assert_eq!(n(PADRAO_CANAIS), Ok(ok(PADRAO_CANAIS)));
-        assert_eq!(n(PADRAO_FILMES), Ok(ok(PADRAO_FILMES)));
+        assert_eq!(interpretar(Some("lixo ftp://"), Lista::Filmes), None);
     }
 
     #[test]
@@ -312,7 +264,7 @@ mod testes {
 
     #[test]
     fn ganha_https_e_barra() {
-        assert_eq!(n("saimo-canais.pages.dev"), Ok(ok("https://saimo-canais.pages.dev/")));
+        assert_eq!(n("lista-exemplo.dev"), Ok(ok("https://lista-exemplo.dev/")));
         assert_eq!(n("  http://localhost:8101  "), Ok(ok("http://localhost:8101/")));
         assert_eq!(n("localhost:8101/listas"), Ok(ok("https://localhost:8101/listas/")));
     }

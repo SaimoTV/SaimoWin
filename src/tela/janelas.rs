@@ -294,13 +294,6 @@ pub fn listas(app: &mut App, ctx: &egui::Context) {
                 });
                 if !testando {
                     ui.add_space(10.0);
-                    if botao(ui, Some(super::Icone::Trocar), "Restaurar padrão", false).clicked() {
-                        d.canais = listas::PADRAO_CANAIS.to_string();
-                        d.filmes = listas::PADRAO_FILMES.to_string();
-                        d.fase = listas::Fase::Editando;
-                        d.falhas.clear();
-                        d.invalido = false;
-                    }
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new("Deixar um campo em branco e salvar desliga e apaga aquela lista deste computador.").font(normal(13.0)).color(super::APAGADO));
                 }

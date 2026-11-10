@@ -107,11 +107,18 @@ fn lista(app: &mut App, ui_pai: &mut egui::Ui) {
 
             if app.canais.is_empty() && crate::listas::canais().is_none() {
                 ui.add_space(24.0);
-                ui.label(egui::RichText::new("Nenhum canal. Informe o endereço da lista de canais em Ajustes > Listas.").font(normal(15.0)).color(SECUNDARIO));
+                let aviso = if super::sem_nenhuma_lista(app) { super::BOAS_VINDAS } else { "Nenhum canal. Informe o endereço da lista de canais em Ajustes > Listas." };
+                ui.label(egui::RichText::new(aviso).font(normal(15.0)).color(SECUNDARIO));
                 ui.add_space(12.0);
-                if botao(ui, Some(Icone::Ajustes), "Abrir Ajustes", true).clicked() {
-                    app.abrir_secao(Aba::Ajustes);
-                }
+                ui.horizontal(|ui| {
+                    if botao(ui, Some(Icone::Certo), "Adicionar lista", true).clicked() {
+                        app.minhas_dialogo = Some(crate::minhas_listas_tela::Dialogo::novo());
+                    }
+                    ui.add_space(8.0);
+                    if botao(ui, Some(Icone::Ajustes), "Endereços do Saimo", false).clicked() {
+                        app.abrir_secao(Aba::Ajustes);
+                    }
+                });
             }
 
             // As seções em pílulas: um clique leva a lista até ela. A da

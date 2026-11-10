@@ -42,6 +42,10 @@ pub struct CanalM3u {
 }
 
 /// minúsculas, sem acentos, só `[a-z0-9]`.
+pub fn chave_do_nome(nome: &str) -> String {
+    chave(nome)
+}
+
 fn chave(nome: &str) -> String {
     nome.chars().flat_map(char::to_lowercase).map(sem_acento).filter(|c| c.is_ascii_alphanumeric()).collect()
 }
@@ -386,6 +390,8 @@ pub enum Erro {
     SemCanais,
     Limite,
     Arquivo,
+    /// Conta com usuário e senha (Xtream): o motivo, já em português.
+    Conta(&'static str),
 }
 
 impl Erro {
@@ -397,6 +403,7 @@ impl Erro {
             Erro::SemCanais => "Essa lista não tem canais",
             Erro::Limite => "Você já tem 10 listas. Remova uma para adicionar outra",
             Erro::Arquivo => "Não consegui ler esse arquivo",
+            Erro::Conta(m) => m,
         }
     }
 }
@@ -405,6 +412,15 @@ impl Erro {
 fn parece_lista(texto: &str) -> bool {
     let t = texto.trim_start_matches('\u{feff}').trim_start();
     t.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("#EXTM3U")) || t.contains("#EXTINF")
+}
+
+/// Os canais de um link: conta com usuário e senha (Xtream) pela API do
+/// servidor; qualquer outro link é uma lista M3U comum.
+fn obter_canais(link: &str) -> Result<Vec<CanalM3u>, Erro> {
+    if let Some(conta) = crate::xtream::de_link(link) {
+        return crate::xtream::canais(&conta, &|u| baixar_texto(u), &ler);
+    }
+    interpretar(&baixar_texto(link)?)
 }
 
 fn baixar_texto(link: &str) -> Result<String, Erro> {
@@ -526,7 +542,7 @@ pub fn adicionar(link: &str, nome: &str) -> Result<(), Erro> {
     if listar().len() >= MAXIMO_DE_LISTAS {
         return Err(Erro::Limite);
     }
-    let canais = interpretar(&baixar_texto(link)?)?;
+    let canais = obter_canais(link)?;
     guardar_nova(&canais, Some(link.to_string()), nome)
 }
 
@@ -560,7 +576,7 @@ fn guardar_nova(canais: &[CanalM3u], link: Option<String>, nome: &str) -> Result
 /// Baixa de novo. Se falhar, a versão guardada continua.
 pub fn atualizar(id: &str) -> Result<(), Erro> {
     let link = listar().into_iter().find(|l| l.id == id).and_then(|l| l.link).ok_or(Erro::Download)?;
-    let canais = interpretar(&baixar_texto(&link)?)?;
+    let canais = obter_canais(&link)?;
     substituir_canais(id, &canais);
     Ok(())
 }
