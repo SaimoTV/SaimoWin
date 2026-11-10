@@ -29,10 +29,6 @@ impl Resposta {
     fn texto(codigo: u16, corpo: &str) -> Self {
         Resposta { codigo, tipo: "text/plain", corpo: corpo.as_bytes().to_vec(), destino: None }
     }
-
-    fn para(url: &str) -> Self {
-        Resposta { codigo: 302, tipo: "text/plain", corpo: Vec::new(), destino: Some(url.to_string()) }
-    }
 }
 
 // MARK: - Endereços
@@ -207,17 +203,41 @@ pub fn responder(alvo: &str, host: &str, local: bool, agora: i64) -> Resposta {
     let agente = valor("ua");
     let tela = if local { valor("tv").and_then(|t| t.parse::<u64>().ok()) } else { None };
 
+    // Lista que não veio é fonte fora do ar: responder o erro na hora faz o
+    // app passar à fonte seguinte em segundos. Mandar o mpv tentar sozinho
+    // (como era) custava até 20 s por fonte morta — o "canal que não pega"
+    // no Windows enquanto os outros apps já tinham trocado de fonte.
     let Some((final_, corpo)) = baixar(&url, referer.as_deref(), agente.as_deref()) else {
-        return if tela.is_some() { Resposta::para(&url) } else { Resposta::texto(502, "origem") };
+        return Resposta::texto(502, "origem");
     };
-    if !corpo.trim_start().starts_with("#EXTM3U") {
-        return if tela.is_some() { Resposta::para(&url) } else { Resposta::texto(502, "origem") };
+    if !corpo.trim_start().starts_with("#EXTM3U") || aviso_enlatado(&corpo) {
+        return Resposta::texto(502, "origem");
     }
     let (texto, sondas) = reescrever(&url, &final_, &corpo, host, referer.as_deref(), agente.as_deref(), tela, agora);
     for s in sondas {
         sondar(s);
     }
     Resposta { codigo: 200, tipo: "application/vnd.apple.mpegurl", corpo: texto.into_bytes(), destino: None }
+}
+
+/// Alguns CDNs respondem 200 com uma lista válida, mas com um aviso de
+/// manutenção no lugar do canal: lista fechada, de poucos segundos. Tocar isso
+/// e acabar deixava o canal reabrindo sem parar e escondia a fonte boa (mesma
+/// regra do Mac).
+fn aviso_enlatado(lista: &str) -> bool {
+    if !lista.contains("#EXT-X-ENDLIST") {
+        return false;
+    }
+    let baixo = lista.to_lowercase();
+    if ["manutencao", "manutenção", "maintenance", "offline", "no-signal", "sem-sinal"].iter().any(|m| baixo.contains(m)) {
+        return true;
+    }
+    let total: f64 = lista
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("#EXTINF:"))
+        .filter_map(|v| v.split(',').next()?.trim().parse::<f64>().ok())
+        .sum();
+    total < 60.0
 }
 
 /// A lista reescrita: mestra com as variantes pela régua, a de pedaços
@@ -415,6 +435,14 @@ mod testes {
     }
 
     #[test]
+    fn reconhece_o_aviso_de_manutencao() {
+        assert!(aviso_enlatado("#EXTM3U\n#EXTINF:10,\nlula/seg1.ts\n#EXT-X-ENDLIST\n"));
+        assert!(!aviso_enlatado("#EXTM3U\n#EXTINF:10,\nseg1.ts\n"));
+        let filme = "#EXTM3U\n".to_string() + &"#EXTINF:10,\nseg.ts\n".repeat(30) + "#EXT-X-ENDLIST\n";
+        assert!(!aviso_enlatado(&filme));
+    }
+
+    #[test]
     fn codifica_e_decodifica() {
         let url = "https://a.com/x y.m3u8?a=1&b=ç";
         assert_eq!(decodificar(&codificar(url)), url);
@@ -478,5 +506,39 @@ mod testes {
         disfarcado.extend(pacote(0x100, 0xE0, 4242));
         disfarcado.extend(pacote(0x100, 0xE0, 4243));
         assert_eq!(primeiro_pts(&disfarcado), Some(4242));
+    }
+}
+
+#[cfg(test)]
+mod sonda_do_catalogo {
+    /// Baixa a playlist da 1ª fonte de cada canal do catálogo com o mesmo
+    /// agente da régua. `SAIMO_CATALOGO=... cargo test -- --ignored sonda`
+    #[test]
+    #[ignore]
+    fn sonda() {
+        let caminho = std::env::var("SAIMO_CATALOGO").expect("SAIMO_CATALOGO");
+        let canais = crate::catalogo::parse(&std::fs::read_to_string(caminho).unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fila = std::sync::Arc::new(std::sync::Mutex::new(canais.into_iter().collect::<Vec<_>>()));
+        let mut filhos = Vec::new();
+        for _ in 0..16 {
+            let (fila, tx) = (fila.clone(), tx.clone());
+            filhos.push(std::thread::spawn(move || loop {
+                let Some(c) = fila.lock().unwrap().pop() else { break };
+                for (i, f) in c.fontes.iter().enumerate() {
+                    let ok = super::baixar(&f.url, f.referer.as_deref(), f.agente.as_deref())
+                        .map(|(_, t)| t.trim_start().starts_with("#EXTM3U"))
+                        .unwrap_or(false);
+                    let _ = tx.send(format!("{}\t{}\t{}\t{}", if ok { "OK" } else { "FALHA" }, c.nome, i + 1, f.url));
+                }
+            }));
+        }
+        drop(tx);
+        for l in rx {
+            println!("{l}");
+        }
+        for f in filhos {
+            let _ = f.join();
+        }
     }
 }

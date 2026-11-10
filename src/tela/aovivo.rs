@@ -410,7 +410,7 @@ fn palco(app: &mut App, ui_pai: &mut egui::Ui) {
         let janela = ui.ctx().content_rect();
         let demo = std::env::var("SAIMO_DEMO").is_ok();
         if demo && app.tocando.is_none() && app.tocando_vod.is_none() && !app.canais.is_empty() {
-            app.tocando = Some(crate::Tocando { canal: 1, fonte: 0, desde: std::time::Instant::now(), confirmado: true });
+            app.tocando = Some(crate::Tocando { canal: 1, fonte: 0, desde: std::time::Instant::now(), confirmado: true, falhas: 0, volta: 0 });
         }
         if app.mpv.is_none() && !demo {
             sem_mpv(app, ui, area);

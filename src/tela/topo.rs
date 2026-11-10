@@ -62,11 +62,30 @@ fn aba(ui: &mut egui::Ui, rotulo: &str, icone: Icone, atual: bool) -> egui::Resp
     resposta.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// O ícone do app: o "S" do Saimo num ladrilho ciano arredondado.
+/// O ícone do app, o mesmo logo do Mac, da TV Box e do celular. Sem a
+/// imagem (não deveria acontecer), o "S" num ladrilho ciano.
 fn marca(pintor: &egui::Painter, centro: Pos2) {
+    let rect = Rect::from_center_size(centro, Vec2::splat(40.0));
+    if let Some(t) = logo(pintor.ctx()) {
+        pintor.image(t.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), egui::Color32::WHITE);
+        return;
+    }
     let rect = Rect::from_center_size(centro, Vec2::splat(32.0));
     pintor.rect_filled(rect, 9.0, ACENTO);
     pintor.text(rect.center(), Align2::CENTER_CENTER, "S", forte(20.0), FUNDO);
+}
+
+fn logo(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    let id = egui::Id::new("logo-do-app");
+    if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return Some(t);
+    }
+    let imagem = image::load_from_memory(include_bytes!("../../assets/logo.png")).ok()?.to_rgba8();
+    let (w, h) = imagem.dimensions();
+    let cor = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], imagem.as_raw());
+    let textura = ctx.load_texture("logo-do-app", cor, egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, textura.clone()));
+    Some(textura)
 }
 
 /// Desenha o menu. `sobre_video` troca o fundo pela sombra de cima.

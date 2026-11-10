@@ -316,6 +316,10 @@ pub struct Tocando {
     pub fonte: usize,
     pub desde: Instant,
     pub confirmado: bool,
+    /// Quantas fontes já falharam nesta sintonia (a volta acaba quando todas falharam).
+    pub falhas: usize,
+    /// 0 na primeira volta pelas fontes; 1 na segunda, a última.
+    pub volta: u8,
 }
 
 struct App {
@@ -806,6 +810,10 @@ impl App {
                 "eventos" => app.abrir_secao(Aba::Eventos),
                 _ => {}
             }
+        } else {
+            // Como no Mac e na TV Box: o app abre na tela inicial, com
+            // Continue assistindo, Ao vivo agora e os destaques.
+            app.abrir_secao(Aba::Inicio);
         }
         // Minhas listas: aparecem já na abertura (sem rede) e as com mais de 12 h
         // são baixadas de novo em segundo plano, sem avisar ninguém se falhar.
@@ -1180,6 +1188,12 @@ impl App {
         let Some(indice) = self.canais.iter().position(|c| c.nome == nome) else { return };
         self.retomou_canal = true;
         self.foco = indice;
+        // Abrindo na tela inicial, o canal não toca escondido atrás dela: fica
+        // guardado e entra quando a pessoa vai ao Ao vivo.
+        if self.aba != Aba::Canais {
+            self.canal_parado = Some(nome);
+            return;
+        }
         self.tocar(indice, 0, true);
     }
 
@@ -1718,6 +1732,13 @@ impl App {
         self.fonte_preferida = None;
         let Some(mpv) = self.mpv.as_ref() else { return };
         let Some(c) = self.canais.get(canal) else { return };
+        // Sintonia nova começa pela fonte que tocou da última vez.
+        let fonte = if nova && fonte == 0 {
+            let urls: Vec<&str> = c.fontes.iter().map(|f| f.url.as_str()).collect();
+            fonte_preferida::do_canal(&c.nome, &urls).unwrap_or(0)
+        } else {
+            fonte
+        };
         let Some(f) = c.fontes.get(fonte) else {
             telemetria::caiu("live", &c.nome, c.fontes.len());
             self.aviso = Some((format!("{}: nenhuma fonte abriu", c.nome), Instant::now()));
@@ -1728,19 +1749,40 @@ impl App {
         mpv.pausa(false);
         self.pausado = false;
         telemetria::comecou("live", &c.nome, &f.url, fonte + 1, nova);
-        self.tocando = Some(Tocando { canal, fonte, desde: Instant::now(), confirmado: false });
+        self.tocando = Some(Tocando { canal, fonte, desde: Instant::now(), confirmado: false, falhas: 0, volta: 0 });
         self.letreiro_ate = Instant::now() + SUMIR_LETREIRO;
     }
 
     fn proxima_fonte(&mut self, motivo: &str) {
         let Some(t) = self.tocando.as_ref() else { return };
-        let (canal, fonte) = (t.canal, t.fonte);
+        // Só conta como "vinha tocando" depois de um minuto: lista que toca uns
+        // segundos e acaba (aviso de manutenção) não merece ser reaberta.
+        let confirmado = t.confirmado && t.desde.elapsed() > Duration::from_secs(60);
+        let (canal, fonte, falhas, volta) = (t.canal, t.fonte, t.falhas, t.volta);
         let (nome, url, total) = {
             let Some(c) = self.canais.get(canal) else { return };
             (c.nome.clone(), c.fontes.get(fonte).map(|f| f.url.clone()).unwrap_or_default(), c.fontes.len())
         };
         telemetria::falhou("live", &nome, &url, fonte + 1, motivo);
-        if fonte + 1 >= total {
+        // A fonte vinha tocando e caiu: é reaberta (um tropeço da rede não é
+        // motivo para trocar); se nem reabrir, aí sim desce para a seguinte.
+        if confirmado {
+            self.aviso = Some((format!("{nome}: reconectando…"), Instant::now()));
+            self.tocar(canal, fonte, false);
+            return;
+        }
+        let falhas = falhas + 1;
+        if falhas >= total && volta == 0 {
+            // Todas falharam uma vez: mais uma volta, que a rede pode ter
+            // piscado, antes de desistir.
+            self.aviso = Some((format!("{nome}: tentando as fontes de novo…"), Instant::now()));
+            self.tocar(canal, (fonte + 1) % total, false);
+            if let Some(t) = self.tocando.as_mut() {
+                t.volta = 1;
+            }
+            return;
+        }
+        if falhas >= total {
             telemetria::caiu("live", &nome, total);
             telemetria::parou();
             self.aviso = Some((format!("{nome}: nenhuma das {total} fontes abriu"), Instant::now()));
@@ -1750,8 +1792,13 @@ impl App {
             }
             return;
         }
-        self.aviso = Some((format!("{nome}: trocando para a fonte {}", fonte + 2), Instant::now()));
-        self.tocar(canal, fonte + 1, false);
+        let proxima = (fonte + 1) % total;
+        self.aviso = Some((format!("{nome}: trocando para a fonte {}", proxima + 1), Instant::now()));
+        self.tocar(canal, proxima, false);
+        if let Some(t) = self.tocando.as_mut() {
+            t.falhas = falhas;
+            t.volta = volta;
+        }
     }
 
     fn escolher_fonte_seguinte(&mut self) {
@@ -1843,6 +1890,7 @@ impl App {
                             if let Some(c) = self.canais.get(canal) {
                                 gravar_lista("ultimo-canal.txt", std::slice::from_ref(&c.nome));
                                 let url = c.fontes.get(fonte).map(|f| f.url.clone()).unwrap_or_default();
+                                fonte_preferida::lembrar_do_canal(&c.nome, &url);
                                 telemetria::tocou("live", &c.nome, &url, fonte + 1, ms);
                             }
                         }
@@ -3693,7 +3741,7 @@ vec4 hook() {{
         match canal.fontes.get(t.fonte + 1) {
             Some(fonte) => {
                 outra.mpv.tocar_ao_vivo(&fonte.url, fonte.referer.as_deref(), fonte.agente.as_deref());
-                outra.tocando = Some(Tocando { canal: t.canal, fonte: t.fonte + 1, desde: Instant::now(), confirmado: false });
+                outra.tocando = Some(Tocando { canal: t.canal, fonte: t.fonte + 1, desde: Instant::now(), confirmado: false, falhas: 0, volta: 0 });
                 self.ajustar_som_das_telas();
             }
             None => {

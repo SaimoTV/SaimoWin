@@ -122,6 +122,21 @@ pub fn baixar() -> Generos {
     ler(&texto)
 }
 
+/// Um nome só por gênero: o TMDB devolve o mesmo com grafias de filme e de
+/// série, em português e em inglês (o catálogo já publica assim; isto cobre o
+/// arquivo antigo que ficou no disco).
+fn nome_unico(g: &str) -> String {
+    match g {
+        "Ação e Aventura" | "Action & Adventure" => "Ação e aventura",
+        "Sci-Fi & Fantasy" => "Ficção e fantasia",
+        "Guerra & Política" | "War & Politics" => "Guerra e política",
+        "Kids" => "Infantil",
+        "Thriller" => "Suspense",
+        outro => outro,
+    }
+    .to_string()
+}
+
 fn ler(texto: &str) -> Generos {
     let mut mapa = HashMap::new();
     let mut capas = HashMap::new();
@@ -158,8 +173,10 @@ fn ler(texto: &str) -> Generos {
         let lista: Vec<String> = campos[4]
             .split(',')
             .map(str::trim)
-            .filter(|g| !g.is_empty())
-            .map(str::to_string)
+            // Números são o id do gênero no TMDB que escapou sem nome: na
+            // tela viravam pílulas "10766", "18"...
+            .filter(|g| !g.is_empty() && !g.chars().all(|c| c.is_ascii_digit()))
+            .map(nome_unico)
             .collect();
         if lista.is_empty() {
             continue;

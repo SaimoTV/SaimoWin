@@ -77,3 +77,46 @@ mod testes {
         assert_eq!(host("https://WWW.Exemplo.com:81/a"), "exemplo.com");
     }
 }
+
+// MARK: - Canais ao vivo
+
+/// A última fonte que tocou em cada canal (pela URL, que sobrevive a
+/// mudanças de ordem no catálogo). Sintonizar começa por ela, como no Mac e
+/// na TV Box: a fonte 1 fora do ar custava 14 s em todo canal.
+static LEMBRADAS: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> = std::sync::Mutex::new(None);
+
+fn arquivo_lembradas() -> std::path::PathBuf {
+    crate::catalogo::pasta().join("fonte-canal.json")
+}
+
+fn lembradas() -> std::sync::MutexGuard<'static, Option<std::collections::HashMap<String, String>>> {
+    let mut g = LEMBRADAS.lock().unwrap();
+    if g.is_none() {
+        *g = Some(
+            std::fs::read_to_string(arquivo_lembradas())
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .unwrap_or_default(),
+        );
+    }
+    g
+}
+
+/// Índice da fonte lembrada do canal, se ela ainda existe na lista.
+pub fn do_canal(nome: &str, urls: &[&str]) -> Option<usize> {
+    let g = lembradas();
+    let url = g.as_ref()?.get(nome)?;
+    urls.iter().position(|u| u == url)
+}
+
+pub fn lembrar_do_canal(nome: &str, url: &str) {
+    let mut g = lembradas();
+    let mapa = g.as_mut().unwrap();
+    if mapa.get(nome).map(String::as_str) == Some(url) {
+        return;
+    }
+    mapa.insert(nome.to_string(), url.to_string());
+    if let Ok(t) = serde_json::to_string(mapa) {
+        let _ = std::fs::write(arquivo_lembradas(), t);
+    }
+}

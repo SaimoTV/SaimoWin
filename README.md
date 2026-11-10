@@ -102,6 +102,23 @@ dados do app (`%APPDATA%\SaimoTV`). Queda dentro do driver de vídeo não passa
 por ali: essa aparece no Visualizador de Eventos do Windows (Logs do Windows >
 Aplicativo).
 
+## Troca de fonte dos canais (2.7.1)
+
+- Sintonizar começa pela **fonte que tocou da última vez** naquele canal
+  (`fonte_preferida::do_canal`, gravado em `fonte-canal.json`), como no Mac e na TV
+  Box. Antes começava sempre na fonte 1: fonte 1 fora do ar custava 14 s por canal.
+- A régua (`/hls`) responde 502 na hora quando a lista não vem, em vez de mandar o
+  mpv tentar sozinho (até 20 s por fonte morta). Sondagem de todas as fontes do
+  catálogo com o mesmo agente (`cargo test -- --ignored sonda`): toda fonte que a
+  régua não baixa também não abre no curl.
+- Lista de "manutenção" (fechada e com menos de 60 s, ou com manutenção/offline no
+  nome) conta como fonte fora do ar, mesma regra do Mac.
+- Fonte que vinha tocando há mais de um minuto e cai é **reaberta** antes de trocar;
+  todas falhando, uma segunda volta antes de desistir.
+- O app abre na **tela inicial** (como Mac e TV Box), com o último canal guardado
+  para quando a pessoa vai ao Ao vivo; o logo do Saimo no topo; gêneros sem números
+  nem nomes repetidos.
+
 ## Saimo Connect (controle pelo celular)
 
 Sincronia pelo Saimo Connect (`{"t":"dados"}`, mesmo formato na TV Box, Mac, Windows e celular): ao conectar e a cada mudança vão onde parou em filmes e episódios, títulos favoritos, canais favoritos, os dois endereços das listas (vale o escolhido por último; quem nunca escolheu fica com o do outro aparelho) e as listas adicionadas por link (união; a que veio de arquivo fica só no aparelho). Código em `src/sincronia.rs`; o horário de cada progresso fica em `progresso-quando.json` e o dos endereços em `listas-em.txt`.
