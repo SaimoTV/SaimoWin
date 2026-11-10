@@ -33,6 +33,7 @@ mod listas;
 mod minhas_listas;
 mod minhas_listas_tela;
 mod seletor;
+mod sincronia;
 mod telemetria;
 
 use catalogo::Canal;
@@ -987,6 +988,7 @@ impl App {
                     }
                 }
                 self.recarregar_minhas();
+                self.mandar_dados();
             }
             Some(e) if !silencioso => minhas_listas_tela::mostrar_erro(self, e),
             Some(_) => {}
@@ -1089,6 +1091,12 @@ impl App {
             self.abrir_secao(aba);
         }
         self.aviso = Some(("Listas atualizadas".into(), Instant::now()));
+        // Escolha feita aqui: vale na sincronia com o celular (quem aplica o
+        // que veio de lá grava o horário de lá logo depois).
+        listas::definir_escolhidos_em(
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0),
+        );
+        self.mandar_dados();
     }
 
     /// Volta ao estado vazio dos canais: lista, guia, rádios e o que tocava.
@@ -1506,6 +1514,9 @@ impl App {
         }
         if let Some((posicao, duracao)) = mpv.posicao() {
             progresso::salvar(&filme.titulo, posicao, duracao);
+            if agora {
+                self.mandar_dados();
+            }
         }
     }
 
@@ -1592,6 +1603,7 @@ impl App {
             self.favoritos_vod.push(titulo);
         }
         gravar_lista("favoritos-vod.txt", &self.favoritos_vod);
+        self.mandar_dados();
     }
 
     /// A capa do título: devolve o que já se sabe e manda procurar o resto.
@@ -3705,6 +3717,7 @@ vec4 hook() {{
         }
         gravar_favoritos(&self.favoritos);
         self.reordenar();
+        self.mandar_dados();
     }
 }
 

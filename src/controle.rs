@@ -297,6 +297,8 @@ impl App {
     fn comando_do_celular(&mut self, ctx: &egui::Context, tipo: &str, msg: &Value) {
         let numero = |campo: &str| msg.get(campo).and_then(Value::as_f64);
         match tipo {
+            "pedirDados" => self.mandar_dados(),
+            "dados" => self.aplicar_dados(msg),
             "tune" => {
                 let Some(nome) = msg.get("channel").and_then(Value::as_str) else { return };
                 let Some(indice) = self.canal_por_nome(nome) else {

@@ -104,6 +104,8 @@ Aplicativo).
 
 ## Saimo Connect (controle pelo celular)
 
+Sincronia pelo Saimo Connect (`{"t":"dados"}`, mesmo formato na TV Box, Mac, Windows e celular): ao conectar e a cada mudança vão onde parou em filmes e episódios, títulos favoritos, canais favoritos, os dois endereços das listas (vale o escolhido por último; quem nunca escolheu fica com o do outro aparelho) e as listas adicionadas por link (união; a que veio de arquivo fica só no aparelho). Código em `src/sincronia.rs`; o horário de cada progresso fica em `progresso-quando.json` e o dos endereços em `listas-em.txt`.
+
 Fontes sem endereço à mostra: as listas de fontes (canais e filmes) mostram só
 "Fonte N", o nome da fonte (ex.: "Temporada 3") e a qualidade; nunca o servidor
 nem o endereço.

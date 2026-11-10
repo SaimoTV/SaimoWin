@@ -206,6 +206,16 @@ pub fn guardar(lista: Lista, base: Option<&str>) {
     }
 }
 
+/// Quando os endereços foram escolhidos (ms; 0 = nunca). Na sincronia pelo
+/// Saimo Connect vale o mais recente.
+pub fn escolhidos_em() -> i64 {
+    std::fs::read_to_string(pasta().join("listas-em.txt")).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0)
+}
+
+pub fn definir_escolhidos_em(em: i64) {
+    let _ = std::fs::write(pasta().join("listas-em.txt"), em.to_string());
+}
+
 /// Confere se o endereço serve a lista (200 no arquivo de teste). Rede: fora da thread do desenho.
 pub fn testar(lista: Lista, base: &str) -> bool {
     crate::rede::existe(&format!("{base}{}", lista.arquivo_de_teste()))

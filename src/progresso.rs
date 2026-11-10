@@ -44,6 +44,77 @@ fn marcas() -> std::sync::MutexGuard<'static, Option<HashMap<String, (f64, f64)>
     guarda
 }
 
+/// Quando cada marca foi gravada (ms desde 1970): na sincronia pelo Saimo
+/// Connect vale a mais recente. Arquivo à parte para não mudar o formato do
+/// `progresso.json` que as versões anteriores gravaram.
+static QUANDO: Mutex<Option<HashMap<String, i64>>> = Mutex::new(None);
+
+fn arquivo_quando() -> std::path::PathBuf {
+    crate::catalogo::pasta().join("progresso-quando.json")
+}
+
+fn quando() -> std::sync::MutexGuard<'static, Option<HashMap<String, i64>>> {
+    let mut guarda = QUANDO.lock().unwrap();
+    if guarda.is_none() {
+        let lido = std::fs::read_to_string(arquivo_quando())
+            .ok()
+            .and_then(|t| serde_json::from_str::<HashMap<String, i64>>(&t).ok())
+            .unwrap_or_default();
+        *guarda = Some(lido);
+    }
+    guarda
+}
+
+fn gravar_quando() {
+    let guarda = quando();
+    if let Some(mapa) = guarda.as_ref() {
+        if let Ok(texto) = serde_json::to_string(mapa) {
+            let _ = std::fs::write(arquivo_quando(), texto);
+        }
+    }
+}
+
+fn agora_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Tudo o que está pela metade, com o horário: (título, posição, duração, quando).
+pub fn todas() -> Vec<(String, f64, f64, i64)> {
+    let lista: Vec<(String, f64, f64)> = {
+        let guarda = marcas();
+        guarda.as_ref().map(|m| m.iter().map(|(t, (p, d))| (t.clone(), *p, *d)).collect()).unwrap_or_default()
+    };
+    let q = quando();
+    let q = q.as_ref();
+    lista
+        .into_iter()
+        .map(|(t, p, d)| {
+            let em = q.and_then(|m| m.get(&t)).copied().unwrap_or(0);
+            (t, p, d, em)
+        })
+        .collect()
+}
+
+/// Marca vinda de outro aparelho: entra se for mais recente que a daqui.
+pub fn importar(titulo: &str, posicao: f64, duracao: f64, em: i64) -> bool {
+    if titulo.is_empty() || !(posicao > 0.0) {
+        return false;
+    }
+    let local = quando().as_ref().and_then(|m| m.get(titulo)).copied().unwrap_or(0);
+    let existe = marcas().as_ref().is_some_and(|m| m.contains_key(titulo));
+    if existe && local >= em {
+        return false;
+    }
+    marcas().as_mut().unwrap().insert(titulo.to_string(), (posicao, duracao.max(0.0)));
+    quando().as_mut().unwrap().insert(titulo.to_string(), em);
+    gravar();
+    gravar_quando();
+    true
+}
+
 fn gravar() {
     VERSAO.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let guarda = marcas();
@@ -91,6 +162,8 @@ pub fn salvar(titulo: &str, posicao: f64, duracao: f64) {
             mapa.insert(titulo.to_string(), (posicao, duracao));
         }
     }
+    quando().as_mut().unwrap().insert(titulo.to_string(), agora_ms());
+    gravar_quando();
     gravar();
 }
 

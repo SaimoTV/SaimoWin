@@ -264,6 +264,13 @@ pub fn pela_regua(url: &str, referer: Option<&str>, agente: Option<&str>, tela: 
 }
 
 /// Quem está ligado agora, autorizado.
+/// Manda a sincronia (`{"t":"dados"}`) a todos os celulares conectados.
+pub fn enviar_dados(pacote: &Value) {
+    if let Some(s) = servidor() {
+        s.para_todos(&pacote.to_string());
+    }
+}
+
 pub fn tem_celular() -> bool {
     servidor().is_some_and(|s| s.clientes.lock().unwrap().iter().any(|c| c.autenticado))
 }
@@ -508,6 +515,9 @@ impl Servidor {
             self.enviar(cliente, &json!({"t": "textRequest", "hint": dica, "value": valor}).to_string());
         }
         self.pedir(Pedido::Conectou(nome.to_string()));
+        // Progresso, favoritos e listas vão ao celular assim que ele entra:
+        // quem monta o pacote é o app, na thread do desenho.
+        self.pedir(Pedido::Comando("pedirDados".into(), json!({})));
     }
 
     /// Uma conexão nova: lê o pedido HTTP e decide a rota.
