@@ -9,8 +9,8 @@ OpenGL) e vídeo pelo mpv. Não há navegador nem página HTML em lugar nenhum.
 
 Versão atual: **2.0.0**. O instalador sai no release único de
 [SaimoPlayer](https://github.com/gabrielsaimo/SaimoPlayer/releases/latest), e o
-programa avisa quando há versão nova, lendo `versao.json` de
-`https://canais-saimo.pages.dev/versao.json`
+programa avisa quando há versão nova, lendo o `versao.json` anexado à última release
+(`src/atualizacao.rs`, independente das listas)
 (só aceita links de release do GitHub).
 
 Os dois endereços de lista vêm de fábrica e ativos, em duas constantes de
@@ -18,8 +18,7 @@ Os dois endereços de lista vêm de fábrica e ativos, em duas constantes de
 `https://filmes-saimo.pages.dev/`), e o app nunca pergunta nada ao abrir. Em
 Ajustes > Listas dá para trocá-los (o link novo é testado antes), "Restaurar
 padrão" volta aos de fábrica e salvar um campo em branco desliga aquela lista
-(arquivo `link-canais.txt`/`link-filmes.txt` com a marca `desativado`; sem
-arquivo vale o de fábrica). Lista desligada: estado vazio e nenhum pedido de
+(arquivo `link-canais.txt`/`link-filmes.txt` com a marca `desativado`; desde a 2.8.0 o endereço de fábrica de quem nunca escolheu também fica gravado nesses arquivos, na abertura). Lista desligada: estado vazio e nenhum pedido de
 rede. O endereço de canais serve `catalogo.txt`, `restritos.txt`, `radios.txt` e
 `guia.txt` (tabelas do guia por canal); o de filmes serve a pasta `vod/`.
 
@@ -295,7 +294,7 @@ onde a tela é `inicio`, `ondemand`, `filmes`, `explorar`, `eventos`, `radios`,
 | `src/catalogo.rs` | a mesma lista publicada dos outros aplicativos |
 | `src/listas.rs` | os dois endereços de lista (padrão de fábrica, troca, desligar): normalização, teste, gravação, migração e apagar cache |
 | `src/telemetria.rs` | Saimo Monitor, plataforma `windows` |
-| `src/atualizacao.rs` | lê `versao.json` do endereço de canais, download pelo navegador (só links de release do GitHub) |
+| `src/atualizacao.rs` | lê o `versao.json` da última release, download pelo navegador (só links de release do GitHub) |
 | `src/pulos.rs` | TheIntroDB: abertura, recapitulação e créditos |
 | `src/legendas.rs` | OpenSubtitles pelo id do TMDB (via `vod/imdb/`) |
 | `src/vod.rs`, `src/progresso.rs` | acervo e onde cada título parou |

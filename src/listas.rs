@@ -182,14 +182,11 @@ pub fn filmes() -> Option<String> {
 }
 
 /// Guarda o endereço (já normalizado). `None` desliga a lista (marca
-/// "desativado"); o endereço de fábrica volta a ser "nunca mexeu" (sem arquivo).
+/// "desativado"). O endereço de fábrica também é gravado (desde a 2.8.0).
 pub fn guardar(lista: Lista, base: Option<&str>) {
     carregar_se_preciso();
     let caminho = pasta().join(lista.arquivo());
     match base {
-        Some(b) if b == lista.padrao() => {
-            let _ = std::fs::remove_file(&caminho);
-        }
         Some(b) => {
             let _ = std::fs::write(&caminho, b);
         }
@@ -238,6 +235,23 @@ pub fn apagar_dados(lista: Lista) {
     }
 }
 
+/// 2.8.0: quem nunca escolheu fica com o endereço de fábrica GRAVADO, e não só
+/// implícito no código; o app segue com a mesma lista mesmo quando o padrão
+/// sair de uma versão futura. Quem desligou (marca "desativado") ou trocou não
+/// é mexido, e a data da escolha (`listas-em.txt`) não muda.
+pub fn guardar_padroes_de_quem_nunca_escolheu() {
+    guardar_padroes_em(&pasta());
+}
+
+fn guardar_padroes_em(dir: &std::path::Path) {
+    for lista in [Lista::Canais, Lista::Filmes] {
+        let caminho = dir.join(lista.arquivo());
+        if !caminho.exists() {
+            let _ = std::fs::write(&caminho, lista.padrao());
+        }
+    }
+}
+
 /// Na primeira execução desta versão apaga os caches de lista das anteriores.
 pub fn migrar() {
     let marca = pasta().join(MARCA_MIGRADO);
@@ -258,6 +272,25 @@ mod testes {
     }
     fn ok(s: &str) -> Option<String> {
         Some(s.to_string())
+    }
+
+    #[test]
+    fn guarda_o_padrao_so_de_quem_nunca_escolheu() {
+        let dir = std::env::temp_dir().join(format!("saimo-listas-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Canais desligada, filmes sem arquivo.
+        std::fs::write(dir.join(ARQUIVO_CANAIS), DESATIVADO).unwrap();
+        guardar_padroes_em(&dir);
+        assert_eq!(std::fs::read_to_string(dir.join(ARQUIVO_CANAIS)).unwrap(), DESATIVADO);
+        assert_eq!(std::fs::read_to_string(dir.join(ARQUIVO_FILMES)).unwrap(), PADRAO_FILMES);
+        // Trocada continua trocada.
+        std::fs::write(dir.join(ARQUIVO_FILMES), "https://outra.dev/").unwrap();
+        guardar_padroes_em(&dir);
+        assert_eq!(std::fs::read_to_string(dir.join(ARQUIVO_FILMES)).unwrap(), "https://outra.dev/");
+        // E o que foi gravado lê de volta como o padrão.
+        assert_eq!(interpretar(Some(PADRAO_CANAIS), Lista::Canais), ok(PADRAO_CANAIS));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

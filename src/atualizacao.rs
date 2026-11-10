@@ -1,17 +1,18 @@
 //! Procura versão nova no `versao.json` do endereço fixo de atualização e abre o
 //! download no navegador.
 //!
-//! O arquivo diz qual é a versão e onde está o instalador de cada plataforma;
-//! nenhum dono ou repositório fica gravado aqui. Falhou ao ler, não há
+//! O arquivo diz qual é a versão e onde está o instalador de cada plataforma.
+//! Falhou ao ler, não há
 //! atualização. O app não baixa nem troca nada por dentro, então o `sha256`
 //! (quando vem) fica guardado em `Versao` para quem baixar conferir com
 //! `confere_sha256`.
 
 use std::sync::Mutex;
 
-/// O endereço de atualização, um só e fixo. O link de download vem do próprio
-/// `versao.json`.
-const ENDERECO: &str = "https://canais-saimo.pages.dev/versao.json";
+/// O endereço de atualização, um só e fixo: o `versao.json` anexado à última
+/// release (não depende de nenhum endereço de lista). O link de download vem do
+/// próprio `versao.json`.
+const ENDERECO: &str = "https://github.com/SaimoTV/saimo-downloads/releases/latest/download/versao.json";
 
 /// Plataforma deste app em `arquivos` do `versao.json`.
 const PLATAFORMA: &str = "windows";
