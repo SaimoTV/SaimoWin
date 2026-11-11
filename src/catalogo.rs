@@ -139,6 +139,15 @@ pub fn chave_de_ordem(texto: &str) -> String {
 }
 
 pub fn pasta() -> PathBuf {
+    // Linux: ~/.local/share/SaimoTV (ou $XDG_DATA_HOME/SaimoTV), como os outros
+    // programas do usuário.
+    #[cfg(target_os = "linux")]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(std::env::temp_dir);
+    #[cfg(not(target_os = "linux"))]
     let base = std::env::var("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());

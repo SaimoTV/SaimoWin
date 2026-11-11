@@ -1,14 +1,14 @@
-# Saimo TV para Windows
+# Saimo TV para Windows e Linux
 
 <p align="center">
-  Saimo TV: <a href="https://github.com/gabrielsaimo/SaimoTV-Android">TV Box</a> · <a href="https://github.com/gabrielsaimo/Saimo-Cell-V2">Celular</a> · <b>Windows</b> · <a href="https://github.com/gabrielsaimo/SaimoPlayer">Mac e catálogo</a> · <a href="https://github.com/gabrielsaimo/Saimo-TV">Site</a> · <a href="https://github.com/gabrielsaimo">todos os apps</a>
+  Saimo TV: <a href="https://github.com/SaimoTV/SaimoTV-Android">TV Box</a> · <a href="https://github.com/SaimoTV/Saimo-Cell-V2">Celular</a> · <b>Windows e Linux</b> · <a href="https://github.com/SaimoTV/SaimoPlayer">Mac e catálogo</a> · <a href="https://github.com/SaimoTV/Saimo-Site">Site</a> · <a href="https://github.com/SaimoTV">todos os apps</a>
 </p>
 
 Aplicativo nativo: janela, lista e letreiro desenhados pela GPU (egui sobre
 OpenGL) e vídeo pelo mpv. Não há navegador nem página HTML em lugar nenhum.
 
 Versão atual: **2.0.0**. O instalador sai no release único de
-[SaimoPlayer](https://github.com/gabrielsaimo/SaimoPlayer/releases/latest), e o
+[SaimoPlayer](https://github.com/SaimoTV/SaimoPlayer/releases/latest), e o
 programa avisa quando há versão nova, lendo o `versao.json` anexado à última release
 (`src/atualizacao.rs`, independente das listas)
 (só aceita links de release do GitHub).
@@ -334,6 +334,55 @@ porque instala só para quem está usando o computador.
 Precisa do `wixl` (`brew install msitools`). As telas do assistente estão em
 `instalador/ui`, que é a cópia traduzida das do WiX. O `--baixar` pega a
 biblioteca do mpv de novo (compilação oficial do shinchiro/mpv-winbuild-cmake).
+
+## Linux
+
+O mesmo código do Windows, então a tela é a mesma em tudo: abas, fileiras,
+Ao vivo com guia, On Demand com ficha e player, Rádios, Eventos, Ajustes,
+Minhas listas e Saimo Connect. Muda só o que é do sistema:
+
+| O quê | Windows | Linux |
+|---|---|---|
+| Vídeo | `libmpv-2.dll` ao lado do .exe | a libmpv do AppImage, ou `libmpv.so.2`/`.so.1` do sistema |
+| OpenGL do mpv | `wglGetProcAddress` | `eglGetProcAddress` (Wayland e X11) ou `glXGetProcAddressARB` |
+| Fonte | Segoe UI do sistema | Roboto Regular/Medium embutida (a mesma da TV Box e do Roku) |
+| Dados | `%APPDATA%\SaimoTV` | `~/.local/share/SaimoTV` (`$XDG_DATA_HOME`) |
+| Escolher arquivo de lista | `GetOpenFileNameW` | zenity, kdialog ou yad |
+| Abrir link | `ShellExecuteW` | `xdg-open` |
+| Atualização (`versao.json`) | `windows` | `linux` (x86_64) e `linux-arm64` |
+
+Pacotes (`./empacotar-linux.sh`, roda no Mac):
+
+- `SaimoTV-Linux-x86_64.AppImage` e `SaimoTV-Linux-aarch64.AppImage`: qualquer
+  distro de 2022 para cá, já com a libmpv do Ubuntu 22.04. Fica do sistema o
+  que conversa com o driver de vídeo (Mesa, X11, Wayland, DRM, VA-API), o som,
+  as fontes e a libstdc++: levar versão velha deles quebra o vídeo de quem tem
+  distro nova. As bibliotecas levadas se acham pelo `RUNPATH=$ORIGIN`, sem
+  `LD_LIBRARY_PATH`, que vazaria para o navegador e o seletor de arquivo.
+- `saimo-tv_<versão>_amd64.deb` e `_arm64.deb` (no release:
+  `SaimoTV-Linux-amd64.deb`/`-arm64.deb`): Ubuntu, Debian, Mint, Pop!_OS.
+  Usam a libmpv da distribuição (`Depends: libmpv2 | libmpv1`).
+
+O binário é compilado com `cargo zigbuild` para glibc 2.31 (Ubuntu 20.04,
+Debian 11) e só depende da libc: janela, OpenGL e mpv são carregados na hora.
+Precisa de `cargo install cargo-zigbuild`, `brew install zig squashfs`,
+`rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu`, e de
+dois insumos fora do git (pasta `mpv/`):
+
+- `mpv/linux-x86_64/` e `mpv/linux-aarch64/`: saem de
+  `scripts/montar_mpv_linux.sh`, rodado num Linux com debootstrap (a VM de
+  teste: `limactl shell saimo-linux`).
+- `mpv/appimage/runtime-x86_64` e `runtime-aarch64`: o runtime oficial do
+  AppImage (github.com/AppImage/type2-runtime, release `continuous`).
+
+As duas versões da libmpv valem: o app lê `mpv-version` e só manda o
+argumento `index` do `loadfile` do mpv 0.38 em diante, e a estrutura de
+inicialização do OpenGL leva o campo `extra_exts` que a libmpv 1.x lê.
+`SAIMO_MPV_LOG=arquivo` grava o log do próprio mpv.
+
+Testado numa VM Ubuntu 26.10 ARM64 (Lima, Xvfb): `.deb` e AppImage abrem,
+canal ao vivo e filme tocam, teclado e mouse respondem; o x86_64 num Ubuntu
+22.04 amd64 emulado abre e carrega a libmpv do pacote.
 
 ## Rodar no Mac para conferir a interface
 

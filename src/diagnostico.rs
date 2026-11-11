@@ -120,6 +120,15 @@ pub fn erro_fatal(mensagem: &str) {
         &caminho,
         format!("{antes}[{}] versão {} — não abriu: {mensagem}\n", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), crate::VERSAO),
     );
+    #[cfg(target_os = "linux")]
+    {
+        let texto = format!(
+            "O Saimo TV não conseguiu abrir a janela.\n\n{mensagem}\n\nO detalhe ficou em:\n{}\n\nSe o problema continuar, envie esse arquivo (falhas.txt e inicio.txt) e informe a placa de vídeo e a versão do driver.",
+            arquivo("falhas.txt").display()
+        );
+        let _ = std::process::Command::new("zenity").args(["--error", "--title=Saimo TV", "--no-markup"]).arg(format!("--text={texto}")).status()
+            .or_else(|_| std::process::Command::new("kdialog").args(["--title", "Saimo TV", "--error"]).arg(&texto).status());
+    }
     #[cfg(windows)]
     janela_de_erro(&format!(
         "O Saimo TV não conseguiu abrir a janela.\n\n{mensagem}\n\nO detalhe ficou em:\n{}\n\nSe o problema continuar, envie esse arquivo (falhas.txt e inicio.txt) e informe a placa de vídeo e a versão do driver.",

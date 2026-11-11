@@ -26,7 +26,12 @@ done
 python3 scripts/verificar_mpv.py
 
 echo "==> compilando para Windows"
+# Mensagens de erro do Rust guardam o caminho de quem compilou; fora do binário.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=/build"
 cargo build --release --target x86_64-pc-windows-gnu -q
+if grep -q -a "$HOME" target/x86_64-pc-windows-gnu/release/saimo-tv.exe; then
+  echo "o .exe ainda tem o caminho da pasta pessoal; nada foi gerado"; exit 1
+fi
 
 rm -rf dist/SaimoTV
 mkdir -p dist/SaimoTV

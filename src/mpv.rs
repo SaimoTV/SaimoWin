@@ -41,6 +41,9 @@ struct MpvRenderParam {
 struct MpvOpenGLInitParams {
     get_proc_address: extern "C" fn(*mut c_void, *const c_char) -> *mut c_void,
     get_proc_address_ctx: *mut c_void,
+    /// Só existe na libmpv 1.x (mpv 0.34 e anteriores, a do AppImage do Linux),
+    /// que lê este campo como texto: sem ele, lia lixo e caía. A 2.x o ignora.
+    extra_exts: *const c_char,
 }
 
 #[repr(C)]
@@ -170,6 +173,23 @@ pub struct Mpv {
     /// Pede à thread dos avisos que pare, antes de o handle ser destruído.
     parar_avisos: Arc<std::sync::atomic::AtomicBool>,
     thread_avisos: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// O `loadfile` ganhou o argumento `index` no mpv 0.38; a libmpv 0.34 do
+    /// AppImage do Linux lê esse lugar como as opções e recusa o comando.
+    loadfile_com_indice: bool,
+}
+
+/// "mpv 0.34.1", "mpv v0.40.0-dirty" -> (0, 34). Sem número, supõe recente.
+fn versao_do_mpv(texto: &str) -> (u32, u32) {
+    let numeros: Vec<u32> = texto
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty())
+        .take(2)
+        .filter_map(|p| p.parse().ok())
+        .collect();
+    match numeros[..] {
+        [a, b] => (a, b),
+        _ => (99, 0),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -218,7 +238,11 @@ extern "C" fn endereco_gl(_ctx: *mut c_void, nome: *const c_char) -> *mut c_void
     // Fora do Windows o endereço sai do próprio processo: o OpenGL já está
     // carregado pela janela, e é assim que dá para rodar este mesmo caminho
     // aqui no Mac para conferir o desenho sem depender de uma máquina Windows.
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    unsafe {
+        endereco_gl_linux(nome)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     unsafe {
         extern "C" {
             fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
@@ -226,6 +250,54 @@ extern "C" fn endereco_gl(_ctx: *mut c_void, nome: *const c_char) -> *mut c_void
         const RTLD_DEFAULT: *mut c_void = std::ptr::null_mut();
         dlsym(RTLD_DEFAULT, nome)
     }
+}
+
+/// No Linux a janela abre o contexto pelo EGL (Wayland e a maioria dos X11) ou
+/// pelo GLX, e as duas bibliotecas são carregadas por ela com escopo local: o
+/// dlsym global não as enxerga. Pergunta a quem é dono do contexto atual.
+#[cfg(target_os = "linux")]
+unsafe fn endereco_gl_linux(nome: *const c_char) -> *mut c_void {
+    use std::sync::OnceLock;
+    type Pegar = unsafe extern "C" fn(*const c_char) -> *mut c_void;
+    type Atual = unsafe extern "C" fn() -> *mut c_void;
+    struct Gl {
+        _egl: Option<libloading::Library>,
+        _glx: Option<libloading::Library>,
+        egl_atual: Option<Atual>,
+        egl_pegar: Option<Pegar>,
+        glx_pegar: Option<Pegar>,
+    }
+    unsafe impl Send for Gl {}
+    unsafe impl Sync for Gl {}
+    static GL: OnceLock<Gl> = OnceLock::new();
+    let gl = GL.get_or_init(|| {
+        let abrir = |nomes: &[&str]| nomes.iter().find_map(|n| libloading::Library::new(*n).ok());
+        let egl = abrir(&["libEGL.so.1", "libEGL.so"]);
+        let glx = abrir(&["libGLX.so.0", "libGL.so.1", "libGL.so"]);
+        let simbolo = |lib: &Option<libloading::Library>, s: &[u8]| -> Option<*mut c_void> {
+            lib.as_ref().and_then(|l| l.get::<*mut c_void>(s).ok().map(|p| *p))
+        };
+        let egl_atual = simbolo(&egl, b"eglGetCurrentContext\0").map(|p| std::mem::transmute::<_, Atual>(p));
+        let egl_pegar = simbolo(&egl, b"eglGetProcAddress\0").map(|p| std::mem::transmute::<_, Pegar>(p));
+        let glx_pegar = simbolo(&glx, b"glXGetProcAddressARB\0")
+            .or_else(|| simbolo(&glx, b"glXGetProcAddress\0"))
+            .map(|p| std::mem::transmute::<_, Pegar>(p));
+        Gl { _egl: egl, _glx: glx, egl_atual, egl_pegar, glx_pegar }
+    });
+    let contexto_egl = gl.egl_atual.map(|f| !f().is_null()).unwrap_or(false);
+    let achado = match (contexto_egl, gl.egl_pegar, gl.glx_pegar) {
+        (true, Some(egl), _) => egl(nome),
+        (_, _, Some(glx)) => glx(nome),
+        (_, Some(egl), None) => egl(nome),
+        _ => std::ptr::null_mut(),
+    };
+    if !achado.is_null() {
+        return achado;
+    }
+    extern "C" {
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+    dlsym(std::ptr::null_mut(), nome)
 }
 
 impl Mpv {
@@ -301,6 +373,9 @@ impl Mpv {
             // com a logo e o nome do canal; o do mpv só saberia o endereço.
             ("media-controls", "no"),
         ];
+        // Para suporte: SAIMO_MPV_LOG=arquivo grava o log do próprio mpv.
+        let log_do_mpv = std::env::var("SAIMO_MPV_LOG").ok();
+        let opcoes = opcoes.into_iter().chain(log_do_mpv.as_deref().map(|a| ("log-file", a)));
         for (nome, valor) in opcoes {
             let n = CString::new(nome).unwrap();
             let v = CString::new(valor).unwrap();
@@ -361,7 +436,19 @@ impl Mpv {
             })
         };
 
+        let versao = unsafe {
+            let nome = CString::new("mpv-version").unwrap();
+            let bruto = (simbolos.get_property_string)(handle.0, nome.as_ptr());
+            if bruto.is_null() {
+                (99, 0)
+            } else {
+                let texto = std::ffi::CStr::from_ptr(bruto).to_string_lossy().into_owned();
+                (simbolos.free)(bruto as *mut c_void);
+                versao_do_mpv(&texto)
+            }
+        };
         Ok(Mpv {
+            loadfile_com_indice: versao >= (0, 38),
             id: PROXIMO_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
             simbolos,
             handle,
@@ -384,6 +471,7 @@ impl Mpv {
         let mut init = MpvOpenGLInitParams {
             get_proc_address: endereco_gl,
             get_proc_address_ctx: std::ptr::null_mut(),
+            extra_exts: std::ptr::null(),
         };
         let api = CString::new("opengl").unwrap();
         let mut params = [
@@ -481,7 +569,11 @@ impl Mpv {
         if opcoes.is_empty() {
             self.comando(&["loadfile", endereco, "replace"]);
         } else {
-            self.comando(&["loadfile", endereco, "replace", "-1", &opcoes.join(",")]);
+            if self.loadfile_com_indice {
+                self.comando(&["loadfile", endereco, "replace", "-1", &opcoes.join(",")]);
+            } else {
+                self.comando(&["loadfile", endereco, "replace", &opcoes.join(",")]);
+            }
         }
     }
 
@@ -662,5 +754,18 @@ mod testes {
             assert_eq!(v.acabou(antigo, STOP), None);
         }
         assert_eq!(v.acabou(5, END_FILE_ERROR), Some(Aviso::Falhou));
+    }
+}
+
+#[cfg(test)]
+mod testes_versao {
+    use super::versao_do_mpv;
+
+    #[test]
+    fn le_a_versao_do_mpv() {
+        assert_eq!(versao_do_mpv("mpv 0.34.1"), (0, 34));
+        assert_eq!(versao_do_mpv("mpv v0.40.0-dirty"), (0, 40));
+        assert_eq!(versao_do_mpv("mpv"), (99, 0));
+        assert!(versao_do_mpv("mpv 0.38.0") >= (0, 38));
     }
 }

@@ -15,7 +15,12 @@ use std::sync::Mutex;
 const ENDERECO: &str = "https://github.com/SaimoTV/saimo-downloads/releases/latest/download/versao.json";
 
 /// Plataforma deste app em `arquivos` do `versao.json`.
+#[cfg(not(target_os = "linux"))]
 const PLATAFORMA: &str = "windows";
+#[cfg(all(target_os = "linux", not(target_arch = "aarch64")))]
+const PLATAFORMA: &str = "linux";
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const PLATAFORMA: &str = "linux-arm64";
 
 #[derive(Clone, Debug)]
 pub struct Versao {
@@ -208,7 +213,11 @@ pub fn abrir_no_navegador(link: &str) {
             eprintln!("Não foi possível abrir o navegador (Windows: {}).", result as isize);
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(link).spawn();
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = std::process::Command::new("open").arg(link).spawn();
     }

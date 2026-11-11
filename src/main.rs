@@ -108,6 +108,17 @@ fn main() -> eframe::Result<()> {
         .with_title("Saimo TV")
         .with_inner_size([1280.0, 720.0])
         .with_min_inner_size([800.0, 480.0]);
+    // No Linux o painel e o Wayland ligam a janela ao saimo-tv.desktop por este
+    // nome, e é de lá que sai o ícone da barra de tarefas.
+    #[cfg(target_os = "linux")]
+    {
+        janela = janela.with_app_id("saimo-tv");
+        if let Ok(img) = image::load_from_memory(include_bytes!("../assets/logo.png")) {
+            let img = img.to_rgba8();
+            let (width, height) = img.dimensions();
+            janela = janela.with_icon(egui::IconData { rgba: img.into_raw(), width, height });
+        }
+    }
     if std::env::var("SAIMO_FOTO").is_ok() {
         // Foto de teste: abre sem tomar o foco de quem está usando a máquina.
         janela = janela.with_active(false);
@@ -1365,6 +1376,7 @@ impl App {
 
     /// Toca um filme e já pede as legendas dele.
     fn tocar_filme(&mut self, titulo: String, urls: Vec<String>) {
+        diagnostico::etapa(&format!("filme: {titulo} ({} fontes)", urls.len()));
         self.fonte_preferida = None;
         self.tocar_vod(titulo.clone(), urls, 0, true);
         self.pedir_legendas(titulo.clone(), self.generos.id(&titulo, false), false, 0, 0);
@@ -2658,7 +2670,11 @@ impl App {
     /// Abre um título da grade: a letra dele pode ainda não ter chegado, e aí
     /// a abertura fica esperando o recado com a lista.
     pub fn abrir_item(&mut self, item: ItemNaTela) {
-        if self.letra != item.letra && self.aba != Aba::Extras && !matches!(self.aba, Aba::Animes | Aba::Doramas) {
+        // Letra igual com a lista vazia (a tela inicial a esvazia ao trocar de
+        // aba) também precisa pedir de novo: senão o título fica esperando uma
+        // lista que nunca chega e o "Assistir" de um destaque não faz nada.
+        let sem_lista = if item.serie { self.series.is_empty() } else { self.filmes.is_empty() };
+        if (self.letra != item.letra || sem_lista) && self.aba != Aba::Extras && !matches!(self.aba, Aba::Animes | Aba::Doramas) {
             self.abrir_letra(item.letra.clone());
         }
         if item.serie {
@@ -2673,6 +2689,7 @@ impl App {
             }
             return;
         }
+        diagnostico::etapa(&format!("título pedido, esperando a letra {}: {}", item.letra, item.titulo));
         self.abrir_ao_chegar = Some((item.titulo, item.serie));
         self.carregando_vod = true;
     }
@@ -3835,11 +3852,30 @@ pub fn pasta_do_programa() -> String {
         .unwrap_or_default()
 }
 
-/// No Windows a biblioteca vai no pacote, ao lado do executável. No Mac (só
-/// para testar a interface antes de publicar) vale a do sistema.
+/// No Windows a biblioteca vai no pacote, ao lado do executável. No Linux vale
+/// a que veio no pacote (AppImage: `lib/` ao lado do programa) e, sem ela, a do
+/// sistema, achada pelo próprio carregador. O AppImage leva a libmpv.so.1 do
+/// Ubuntu 22.04, para rodar também em distros mais velhas. No Mac (só para testar a interface
+/// antes de publicar) vale a do Homebrew.
 pub fn caminho_do_mpv() -> std::path::PathBuf {
     if let Ok(escolhido) = std::env::var("SAIMO_MPV") {
         return std::path::PathBuf::from(escolhido);
+    }
+    if cfg!(target_os = "linux") {
+        let do_pacote = std::env::current_exe().ok().and_then(|exe| {
+            let pasta = exe.parent()?.to_path_buf();
+            ["../lib", "lib", "."]
+                .iter()
+                .flat_map(|sub| ["libmpv.so.2", "libmpv.so.1"].map(|nome| pasta.join(sub).join(nome)))
+                .find(|p| p.exists())
+        });
+        // Nome sem pasta: o dlopen procura onde o sistema guarda as bibliotecas
+        // (libmpv2 no Debian/Ubuntu/Fedora; libmpv.so.1 nas distros mais velhas).
+        return do_pacote.unwrap_or_else(|| {
+            let sistema = ["libmpv.so.2", "libmpv.so.1", "libmpv.so"];
+            let achada = sistema.iter().find(|nome| unsafe { libloading::Library::new(**nome) }.is_ok());
+            std::path::PathBuf::from(achada.copied().unwrap_or("libmpv.so.2"))
+        });
     }
     if cfg!(windows) {
         std::env::current_exe()

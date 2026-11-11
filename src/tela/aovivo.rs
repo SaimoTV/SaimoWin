@@ -467,6 +467,27 @@ fn sem_mpv(app: &App, ui: &mut egui::Ui, area: Rect) {
     let caminho_dll = crate::caminho_do_mpv();
     let dll_existe = caminho_dll.exists();
 
+    #[cfg(target_os = "linux")]
+    let (titulo, recado) = if dll_existe || unsafe { libloading::Library::new(&caminho_dll) }.is_ok() {
+        (
+            "Erro ao carregar o reprodutor de vídeo",
+            format!("A biblioteca do mpv foi encontrada ({}), mas não abriu.\n\n\
+             Atualize o driver de vídeo (Mesa) ou instale a libmpv da sua distribuição:\n\
+             Ubuntu, Debian e Mint: sudo apt install libmpv2\n\
+             Fedora: sudo dnf install mpv-libs\n\
+             Arch: sudo pacman -S mpv", caminho_dll.display()),
+        )
+    } else {
+        (
+            "Falta o mpv",
+            "O vídeo precisa da biblioteca do mpv. Instale pela sua distribuição e abra o Saimo TV de novo:\n\n\
+             Ubuntu, Debian e Mint: sudo apt install libmpv2\n\
+             Fedora: sudo dnf install mpv-libs\n\
+             Arch: sudo pacman -S mpv\n\n\
+             A versão AppImage já traz a biblioteca junto.".to_string(),
+        )
+    };
+    #[cfg(not(target_os = "linux"))]
     let (titulo, recado) = if do_zip {
         (
             "Descompacte a pasta antes de abrir",

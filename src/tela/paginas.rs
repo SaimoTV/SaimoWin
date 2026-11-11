@@ -237,7 +237,10 @@ pub(super) fn executar(app: &mut App, acao: Acao) {
 /// ficha de um destaque percorre. Anime e dorama moram nas coleções: abre-se
 /// a página deles e a busca leva ao título, como quem chegou pela grade.
 pub fn seguir_destaque(app: &mut App, fila: usize, indice: usize) {
-    let Some(item) = app.filas.get(fila).and_then(|f| f.itens.get(indice)).cloned() else { return };
+    let Some(item) = app.filas.get(fila).and_then(|f| f.itens.get(indice)).cloned() else {
+        crate::diagnostico::etapa(&format!("destaque {fila}/{indice} não existe mais"));
+        return;
+    };
     if !item.da_colecao() {
         let alvo = ItemNaTela { titulo: item.titulo.clone(), detalhe: item.ano.clone(), serie: item.serie(), letra: item.letra.clone() };
         if !item.letra.is_empty() {

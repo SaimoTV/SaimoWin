@@ -304,7 +304,7 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("Ajustes").font(forte(48.0)).color(TEXTO));
         ui.add_space(14.0);
         ui.label(egui::RichText::new(format!("Saimo TV {}", crate::VERSAO)).font(normal(18.0)).color(SECUNDARIO));
-        ui.label(egui::RichText::new("para Windows").font(normal(18.0)).color(SECUNDARIO));
+        ui.label(egui::RichText::new(if cfg!(target_os = "linux") { "para Linux" } else { "para Windows" }).font(normal(18.0)).color(SECUNDARIO));
         ui.add_space(26.0);
         ui.label(
             egui::RichText::new("Seus favoritos, o que ficou pela metade e a última rádio ficam guardados neste computador.")

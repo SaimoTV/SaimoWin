@@ -71,14 +71,20 @@ pub fn normal(tamanho: f32) -> FontId {
 }
 
 /// Visual base e, no Windows, a fonte do sistema (Segoe UI e a Semibold no
-/// lugar do sans-serif-medium da TV Box).
+/// lugar do sans-serif-medium da TV Box). No Linux, que não tem Segoe UI, vai
+/// a Roboto Regular e Medium embutida: a mesma da TV Box e do Roku.
 pub fn aplicar_estilo(ctx: &egui::Context) {
     let mut fontes = egui::FontDefinitions::default();
+    #[cfg(target_os = "linux")]
+    {
+        fontes.font_data.insert("sistema".into(), std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../../assets/fontes/Roboto-Regular.ttf"))));
+        fontes.font_data.insert("sistema-forte".into(), std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../../assets/fontes/Roboto-Medium.ttf"))));
+    }
     let candidatas = [
         ("sistema", "C:\\Windows\\Fonts\\segoeui.ttf"),
         ("sistema-forte", "C:\\Windows\\Fonts\\seguisb.ttf"),
     ];
-    let mut achou = false;
+    let mut achou = cfg!(target_os = "linux");
     for (nome, caminho) in candidatas {
         if let Ok(bytes) = std::fs::read(caminho) {
             fontes.font_data.insert(nome.into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
