@@ -1,17 +1,14 @@
 //! Os jogos de hoje e dos próximos dias que passam em algum canal da lista,
 //! com a mesma lógica da tela de Eventos da TV Box e do celular.
 //!
-//! Três fontes: a agenda da embedtv diz em que canal cada jogo passa; a do
-//! monitor traz os jogos dos canais de streaming (CazéTV, Disney+, Prime,
-//! Paramount+, GOAT, ge tv, N Sports, SportyNet) que a embedtv não tem, no
-//! mesmo formato e com placar; os placares da ESPN dizem se já começou, o
-//! placar e o tempo de jogo, e trazem escudos melhores. Só entra jogo que tem canal (sem canal não há o que
+//! Duas fontes: a agenda do Saimo diz em que canal cada jogo passa; os
+//! placares da ESPN dizem se já começou, o placar e o tempo de jogo, e trazem
+//! escudos melhores. Nenhum site de streaming de terceiros é consultado. Só entra jogo que tem canal (sem canal não há o que
 //! assistir), e jogo encerrado sai.
 
 use chrono::{Datelike, Local, TimeZone};
 use serde_json::Value;
 
-const EMBED: &str = "https://embedtv.cc/api/events";
 const STREAMING: &str = "https://saimo-tv.pages.dev/eventos-extra.json";
 const ESPN: [&str; 23] = [
     "soccer/bra.1", "soccer/bra.2", "soccer/bra.copa_do_brazil", "soccer/conmebol.libertadores",
@@ -81,9 +78,8 @@ pub fn agora() -> i64 {
 /// A agenda com os placares, só com os jogos dos `canais` (nome e logo).
 /// `None` quando a agenda não veio.
 pub fn buscar(canais: &[(String, Option<String>)]) -> Option<Vec<Jogo>> {
-    // As 25 chamadas saem juntas: em fila, a tela esperaria a soma de todas.
-    let (agenda, streaming, placares) = std::thread::scope(|escopo| {
-        let agenda = escopo.spawn(|| crate::rede::json_curto(EMBED));
+    // As chamadas saem juntas: em fila, a tela esperaria a soma de todas.
+    let (streaming, placares) = std::thread::scope(|escopo| {
         let streaming = escopo.spawn(|| crate::rede::json_curto(STREAMING));
         let placares: Vec<_> = ESPN
             .iter()
@@ -94,29 +90,11 @@ pub fn buscar(canais: &[(String, Option<String>)]) -> Option<Vec<Jogo>> {
             })
             .collect();
         let placares: Vec<Value> = placares.into_iter().filter_map(|p| p.join().ok().flatten()).collect();
-        (agenda.join().ok().flatten(), streaming.join().ok().flatten(), placares)
+        (streaming.join().ok().flatten(), placares)
     });
-    // Sem a embedtv a tela continua com os jogos do monitor; só some se as duas caírem.
-    if agenda.is_none() && streaming.is_none() {
-        return None;
-    }
+    let streaming = streaming?;
     let espn: Vec<Placar> = placares.iter().flat_map(ler_espn).collect();
-    let mut jogos = agenda.map(|a| ler_agenda(&a, canais)).unwrap_or_default();
-    // Jogo do monitor que a embedtv já tem (mesmos times, começo a menos de
-    // meia hora) não entra de novo.
-    let extras: Vec<Jogo> = streaming
-        .map(|s| ler_agenda(&s, canais))
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|x| {
-            !jogos.iter().any(|e| {
-                (e.inicio - x.inicio).abs() < HORA / 2
-                    && ((mesmo_time(&e.casa, &x.casa) && mesmo_time(&e.fora, &x.fora))
-                        || (mesmo_time(&e.casa, &x.fora) && mesmo_time(&e.fora, &x.casa)))
-            })
-        })
-        .collect();
-    jogos.extend(extras);
+    let mut jogos = ler_agenda(&streaming, canais);
     for jogo in &mut jogos {
         // O mesmo jogo na ESPN: mesmos times (em qualquer ordem) e começo
         // a menos de quatro horas um do outro.
@@ -387,9 +365,9 @@ mod testes {
     #[test]
     fn canal_pelo_endereco() {
         let canais = vec![("Premiere FC".to_string(), None), ("ESPN 2".to_string(), None), ("ESPN".to_string(), None)];
-        assert_eq!(canal_do("https://x.embedtv.cc/premiere-fc", &canais).map(|c| c.0).as_deref(), Some("Premiere FC"));
-        assert_eq!(canal_do("https://x.embedtv.cc/espn2", &canais).map(|c| c.0).as_deref(), Some("ESPN 2"));
-        assert!(canal_do("https://x.embedtv.cc/sportv", &canais).is_none());
+        assert_eq!(canal_do("https://exemplo.dev/premiere-fc", &canais).map(|c| c.0).as_deref(), Some("Premiere FC"));
+        assert_eq!(canal_do("https://exemplo.dev/espn2", &canais).map(|c| c.0).as_deref(), Some("ESPN 2"));
+        assert!(canal_do("https://exemplo.dev/sportv", &canais).is_none());
     }
 
     #[test]

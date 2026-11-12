@@ -161,8 +161,8 @@ mod testes {
 
     #[test]
     fn tira_o_servidor_do_endereco() {
-        assert_eq!(servidor("https://proxy.nr3.com/a/b.m3u8").as_deref(), Some("proxy.nr3.com"));
-        assert_eq!(servidor("http://Proxy.NR3.com:8080/x").as_deref(), Some("proxy.nr3.com"));
+        assert_eq!(servidor("https://servidor.exemplo.com/a/b.m3u8").as_deref(), Some("servidor.exemplo.com"));
+        assert_eq!(servidor("http://Servidor.Exemplo.com:8080/x").as_deref(), Some("servidor.exemplo.com"));
         assert_eq!(servidor("https://ana:senha@casa.tv/p").as_deref(), Some("casa.tv"));
         assert_eq!(servidor("nada"), Some("nada".into()));
     }
