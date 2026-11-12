@@ -316,6 +316,8 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
     });
 
     let mut acao: Option<u8> = None;
+    let mut salvar_pasta_dvr = false;
+    let mut pasta_dvr = app.pasta_gravacoes_texto.clone();
     ui.scope_builder(egui::UiBuilder::new().max_rect(direita), |ui| {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(direita.width().min(760.0));
@@ -341,9 +343,45 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             if linha(ui, "Velocidade dos filmes e séries", &format!("{}×", app.velocidade), Icone::Velocidade).clicked() {
                 acao = Some(1);
             }
+            if linha(ui, "Sugestões de pular abertura", if app.sugerir_pulos {
+                "Ligado: mostrar botões de pulo (marcas podem estar erradas)"
+            } else {
+                "Desligado: sem botões de pular abertura ou recapitulação"
+            }, Icone::Proximo).clicked() {
+                acao = Some(13);
+            }
+            if linha(ui, "Próximo episódio automático", if app.proximo_automatico {
+                "Ligado: avançar apenas após o término real do vídeo"
+            } else {
+                "Desligado: nunca interromper ou avançar sozinho"
+            }, Icone::Tocar).clicked() {
+                acao = Some(14);
+            }
             if linha(ui, "Som", &if app.mudo { "Sem som".to_string() } else { format!("Volume {}%", app.volume) }, if app.mudo { Icone::Mudo } else { Icone::Som }).clicked() {
                 acao = Some(2);
             }
+            ui.add_space(18.0);
+            rotulo_de_secao(ui, "Gravações de TV");
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Pasta de gravações e capturas neste dispositivo").font(forte(17.0)).color(TEXTO));
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut pasta_dvr).desired_width((direita.width() - 160.0).max(200.0)));
+                if ui.button("Salvar pasta").clicked() {
+                    salvar_pasta_dvr = true;
+                }
+            });
+            ui.label(egui::RichText::new(format!("Padrão do sistema: {}", crate::dvr::pasta_padrao().display())).color(SECUNDARIO));
+            ui.label(egui::RichText::new("Use um caminho absoluto. Deixe vazio e salve para restaurar o padrão.").color(SECUNDARIO));
+            ui.label(egui::RichText::new(format!("Agendamentos pendentes: {} · O PC precisa permanecer ligado e com o Saimo aberto",
+                app.dvr.quantidade_agendada())).color(SECUNDARIO));
+            ui.add_space(14.0);
+            ui.label(egui::RichText::new("DVR direto e econômico").font(forte(17.0)).color(TEXTO));
+            ui.label(egui::RichText::new(
+                "Grava a transmissão original, sem reencodificar e sem capturar a tela. As sessões são salvas em trechos MKV independentes, preparados para recuperação após interrupções."
+            ).color(SECUNDARIO));
+            ui.label(egui::RichText::new(
+                "O arquivo final é montado automaticamente quando possível. Trechos originais nunca são apagados na união."
+            ).color(SECUNDARIO));
             ui.add_space(18.0);
             rotulo_de_secao(ui, "Listas");
             ui.add_space(4.0);
@@ -374,8 +412,17 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(18.0);
             rotulo_de_secao(ui, "Legendas");
             ui.add_space(4.0);
+            if linha(ui, "Legendas automáticas", if app.legendas_automaticas {
+                "Ligadas: selecionar legenda disponível ao abrir o vídeo"
+            } else {
+                "Desligadas: padrão; escolha uma faixa manualmente no player"
+            }, Icone::Legendas).clicked() {
+                acao = Some(15);
+            }
             let idioma = legendas::idioma_guardado();
-            if linha(ui, "Idioma preferido", nome_do_idioma(&idioma), Icone::Legendas).on_hover_text("Liga sozinha a primeira legenda deste idioma").clicked() {
+            if linha(ui, "Idioma preferido", nome_do_idioma(&idioma), Icone::Legendas)
+                .on_hover_text("Idioma usado somente se Legendas automáticas estiver ligado")
+                .clicked() {
                 acao = Some(3);
             }
             ui.add_space(18.0);
@@ -413,11 +460,25 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(40.0);
         });
     });
+    app.pasta_gravacoes_texto = pasta_dvr;
+    if salvar_pasta_dvr {
+        let texto = match crate::dvr::configurar_pasta(&app.pasta_gravacoes_texto) {
+            Ok(destino) => {
+                app.pasta_gravacoes_texto = destino.display().to_string();
+                format!("Gravações e capturas serão salvas em {}", destino.display())
+            }
+            Err(erro) => format!("Não foi possível salvar a pasta: {erro}"),
+        };
+        app.aviso = Some((texto, std::time::Instant::now()));
+    }
     match acao {
         Some(0) => app.alternar_preencher(),
         Some(7) => app.alternar_upscaling(),
         Some(10) => app.alternar_audio_inteligente(),
         Some(11) => app.alternar_zero_delay(),
+        Some(13) => app.alternar_sugestoes_de_pulo(),
+        Some(14) => app.alternar_proximo_automatico(),
+        Some(15) => app.alternar_legendas_automaticas(),
         Some(1) => {
             let ordem = [1.0, 1.25, 1.5, 2.0, 0.75];
             let atual = ordem.iter().position(|v| *v == app.velocidade).unwrap_or(0);

@@ -141,6 +141,7 @@ fn chave(app: &App) -> u64 {
     app.busca_vod.hash(&mut h);
     app.favoritos_vod.hash(&mut h);
     app.favoritos.hash(&mut h);
+    app.radios_somente_favoritas.hash(&mut h);
     app.liberado.hash(&mut h);
     (app.filas.len(), app.acervo.len(), app.canais.len(), app.radios.len(), app.eventos.len()).hash(&mut h);
     app.colecoes_carregadas().hash(&mut h);
@@ -189,8 +190,14 @@ pub fn abrir_em_foco_na_fileira(app: &mut App) {
 }
 
 pub fn favoritar_em_foco_na_fileira(app: &mut App) {
-    if let Some((titulo, _)) = em_foco(app).and_then(|c| c.obra()) {
-        app.favoritar_vod(titulo);
+    let Some(cartao) = em_foco(app) else { return };
+    match &cartao.acao {
+        Acao::Radio(_) => app.favoritar_radio(&cartao.titulo),
+        _ => {
+            if let Some((titulo, _)) = cartao.obra() {
+                app.favoritar_vod(titulo);
+            }
+        }
     }
 }
 
@@ -295,28 +302,65 @@ pub(super) fn cartao_de_titulo(app: &App, item: ItemNaTela, capa: Option<String>
     c
 }
 
-/// "Continue assistindo", só com o que existe no acervo comum: o título
-/// reservado não pode reaparecer por aqui sem o código.
+/// Histórico inteligente: um cartão por título, sem perder episódios
+/// concluídos e sem transformar cada temporada em uma capa repetida.
+/// Não exibe conteúdos reservados que não estão no acervo comum.
 fn continuar(app: &App, filtro: impl Fn(bool) -> bool) -> Option<Fila> {
     let no_acervo: std::collections::HashMap<&str, &crate::vod::Achado> =
         app.acervo.iter().map(|a| (a.titulo.as_str(), a)).collect();
-    let cartoes: Vec<Cartao> = progresso::pendentes()
-        .into_iter()
-        .filter_map(|(rotulo, marca)| {
+    let mut vistos = std::collections::HashSet::new();
+    let mut cartoes = Vec::new();
+    for registro in progresso::resumo_historico() {
+        let nome = registro.titulo;
+        let Some(achado) = no_acervo.get(nome.as_str()) else { continue };
+        if achado.serie != registro.serie || !filtro(achado.serie) { continue; }
+        if !vistos.insert(nome.clone()) { continue; }
+        let item = ItemNaTela { titulo: nome.clone(), detalhe: achado.ano.clone(), serie: achado.serie, letra: achado.letra.clone() };
+        let mut c = Cartao::novo(nome.clone(), Imagem::Capa(nome.clone(), achado.serie),
+            Acao::Continuar(item), heroi_titulo(&nome, achado.serie));
+        let chave = if achado.serie {
+            format!("{nome} · T{} E{}", registro.temporada, registro.episodio)
+        } else {
+            nome.clone()
+        };
+        let marca = progresso::onde_parou(&chave);
+        c.progresso = marca.as_ref().map(progresso::fracao).filter(|p| *p > 0.0);
+        let detalhes = if achado.serie {
+            format!("T{} E{}", registro.temporada, registro.episodio)
+        } else {
+            "Filme".to_string()
+        };
+        let repeticoes = if registro.reproducoes > 1 {
+            format!(" · {} sessões", registro.reproducoes)
+        } else { String::new() };
+        c.sub = match marca {
+            Some(m) => format!("{detalhes} · {}{repeticoes}", progresso::falta(&m)),
+            None => format!("{detalhes}{repeticoes}"),
+        };
+        c.favorito = app.favoritos_vod.contains(&nome);
+        cartoes.push(c);
+        if cartoes.len() == 20 { break; }
+    }
+    // Progresso de instalações anteriores: até que sejam reproduzidos de novo,
+    // continuam visíveis sem duplicar uma série que já entrou pelo histórico.
+    if cartoes.len() < 20 {
+        for (rotulo, marca) in progresso::pendentes() {
             let nome = rotulo.split(" · ").next().unwrap_or(&rotulo).to_string();
-            let achado = no_acervo.get(nome.as_str())?;
-            if !filtro(achado.serie) {
-                return None;
-            }
+            let Some(achado) = no_acervo.get(nome.as_str()) else { continue };
+            if !filtro(achado.serie) || !vistos.insert(nome.clone()) { continue; }
             let item = ItemNaTela { titulo: nome.clone(), detalhe: achado.ano.clone(), serie: achado.serie, letra: achado.letra.clone() };
-            let mut c = Cartao::novo(rotulo.clone(), Imagem::Capa(nome.clone(), achado.serie), Acao::Continuar(item), heroi_titulo(&nome, achado.serie));
+            let mut c = Cartao::novo(nome.clone(), Imagem::Capa(nome.clone(), achado.serie),
+                Acao::Continuar(item), heroi_titulo(&nome, achado.serie));
             c.progresso = Some(progresso::fracao(&marca).max(0.02));
-            c.sub = progresso::falta(&marca);
+            c.sub = match rotulo.split_once(" · ") {
+                Some((_, episodio)) => format!("{episodio} · {}", progresso::falta(&marca)),
+                None => progresso::falta(&marca),
+            };
             c.favorito = app.favoritos_vod.contains(&nome);
-            Some(c)
-        })
-        .take(20)
-        .collect();
+            cartoes.push(c);
+            if cartoes.len() == 20 { break; }
+        }
+    }
     Some(Fila { titulo: "Continue assistindo".into(), tipo: Tipo::Capa, cartoes })
 }
 
@@ -658,11 +702,19 @@ fn cartao_de_radio(indice: usize, radio: &radios::Radio) -> Cartao {
     let imagem = radio.logo.clone().map(Imagem::Logo).unwrap_or(Imagem::Nenhuma);
     let mut c = Cartao::novo(radio.nome.clone(), imagem, Acao::Radio(indice), heroi);
     c.sub = estilo.unwrap_or("Rádio").to_string();
+    c.favorito = radios::eh_favorita(&radio.nome);
     c
 }
 
 fn filas_de_radios(app: &App) -> Vec<Fila> {
     let mut filas = Vec::new();
+    let favoritas: Vec<Cartao> = radios::favoritas()
+        .iter()
+        .filter_map(|nome| app.radios.iter().position(|r| r.nome == *nome))
+        .map(|i| cartao_de_radio(i, &app.radios[i]))
+        .collect();
+    filas.push(Fila { titulo: "Rádios favoritas".into(), tipo: Tipo::Largo, cartoes: favoritas });
+    if app.radios_somente_favoritas { return filas; }
     let recentes: Vec<Cartao> = radios::recentes()
         .iter()
         .filter_map(|nome| app.radios.iter().position(|r| r.nome == *nome))
@@ -815,6 +867,8 @@ pub fn pagina(app: &mut App, ui: &mut egui::Ui) {
             "Não deu para carregar a agenda agora. Tentando de novo em um minuto."
         } else if app.aba == Aba::Eventos && app.eventos_carregados {
             "Nenhum jogo nos canais da lista agora. A agenda se atualiza sozinha."
+        } else if app.aba == Aba::Radios && app.radios_somente_favoritas {
+            "Nenhuma rádio favorita. Volte a Todas as rádios e toque na estrela de uma estação."
         } else if app.aba == Aba::Radios && app.radios.is_empty() && !app.buscando_radios() {
             "Sem rádios por enquanto. Confira a internet e abra de novo."
         } else {
@@ -876,6 +930,30 @@ fn destaque(app: &mut App, ui: &mut egui::Ui, area: Rect, altura: f32) {
     if !sinopse.is_empty() {
         texto(&pintor, &sinopse, normal(16.0), branco(217), Pos2::new(x, y), largura, 2, false);
     }
+    // Filtros independentes da aba global Favoritos de filmes/séries.
+    if app.aba == Aba::Radios {
+        let barra = Rect::from_min_size(
+            Pos2::new(x, area.top() + altura - 44.0),
+            egui::vec2(332.0, 36.0),
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new().max_rect(barra)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if ui.selectable_label(!app.radios_somente_favoritas, "Todas as rádios").clicked() {
+                    app.radios_somente_favoritas = false;
+                    app.foco_fila = 0;
+                    app.foco_vod = 0;
+                }
+                if ui.selectable_label(app.radios_somente_favoritas, "★ Favoritos").clicked() {
+                    app.radios_somente_favoritas = true;
+                    app.foco_fila = 0;
+                    app.foco_vod = 0;
+                }
+            },
+        );
+    }
     // A rádio que está tocando, à direita do destaque das Rádios.
     if app.aba == Aba::Radios {
         if let Some(radio) = app.radio.as_ref().map(|r| (r.nome.clone(), r.logo.clone(), r.confirmado)) {
@@ -910,6 +988,15 @@ fn tocando_agora(app: &mut App, ui: &mut egui::Ui, area: Rect, (nome, logo, conf
     ui.scope_builder(egui::UiBuilder::new().max_rect(botao), |ui| {
         if super::botao_redondo(ui, Icone::Parar, 44.0, "Parar a rádio", false).clicked() {
             app.parar_radio();
+        }
+    });
+    let favorita = radios::eh_favorita(&nome);
+    let estrela = Rect::from_min_size(Pos2::new(botao.left() - 52.0, botao.top()), egui::vec2(44.0, 44.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(estrela), |ui| {
+        let icone = if favorita { Icone::Estrela } else { Icone::EstrelaVazia };
+        let dica = if favorita { "Remover das rádios favoritas" } else { "Adicionar às rádios favoritas" };
+        if super::botao_redondo(ui, icone, 44.0, dica, favorita).clicked() {
+            app.favoritar_radio(&nome);
         }
     });
 }
@@ -1027,7 +1114,7 @@ fn fileiras(app: &mut App, ui: &mut egui::Ui, area: Rect, filas: &Rc<Vec<Fila>>,
     }
     let total = y + 120.0;
     let mut escolhido: Option<Acao> = None;
-    let mut favoritar: Option<String> = None;
+    let mut favoritar: Option<(String, bool)> = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
         egui::ScrollArea::vertical()
             .id_salt(("fileiras", app.aba as u8))
@@ -1053,8 +1140,12 @@ fn fileiras(app: &mut App, ui: &mut egui::Ui, area: Rect, filas: &Rc<Vec<Fila>>,
                 }
             });
     });
-    if let Some(titulo) = favoritar {
-        app.favoritar_vod(titulo);
+    if let Some((titulo, radio)) = favoritar {
+        if radio {
+            app.favoritar_radio(&titulo);
+        } else {
+            app.favoritar_vod(titulo);
+        }
         return;
     }
     if let Some(acao) = escolhido {
@@ -1069,7 +1160,7 @@ fn uma_fileira(
     fila: &Fila,
     andou: bool,
     escolhido: &mut Option<Acao>,
-    favoritar: &mut Option<String>,
+    favoritar: &mut Option<(String, bool)>,
 ) {
     let r = ui.max_rect();
     ui.painter().text(Pos2::new(r.left() + MARGEM + 6.0, r.top() + 12.0), Align2::LEFT_TOP, &fila.titulo, forte(21.0), TEXTO);
@@ -1102,19 +1193,39 @@ fn uma_fileira(
                         let cartao = &fila.cartoes[k];
                         let focado = indice_fila == app.foco_fila && k == foco;
                         let resposta = desenhar_cartao(app, ui, lugar(k), cartao, fila.tipo, focado, id.with(k));
+                        // O clique na estrela não deve disparar a reprodução.
+                        let clicou_estrela = if matches!(&cartao.acao, Acao::Radio(_)) {
+                            let (_, img) = medidas(fila.tipo);
+                            let quadro = Rect::from_min_size(lugar(k).min + egui::vec2(6.0, 6.0), img);
+                            let centro = quadro.right_top() + egui::vec2(-18.0, 18.0);
+                            let alvo = Rect::from_center_size(centro, egui::vec2(34.0, 34.0));
+                            let estrela = ui.interact(alvo, id.with((k, "favoritar-radio")), Sense::click())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(if cartao.favorito {
+                                    "Remover rádio dos favoritos"
+                                } else {
+                                    "Adicionar rádio aos favoritos"
+                                });
+                            if estrela.clicked() {
+                                *favoritar = Some((cartao.titulo.clone(), true));
+                            }
+                            estrela.clicked()
+                        } else { false };
                         if resposta.hovered() && ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
                             app.foco_fila = indice_fila;
                             app.foco_vod = k;
                             app.heroi = Some(cartao.heroi.clone());
                         }
-                        if resposta.clicked() {
+                        if resposta.clicked() && !clicou_estrela {
                             app.foco_fila = indice_fila;
                             app.foco_vod = k;
                             *escolhido = Some(cartao.acao.clone());
                         }
                         if resposta.secondary_clicked() {
-                            if let Some((titulo, _)) = cartao.obra() {
-                                *favoritar = Some(titulo);
+                            if matches!(&cartao.acao, Acao::Radio(_)) {
+                                *favoritar = Some((cartao.titulo.clone(), true));
+                            } else if let Some((titulo, _)) = cartao.obra() {
+                                *favoritar = Some((titulo, false));
                             }
                         }
                     }
@@ -1169,7 +1280,10 @@ pub(super) fn desenhar_cartao(app: &mut App, ui: &mut egui::Ui, rect: Rect, cart
         let x = quadro.left();
         let y = quadro.bottom() + 7.0;
         if tipo == Tipo::Capa {
-            texto(&pintor, &cartao.titulo, normal(14.5), TEXTO, Pos2::new(x, y), quadro.width(), 2, false);
+            texto(&pintor, &cartao.titulo, normal(14.5), TEXTO, Pos2::new(x, y), quadro.width(), 1, false);
+            if !cartao.sub.is_empty() {
+                texto(&pintor, &cartao.sub, normal(13.5), SECUNDARIO, Pos2::new(x, y + 22.0), quadro.width(), 1, false);
+            }
         } else {
             texto(&pintor, &cartao.titulo, forte(15.5), TEXTO, Pos2::new(x, y), quadro.width(), 1, false);
             if !cartao.sub.is_empty() {
@@ -1179,7 +1293,8 @@ pub(super) fn desenhar_cartao(app: &mut App, ui: &mut egui::Ui, rect: Rect, cart
     }
     let dica = match &cartao.acao {
         Acao::Canal(_) => "Clique ou Enter assiste ao vivo",
-        Acao::Radio(_) => "Clique ou Enter para ouvir",
+        Acao::Radio(_) if cartao.favorito => "Clique para ouvir · botão direito ou S remove dos favoritos",
+        Acao::Radio(_) => "Clique para ouvir · botão direito ou S favorita",
         Acao::Pagina(_) | Acao::Explorar(..) => "Clique ou Enter abre",
         _ if cartao.favorito => "Clique abre a ficha · botão direito ou S tira dos favoritos",
         _ => "Clique abre a ficha · botão direito ou S favorita",
@@ -1213,10 +1328,13 @@ fn imagem_do_cartao(app: &mut App, ui: &egui::Ui, quadro: Rect, cartao: &Cartao,
     if let Some((selo, vivo)) = cartao.selo.as_ref() {
         selo_vivo(pintor, quadro.min + egui::vec2(10.0, 10.0), selo, *vivo, 11.5);
     }
-    if cartao.favorito && tipo == Tipo::Capa {
+    let radio = matches!(&cartao.acao, Acao::Radio(_));
+    if (radio || cartao.favorito) && matches!(tipo, Tipo::Capa | Tipo::Largo) {
         let centro = quadro.right_top() + egui::vec2(-18.0, 18.0);
-        pintor.circle_filled(centro, 14.0, Color32::from_black_alpha(160));
-        icones::pintar(pintor, Icone::Estrela, centro, 18.0, super::AMARELO);
+        pintor.circle_filled(centro, 16.0, Color32::from_black_alpha(185));
+        let icone = if cartao.favorito { Icone::Estrela } else { Icone::EstrelaVazia };
+        icones::pintar(pintor, icone, centro, 21.0,
+            if cartao.favorito { super::AMARELO } else { TEXTO });
     }
     if let Some(fracao) = cartao.progresso.filter(|f| *f > 0.0) {
         let trilho = Rect::from_min_size(Pos2::new(quadro.left() + 8.0, quadro.bottom() - 10.0), egui::vec2(quadro.width() - 16.0, 4.0));

@@ -12,7 +12,7 @@
 //! escolhido por último; quem nunca escolheu fica com o que o outro escolheu.
 //! Listas adicionadas: união pelo link.
 
-use crate::{connect, listas, minhas_listas, progresso, App};
+use crate::{connect, listas, minhas_listas, progresso, radios, App};
 use serde_json::{json, Value};
 
 /// "Série · T1 E2" -> ("Série", 1, 2).
@@ -85,8 +85,12 @@ impl App {
         json!({
             "t": "dados",
             "progresso": lista,
+            // Campo opcional novo: clientes antigos podem ignorar sem quebrar
+            // o protocolo de progresso/favoritos da TV Box e do celular.
+            "historico": progresso::eventos_historico(),
             "favTitulos": fav_titulos,
             "favCanais": self.favoritos,
+            "favRadios": radios::favoritas(),
             "listas": {
                 "canais": listas::canais().unwrap_or_default(),
                 "filmes": listas::filmes().unwrap_or_default(),
@@ -107,6 +111,13 @@ impl App {
     pub(crate) fn aplicar_dados(&mut self, msg: &Value) {
         let num = |v: &Value, campo: &str| v.get(campo).and_then(Value::as_f64).unwrap_or(0.0);
         let texto = |v: &Value, campo: &str| v.get(campo).and_then(Value::as_str).unwrap_or("").to_string();
+
+        if let Some(remotos) = msg.get("historico") {
+            // Sincronização aditiva: IDs iguais não criam reproduções extras.
+            if let Ok(eventos) = serde_json::from_value::<Vec<progresso::EventoHistorico>>(remotos.clone()) {
+                progresso::importar_historico(&eventos);
+            }
+        }
 
         for p in msg.get("progresso").and_then(Value::as_array).into_iter().flatten() {
             let titulo = texto(p, "titulo");
@@ -155,6 +166,13 @@ impl App {
         if mudou_canais {
             crate::gravar_lista("favoritos.txt", &self.favoritos);
             self.reordenar();
+        }
+
+        if let Some(nomes) = msg.get("favRadios").and_then(Value::as_array) {
+            let remotas: Vec<String> = nomes.iter().filter_map(Value::as_str).map(str::to_string).collect();
+            if radios::importar_favoritas(&remotas) {
+                self.versao_dados = self.versao_dados.wrapping_add(1);
+            }
         }
 
         if let Some(l) = msg.get("listas") {

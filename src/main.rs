@@ -23,6 +23,8 @@ mod mpv;
 mod progresso;
 mod pulos;
 mod radios;
+mod dvr;
+mod dvr_stream;
 mod legendas;
 mod midia;
 mod bateria;
@@ -311,9 +313,6 @@ impl EpisodioTocando {
     }
 }
 
-/// Quanto tempo o cartão do próximo episódio espera antes de seguir sozinho.
-pub const ESPERA_DO_PROXIMO: Duration = Duration::from_secs(10);
-
 /// A rádio no ar: toca no mesmo mpv do vídeo, só com o som.
 pub struct TocandoRadio {
     pub nome: String,
@@ -353,6 +352,26 @@ struct App {
     volume: i32,
     mudo: bool,
     pausado: bool,
+    /// Marcacoes externas de abertura podem estar incorretas: so sugerir se optou.
+    pub sugerir_pulos: bool,
+    /// Avancar somente quando a fonte realmente encerrar; desligado por padrao.
+    pub proximo_automatico: bool,
+    pub dvr: dvr::Dvr,
+    pub pasta_gravacoes_texto: String,
+    pub agendamento_aberto: bool,
+    pub agendamentos_lista_aberta: bool,
+    pub agendamento_calendario_aberto: bool,
+    pub agendamento_programa: Option<String>,
+    pub agendamento_inicio: String,
+    pub agendamento_minutos: String,
+    pub agendamento_mes: u32,
+    pub agendamento_ano: i32,
+    pub gravacao_dialogo_aberto: bool,
+    pub gravacao_com_limite: bool,
+    pub gravacao_minutos: String,
+    pub ultima_gravacao_manual: Option<std::path::PathBuf>,
+    pub gravacao_concluida_dialogo_aberto: bool,
+    ultima_verificacao_dvr: Instant,
     logos: HashMap<String, Option<egui::TextureHandle>>,
     /// Chave no mapa, endereço e o lado máximo em pixels.
     pedidos_de_logo: Vec<(String, String, u32)>,
@@ -411,6 +430,8 @@ struct App {
     pub upscaling: u8,
     pub audio_inteligente: bool,
     pub zero_delay: u8,
+    /// Padrão desligado: o mpv não deve escolher legendas automaticamente.
+    pub legendas_automaticas: bool,
     /// Altura do vídeo que está tocando (para desligar o deband em vídeo que já é do tamanho do alvo).
     altura_do_video: u32,
     pub gpu_nome: &'static str,
@@ -502,6 +523,8 @@ struct App {
     /// Temporadas já pedidas ao TMDB (id, número).
     temporadas_pedidas: std::collections::HashSet<(u32, u32)>,
     pub radios: Vec<radios::Radio>,
+    /// Filtro visual da aba Rádios: Todos ou Favoritos.
+    pub radios_somente_favoritas: bool,
     buscando_radios: bool,
     pub radio: Option<TocandoRadio>,
     colecoes_pedidas: bool,
@@ -680,6 +703,26 @@ impl App {
             volume: 100,
             mudo: false,
             pausado: false,
+            sugerir_pulos: std::fs::read_to_string(catalogo::pasta().join("sugerir-pulos.txt"))
+                .ok().map(|v| v.trim() == "1").unwrap_or(true),
+            proximo_automatico: std::fs::read_to_string(catalogo::pasta().join("proximo-automatico.txt"))
+                .ok().map(|v| v.trim() == "1").unwrap_or(true),
+            dvr: dvr::Dvr::novo(),
+            pasta_gravacoes_texto: dvr::pasta().display().to_string(),
+            agendamento_aberto: false,
+            agendamentos_lista_aberta: false,
+            agendamento_calendario_aberto: false,
+            agendamento_programa: None,
+            agendamento_inicio: (chrono::Local::now() + chrono::Duration::minutes(5)).format("%Y-%m-%d %H:%M").to_string(),
+            agendamento_minutos: "60".into(),
+            agendamento_mes: chrono::Local::now().format("%m").to_string().parse().unwrap_or(1),
+            agendamento_ano: chrono::Local::now().format("%Y").to_string().parse().unwrap_or(2026),
+            gravacao_dialogo_aberto: false,
+            gravacao_com_limite: false,
+            gravacao_minutos: "60".into(),
+            ultima_gravacao_manual: None,
+            gravacao_concluida_dialogo_aberto: false,
+            ultima_verificacao_dvr: Instant::now(),
             logos: HashMap::new(),
             pedidos_de_logo: Vec::new(),
             ordem_das_capas: std::collections::VecDeque::new(),
@@ -737,6 +780,8 @@ impl App {
                 .ok()
                 .and_then(|s| s.trim().parse::<u8>().ok())
                 .unwrap_or(0),
+            legendas_automaticas: std::fs::read_to_string(catalogo::pasta().join("legendas-automaticas.txt"))
+                .ok().map(|v| v.trim() == "1").unwrap_or(false),
             gpu_nome: detectar_gpu(cc),
             ultimo_mouse: None,
             retomou_canal: false,
@@ -781,6 +826,7 @@ impl App {
             fichas_pedidas: std::collections::HashSet::new(),
             temporadas_pedidas: std::collections::HashSet::new(),
             radios: radios::locais(),
+            radios_somente_favoritas: false,
             buscando_radios: false,
             radio: None,
             colecoes_pedidas: false,
@@ -1284,6 +1330,7 @@ impl App {
         self.radio = None;
         self.episodios_no_player = false;
         let Some(mpv) = self.mpv.as_ref() else { return };
+        // DVR direto: trocar conteúdo não interrompe a gravação do canal original.
         let Some(url) = urls.get(fonte).cloned() else {
             telemetria::caiu("vod", &titulo, urls.len());
             self.aviso = Some((format!("{titulo}: nenhuma fonte abriu"), Instant::now()));
@@ -1294,6 +1341,9 @@ impl App {
         // legenda escolhida — que segue junto para o arquivo novo.
         let anterior = self.tocando_vod.take().filter(|t| t.titulo == titulo);
         let legenda = anterior.as_ref().and_then(|t| t.legenda_escolhida.as_ref().map(|(_, c)| c.clone()));
+        // Uma faixa escolhida manualmente permanece na troca de fonte.
+        // Nas demais reproduções, o padrão é nenhuma legenda selecionada.
+        mpv.definir("sid", if self.legendas_automaticas || legenda.is_some() { "auto" } else { "no" });
         mpv.tocar_com_legenda(&url, None, None, legenda.as_deref());
         mpv.pausa(false);
         self.pausado = false;
@@ -1302,6 +1352,12 @@ impl App {
         let (episodio, marcas, legendas, legenda_escolhida) = anterior
             .map(|t| (t.episodio, t.marcas, t.legendas, t.legenda_escolhida))
             .unwrap_or((None, None, Vec::new(), None));
+        // O histórico registra aberturas mesmo se uma fonte não informar
+        // duração/posição. Episódios usam uma chave própria após tocar_vod.
+        let registrar_filme = nova && !titulo.contains(" · T");
+        if registrar_filme {
+            progresso::registrar_filme(&titulo);
+        }
         self.tocando_vod = Some(TocandoVod {
             titulo,
             urls,
@@ -1321,12 +1377,19 @@ impl App {
         self.letreiro_ate = Instant::now() + SUMIR_LETREIRO;
         self.aba = Aba::Canais;
         self.mostrar_controles();
+        if registrar_filme {
+            self.mandar_dados();
+        }
     }
 
     fn tocar_episodio(&mut self, serie: &str, episodio: vod::Episodio, lista: Vec<vod::Episodio>) {
+        // Facilita identificar um episódio incorreto sem expor URLs das fontes.
+        diagnostico::etapa(&format!("episódio selecionado: {serie} T{} E{}", episodio.temporada, episodio.numero));
         let titulo = format!("{} · T{} E{}", serie, episodio.temporada, episodio.numero);
         let urls = self.fontes_preferidas(serie, &episodio.urls);
-        // Some antes de tocar: senão a troca de título apagaria o episódio.
+        // Salva imediatamente o episódio anterior antes de trocar (sem esperar
+        // o intervalo de 15 s); depois a nova reprodução terá seu próprio título.
+        self.guardar_progresso(true);
         self.tocando_vod = None;
         self.tocar_vod(titulo.clone(), urls, 0, true);
         let Some(t) = self.tocando_vod.as_mut() else { return };
@@ -1337,6 +1400,10 @@ impl App {
             versao: episodio.versao.clone(),
             lista,
         });
+        // A seleção do episódio precisa ficar registrada desde o início:
+        // streams sem time-pos também aparecem no histórico e são retomáveis.
+        progresso::registrar_episodio(serie, episodio.temporada, episodio.numero);
+        self.mandar_dados();
         self.pedir_legendas(titulo.clone(), self.generos.id(serie, true), true, episodio.temporada, episodio.numero);
         self.pedir_marcas(titulo, self.generos.id(serie, true), episodio.temporada, episodio.numero);
         self.pedir_logo(serie, true);
@@ -1407,6 +1474,27 @@ impl App {
         });
     }
 
+    /// Preferência deste dispositivo: legendas embutidas e externas
+    /// não ligam sozinhas quando esta opção está desligada.
+    pub fn alternar_legendas_automaticas(&mut self) {
+        self.legendas_automaticas = !self.legendas_automaticas;
+        let _ = std::fs::write(
+            catalogo::pasta().join("legendas-automaticas.txt"),
+            if self.legendas_automaticas { "1" } else { "0" },
+        );
+        if let Some(mpv) = self.mpv.as_ref() {
+            mpv.escolher_faixa(
+                "sub",
+                if self.legendas_automaticas { Some("auto") } else { None },
+            );
+        }
+        if !self.legendas_automaticas {
+            if let Some(t) = self.tocando_vod.as_mut() {
+                t.legenda_escolhida = None;
+            }
+        }
+    }
+
     pub fn desligar_legendas(&mut self) {
         if let Some(mpv) = self.mpv.as_ref() {
             mpv.escolher_faixa("sub", None);
@@ -1440,6 +1528,7 @@ impl App {
 
     /// O trecho que dá para pular agora, se houver.
     pub fn pulo_na_tela(&self) -> Option<pulos::Trecho> {
+        if !self.sugerir_pulos { return None; }
         let t = self.tocando_vod.as_ref()?;
         let (posicao, duracao) = t.visto;
         t.marcas.as_ref()?.em(posicao, duracao).cloned()
@@ -1455,25 +1544,25 @@ impl App {
         }
     }
 
-    /// O episódio seguinte, quando o cartão dele está à vista.
-    pub fn proximo_na_tela(&self) -> Option<(vod::Episodio, u64)> {
+    /// Exibe o proximo episodio so no fim real da duracao conhecida. Nao usa
+    /// marcacoes externas: elas frequentemente antecipam os creditos.
+    pub fn proximo_na_tela(&self) -> Option<vod::Episodio> {
+        if !self.proximo_automatico { return None; }
         let t = self.tocando_vod.as_ref()?;
-        let desde = t.proximo_desde?;
-        if t.proximo_dispensado {
-            return None;
-        }
-        let seguinte = t.episodio.as_ref()?.seguinte()?;
-        let resta = ESPERA_DO_PROXIMO.saturating_sub(desde.elapsed()).as_secs() + 1;
-        Some((seguinte, resta))
+        t.proximo_desde?;
+        if t.proximo_dispensado { return None; }
+        t.episodio.as_ref()?.seguinte()
     }
 
     pub fn tocar_proximo(&mut self) -> bool {
         let Some(t) = self.tocando_vod.as_ref() else { return false };
         let Some(ep) = t.episodio.clone() else { return false };
         let Some(seguinte) = ep.seguinte() else { return false };
-        // O que acabou não fica no "continuar assistindo".
-        progresso::esquecer(&t.titulo);
+        // A troca deve salvar a posição do episódio anterior primeiro; depois
+        // apagamos a marca do episódio concluído para não oferecê-lo novamente.
+        let anterior = t.titulo.clone();
         self.tocar_episodio(&ep.serie, seguinte, ep.lista);
+        progresso::esquecer(&anterior);
         true
     }
 
@@ -1507,25 +1596,19 @@ impl App {
             t.visto = v;
         }
         let (posicao, duracao) = t.visto;
-        let tem_seguinte = t.episodio.as_ref().and_then(|e| e.seguinte()).is_some();
-        if !tem_seguinte || t.proximo_dispensado {
+        if !self.proximo_automatico || t.proximo_dispensado
+            || t.episodio.as_ref().and_then(|e| e.seguinte()).is_none() {
+            t.proximo_desde = None;
             return;
         }
-        // Os créditos marcados; sem marca, os últimos 30 s de um episódio.
-        let creditos = t
-            .marcas
-            .as_ref()
-            .and_then(|m| m.creditos())
-            .unwrap_or(if duracao > 300.0 { duracao - 30.0 } else { f64::MAX });
-        if posicao >= creditos && t.proximo_desde.is_none() {
+        // O temporizador nao inicia a proxima reproducao. O mpv avisa
+        // o termino REAL com Aviso::Fim; marcas de creditos nao sao confiaveis.
+        let perto_do_fim = duracao > 0.0 && posicao >= (duracao - 25.0).max(0.0)
+            && posicao <= duracao;
+        if perto_do_fim && t.proximo_desde.is_none() {
             t.proximo_desde = Some(Instant::now());
-        } else if posicao < creditos - 5.0 {
-            // Voltou para antes dos créditos: o cartão some.
+        } else if !perto_do_fim {
             t.proximo_desde = None;
-        }
-        let venceu = t.proximo_desde.map(|d| d.elapsed() >= ESPERA_DO_PROXIMO).unwrap_or(false);
-        if venceu && !self.pausado {
-            self.tocar_proximo();
         }
     }
 
@@ -1539,11 +1622,16 @@ impl App {
         if !filme.confirmado {
             return;
         }
-        if let Some((posicao, duracao)) = mpv.posicao() {
+        // Em alguns HLS o mpv deixa time-pos indisponível na transição.
+        // O último ponto medido em acompanhar_vod continua válido.
+        let medido = mpv.posicao()
+            .filter(|(posicao, _)| *posicao > 0.0)
+            .or_else(|| (filme.visto.0 > 0.0).then_some(filme.visto));
+        if let Some((posicao, duracao)) = medido {
             progresso::salvar(&filme.titulo, posicao, duracao);
-            if agora {
-                self.mandar_dados();
-            }
+        }
+        if agora {
+            self.mandar_dados();
         }
     }
 
@@ -1744,6 +1832,7 @@ impl App {
         self.radio = None;
         self.fonte_preferida = None;
         let Some(mpv) = self.mpv.as_ref() else { return };
+        // Gravações independentes continuam ao mudar de canal.
         let Some(c) = self.canais.get(canal) else { return };
         // Sintonia nova começa pela fonte que tocou da última vez.
         let fonte = if nova && fonte == 0 {
@@ -1758,6 +1847,7 @@ impl App {
             self.tocando = None;
             return;
         };
+        mpv.definir("sid", if self.legendas_automaticas { "auto" } else { "no" });
         mpv.tocar_ao_vivo(&f.url, f.referer.as_deref(), f.agente.as_deref());
         mpv.pausa(false);
         self.pausado = false;
@@ -1847,6 +1937,11 @@ impl App {
                                     (t.titulo.clone(), t.fonte, t.desde.elapsed().as_millis());
                                 let url = t.urls.get(fonte).cloned().unwrap_or_default();
                                 telemetria::tocou("vod", &titulo, &url, fonte + 1, ms);
+                                // Registrar também episódios completos: sem marca parcial,
+                                // a página da série voltava a sugerir T1 E1.
+                                if let Some(ep) = t.episodio.as_ref() {
+                                    progresso::lembrar_episodio(&ep.serie, ep.temporada, ep.numero);
+                                }
                                 self.retomar();
                             }
                         }
@@ -1864,7 +1959,7 @@ impl App {
                         let cedo = visto.0 < 30.0 || (visto.1 > 0.0 && visto.1 < 120.0);
                         if acabou && cedo {
                             self.proxima_fonte_vod(&format!("terminou em {} s", visto.0 as u64));
-                        } else if acabou && self.tocar_proximo() {
+                        } else if acabou && self.proximo_automatico && self.tocar_proximo() {
                             // Série: o episódio seguinte já está a caminho.
                         } else if acabou {
                             // Chegou ao fim: nada a retomar da próxima vez.
@@ -2057,7 +2152,7 @@ impl App {
                     let automatica = lista.iter().find(|o| o.idioma == idioma).cloned();
                     if let Some(t) = self.tocando_vod.as_mut().filter(|t| t.titulo == titulo) {
                         t.legendas = lista;
-                        if !idioma.is_empty() && t.legenda_escolhida.is_none() {
+                        if self.legendas_automaticas && !idioma.is_empty() && t.legenda_escolhida.is_none() {
                             if let Some(o) = automatica {
                                 self.escolher_legenda(o);
                             }
@@ -2852,6 +2947,26 @@ impl App {
         Instant::now() < self.controles_ate || self.pausado
     }
 
+    pub fn alternar_sugestoes_de_pulo(&mut self) {
+        self.sugerir_pulos = !self.sugerir_pulos;
+        let _ = std::fs::write(
+            catalogo::pasta().join("sugerir-pulos.txt"),
+            if self.sugerir_pulos { "1" } else { "0" },
+        );
+    }
+
+    pub fn alternar_proximo_automatico(&mut self) {
+        self.proximo_automatico = !self.proximo_automatico;
+        let _ = std::fs::write(
+            catalogo::pasta().join("proximo-automatico.txt"),
+            if self.proximo_automatico { "1" } else { "0" },
+        );
+        if let Some(t) = self.tocando_vod.as_mut() {
+            // O usuario pode desligar a qualquer momento, sem corrida com o timer.
+            t.proximo_desde = None;
+        }
+    }
+
     pub fn alternar_pausa(&mut self) {
         // Ao vivo não pausa: só filme e série param.
         self.pausado = self.tocando_vod.is_some() && !self.pausado;
@@ -3525,6 +3640,130 @@ vec4 hook() {{
         }
     }
 
+    // MARK: - DVR de TV ao vivo
+
+    /// A captura usa o quadro de vídeo do mpv; não fotografa botões ou menus.
+    pub fn capturar_ao_vivo(&mut self) {
+        let Some(nome) = self.tocando.as_ref().and_then(|t| self.canais.get(t.canal))
+            .map(|c| c.nome.clone()) else { return; };
+        let resultado = self.mpv.as_ref().ok_or("Player não disponível".to_string())
+            .and_then(|m| dvr::captura(m, &nome));
+        let texto = match resultado {
+            Ok(p) => format!("Captura solicitada: {}", p.display()),
+            Err(e) => format!("Captura não realizada: {e}"),
+        };
+        self.aviso = Some((texto, Instant::now()));
+    }
+
+    /// Abre a pasta de vídeos e destaca o último arquivo manual, quando disponível.
+    pub fn abrir_pasta_gravacoes(&mut self) {
+        if let Err(e) = dvr::abrir_destino(self.ultima_gravacao_manual.as_deref()) {
+            self.aviso = Some((e, Instant::now()));
+        }
+    }
+
+    /// Grava o fluxo original do canal em segmentos, independente do player.
+    pub fn alternar_gravacao_ao_vivo(&mut self) {
+        let Some(indice) = self.tocando.as_ref().map(|t| t.canal) else { return };
+        let Some(nome) = self.canais.get(indice).map(|c| c.nome.clone()) else { return };
+        if self.dvr.ativo_no_canal(&nome) {
+            let aviso = self.dvr.parar(&nome)
+                .map(|_| "Encerrando gravação e preparando arquivo final; os trechos já ficam salvos.".to_string())
+                .unwrap_or_else(|e| format!("Não foi possível parar: {e}"));
+            self.aviso = Some((aviso, Instant::now()));
+        } else {
+            self.gravacao_dialogo_aberto = true;
+            self.gravacao_com_limite = false;
+            self.gravacao_minutos = "60".into();
+            self.mostrar_controles();
+        }
+    }
+
+    /// Sem reencodificação; a interface só informa "gravando" depois de
+    /// detectar dados reais no disco, nunca após um simples spawn().
+    pub fn confirmar_gravacao_manual(&mut self) {
+        let Some((indice, fonte, confirmado)) = self.tocando.as_ref()
+            .map(|t| (t.canal, t.fonte, t.confirmado)) else { return };
+        if !confirmado {
+            self.aviso = Some(("Aguarde a transmissão começar antes de gravar".into(), Instant::now()));
+            return;
+        }
+        let Some(canal) = self.canais.get(indice).cloned() else { return };
+        let duracao = if self.gravacao_com_limite {
+            match self.gravacao_minutos.trim().parse::<u64>() {
+                Ok(m) if (1..=480).contains(&m) => Some(m * 60),
+                _ => {
+                    self.aviso = Some(("Informe uma duração entre 1 e 480 minutos".into(), Instant::now()));
+                    return;
+                }
+            }
+        } else { None };
+        match self.dvr.iniciar_manual(&canal, fonte, duracao) {
+            Ok(_pasta) => {
+                self.gravacao_dialogo_aberto = false;
+                self.aviso = Some((
+                    format!("DVR preparando {}. O indicador ficará vermelho quando receber vídeo.", canal.nome),
+                    Instant::now(),
+                ));
+            }
+            Err(e) => self.aviso = Some((format!("Gravação indisponível: {e}"), Instant::now())),
+        }
+    }
+
+    pub fn botao_agendar_ao_vivo(&mut self) {
+        let Some(nome) = self.tocando.as_ref()
+            .and_then(|t| self.canais.get(t.canal)).map(|c| c.nome.clone()) else { return };
+        if !self.dvr.agendamentos_do_canal(&nome).is_empty() {
+            self.agendamentos_lista_aberta = true;
+            self.agendamento_aberto = false;
+            self.mostrar_controles();
+        } else {
+            self.abrir_agendamento_ao_vivo();
+        }
+    }
+
+    pub fn abrir_agendamento_ao_vivo(&mut self) {
+        self.agendamentos_lista_aberta = false;
+        self.agendamento_calendario_aberto = false;
+        self.agendamento_programa = None;
+        let Some(t) = self.tocando.as_ref() else { return; };
+        let Some(canal) = self.canais.get(t.canal) else { return; };
+        // Se houver programação, sugerir o horário do próximo programa.
+        let inicio = epg::agora_e_depois(&canal.nome).and_then(|(_, proximo)| proximo)
+            .map(|p| p.inicio)
+            .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
+            .map(|utc| utc.with_timezone(&chrono::Local))
+            .unwrap_or_else(|| chrono::Local::now() + chrono::Duration::minutes(5));
+        self.agendamento_inicio = inicio.format("%Y-%m-%d %H:%M").to_string();
+        self.agendamento_mes = inicio.format("%m").to_string().parse().unwrap_or(1);
+        self.agendamento_ano = inicio.format("%Y").to_string().parse().unwrap_or(2026);
+        self.agendamento_minutos = "60".into();
+        self.agendamento_aberto = true;
+        self.mostrar_controles();
+    }
+
+    pub fn confirmar_agendamento(&mut self) {
+        let Some((indice, fonte)) = self.tocando.as_ref().map(|t| (t.canal, t.fonte)) else { return; };
+        let Some(canal) = self.canais.get(indice) else { return; };
+        let minutos = self.agendamento_minutos.trim().parse::<u32>();
+        let resultado = minutos.map_err(|_| "Informe a duração em minutos".to_string())
+            .and_then(|min| self.dvr.agendar(
+                &canal.nome, fonte, &self.agendamento_inicio, min,
+                self.agendamento_programa.clone(),
+            ));
+        match resultado {
+            Ok(()) => {
+                self.agendamento_aberto = false;
+                self.agendamentos_lista_aberta = true;
+                self.aviso = Some((
+                    "Gravação agendada. Confira o horário no ícone de calendário.".into(),
+                    Instant::now(),
+                ));
+            }
+            Err(e) => self.aviso = Some((format!("Não foi possível agendar: {e}"), Instant::now())),
+        }
+    }
+
     // MARK: - Rádios
 
     /// A lista do repositório por trás; a guardada já está na tela.
@@ -3554,6 +3793,8 @@ vec4 hook() {{
             self.aviso = Some(("O player não abriu: a rádio não tem como tocar".into(), Instant::now()));
             return;
         };
+        // Uma gravação agendada/manual continua ao abrir rádio.
+        mpv.definir("sid", "no");
         mpv.tocar_ao_vivo(&radio.url, None, None);
         mpv.pausa(false);
         self.pausado = false;
@@ -3566,6 +3807,14 @@ vec4 hook() {{
             desde: Instant::now(),
             confirmado: false,
         });
+    }
+
+    /// Alterna e persiste a rádio favorita. O teclado S e o mouse usam a
+    /// mesma função, sem confundir com favoritos de filmes ou de canais.
+    pub fn favoritar_radio(&mut self, nome: &str) {
+        radios::alternar_favorita(nome);
+        self.versao_dados = self.versao_dados.wrapping_add(1);
+        self.mandar_dados();
     }
 
     pub fn parar_radio(&mut self) {
@@ -4057,6 +4306,19 @@ impl eframe::App for App {
         }
         self.cuidar_dos_recados(ctx);
         self.cuidar_dos_eventos(ctx);
+        if self.ultima_verificacao_dvr.elapsed() >= Duration::from_secs(1) {
+            self.ultima_verificacao_dvr = Instant::now();
+            for recado in self.dvr.atualizar(&self.canais) {
+                self.aviso = Some((recado, Instant::now()));
+            }
+            if let Some(arquivo) = self.dvr.retirar_finalizacao_manual() {
+                self.ultima_gravacao_manual = Some(arquivo);
+                self.gravacao_concluida_dialogo_aberto = true;
+            }
+        }
+        if self.dvr.ha_agenda() || self.dvr.gravando() {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
         self.cuidar_do_mpv(ctx);
         self.cuidar_do_connect(ctx);
         self.cuidar_da_midia();

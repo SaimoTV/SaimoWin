@@ -228,6 +228,42 @@ pub fn desenhar(app: &mut App, ui: &mut egui::Ui) {
     if app.dialogo_listas.is_some() {
         janelas::listas(app, ctx);
     }
+    aovivo::dialogo_agendamento(app, ctx);
+    aovivo::dialogo_lista_agendamentos(app, ctx);
+    aovivo::dialogo_gravacao_manual(app, ctx);
+    aovivo::dialogo_gravacao_concluida(app, ctx);
+
+    // Decidir o cursor por último: on_hover_cursor dos botões pode sobrescrever
+    // CursorIcon::None se o mouse ficar parado sobre um controle que sumiu.
+    let video_ativo = app.aba == Aba::Canais && (app.tocando.is_some() || app.tocando_vod.is_some());
+    // Lista de canais e guia so aparecem na TV ao vivo, nao em filmes.
+    // Os estados podem ficar true enquanto o painel nao esta desenhado:
+    // bloquea-los globalmente deixava o cursor permanentemente visivel no VOD.
+    let esta_no_vod = app.tocando_vod.is_some();
+    let modal_aberto = ((!esta_no_vod) && (app.lista_aberta || app.guia_aberto))
+        || app.episodios_no_player
+        || app.ajuda_aberta
+        || app.agendamento_aberto
+        || app.agendamentos_lista_aberta
+        || app.gravacao_dialogo_aberto
+        || app.gravacao_concluida_dialogo_aberto
+        || app.dialogo_listas.is_some()
+        || app.nova_versao.is_some()
+        || !app.aprovacoes.is_empty();
+
+    if video_ativo && !app.pip {
+        // Mesmo sem novos eventos de mouse, redesenhar ao terminar a espera.
+        if !app.controles_visiveis() {
+            if !modal_aberto {
+                ctx.set_cursor_icon(egui::CursorIcon::None);
+            }
+        } else if !app.pausado {
+            let restante = app.controles_ate.saturating_duration_since(std::time::Instant::now());
+            if !restante.is_zero() {
+                ctx.request_repaint_after(restante);
+            }
+        }
+    }
 }
 
 // MARK: - Fundo do app

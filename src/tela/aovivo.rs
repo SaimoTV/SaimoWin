@@ -35,10 +35,6 @@ pub fn tela(app: &mut App, ui: &mut egui::Ui) {
     if !app.pip && por_cima && app.tocando_vod.is_none() {
         topo::menu(app, ui, true);
     }
-    // Sem nada à vista sobre o vídeo, o ponteiro some também.
-    if !por_cima && !app.pip && (app.tocando.is_some() || app.tocando_vod.is_some()) {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
-    }
     if app.guia_aberto && app.tocando_vod.is_none() {
         guia(app, ui);
         return;
@@ -653,7 +649,7 @@ fn pulos_na_tela(app: &mut App, ui: &mut egui::Ui, janela: Rect) {
         ui.ctx().request_repaint_after(Duration::from_millis(250));
         return;
     }
-    let Some((seguinte, resta)) = app.proximo_na_tela() else { return };
+    let Some(seguinte) = app.proximo_na_tela() else { return };
     let serie = app.tocando_vod.as_ref().and_then(|t| t.episodio.as_ref()).map(|e| e.serie.clone()).unwrap_or_default();
     let info = app
         .pedir_temporada(&serie, seguinte.temporada)
@@ -671,7 +667,7 @@ fn pulos_na_tela(app: &mut App, ui: &mut egui::Ui, janela: Rect) {
     }
     let x = imagem.right() + 16.0;
     let largura = caixa.right() - 18.0 - x;
-    pintor.text(Pos2::new(x, caixa.top() + 18.0), Align2::LEFT_TOP, format!("Próximo episódio em {resta} s"), normal(14.0), ACENTO);
+    pintor.text(Pos2::new(x, caixa.top() + 18.0), Align2::LEFT_TOP, "Próximo episódio ao terminar".to_string(), normal(14.0), ACENTO);
     let nome = info.as_ref().map(|e| e.nome.clone()).filter(|n| !n.is_empty());
     let titulo = match nome {
         Some(n) => format!("T{} E{} · {n}", seguinte.temporada, seguinte.numero),
@@ -726,6 +722,114 @@ fn barra_do_ao_vivo(app: &mut App, ui: &mut egui::Ui, area: Rect) {
         pintor.galley(caixa.center() - galeria.size() / 2.0, galeria, TEXTO);
         fim = caixa.left() - 8.0;
     }
+    // DVR num grupo isolado ACIMA do selo AO VIVO. Nunca compartilhar
+    // o layout do volume: em janelas pequenas os controles se sobrepunham.
+    // Esta barra só é desenhada quando controles_visiveis(), então some
+    // naturalmente com o restante da interface.
+    if app.tocando_vod.is_none() {
+        let largura = 4.0 * 42.0 + 3.0 * 9.0;
+        let botoes = Rect::from_min_size(
+            Pos2::new((direita - largura).max(esquerda), topo_bloco - 58.0),
+            egui::vec2(largura, 44.0),
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(botoes)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 9.0;
+                use crate::dvr::FaseGravacao as Fase;
+                let fase = app.dvr.fase_do_canal(&nome);
+                let gravando = app.dvr.ativo_no_canal(&nome);
+                let pendentes = app.dvr.pendentes_no_canal(&nome);
+                let historico = app.dvr.agendamentos_do_canal(&nome);
+                let ativo_agendado = historico.iter().any(|(_, a)| 
+                    a.status == "iniciando" || a.status == "gravando"
+                        || a.status == "processando"
+                );
+                let botao_agenda = botao_redondo(
+                    ui, Icone::Agendar, 42.0,
+                    if pendentes > 0 { "Gravações agendadas: conferir horário e status" }
+                    else if !historico.is_empty() { "Consultar gravações agendadas" }
+                    else { "Agendar gravação" },
+                    pendentes > 0 || ativo_agendado,
+                );
+                if botao_agenda.clicked() {
+                    app.botao_agendar_ao_vivo();
+                }
+                if pendentes > 0 || ativo_agendado {
+                    // Um pequeno ponto comunica agendamento aguardando; vermelho
+                    // apenas se já estiver realmente gravando.
+                    let cor = if ativo_agendado {
+                        Color32::from_rgb(245, 104, 104)
+                    } else { ACENTO };
+                    let p = ui.ctx().layer_painter(egui::LayerId::new(
+                        egui::Order::Foreground, egui::Id::new("agenda-dvr-indicador")
+                    ));
+                    p.circle_stroke(
+                        botao_agenda.rect.center(), botao_agenda.rect.width() * 0.52,
+                        Stroke::new(2.2, cor)
+                    );
+                    let ponto = botao_agenda.rect.right_top() + egui::vec2(-4.0, 4.0);
+                    p.circle_filled(ponto, 4.0, cor);
+                }
+                let resposta = botao_redondo(
+                    ui, Icone::Gravar, 42.0,
+                    match fase {
+                        Fase::Iniciando => "Preparando gravação...",
+                        Fase::Gravando => "Gravando. Clique para parar",
+                        Fase::Processando => "Finalizando e verificando arquivo...",
+                        Fase::Concluido => "Gravação concluída e salva",
+                        Fase::Erro => "Houve falha. Consulte avisos do DVR",
+                        Fase::Parado => "Gravar agora ou definir duração",
+                    },
+                    gravando,
+                );
+                if resposta.clicked() && !matches!(fase, Fase::Processando | Fase::Iniciando) {
+                    app.alternar_gravacao_ao_vivo();
+                }
+                // Somente GRAVANDO pisca discretamente. Os demais estados
+                // usam apenas a cor do anel, sem etiquetas persistentes.
+                if fase != Fase::Parado {
+                    let cor = match fase {
+                        Fase::Iniciando => Color32::from_rgb(246, 194, 78),
+                        Fase::Gravando => Color32::from_rgb(255, 84, 84),
+                        Fase::Processando => Color32::from_rgb(110, 199, 255),
+                        Fase::Concluido => Color32::from_rgb(100, 225, 164),
+                        Fase::Erro => Color32::from_rgb(255, 112, 112),
+                        Fase::Parado => Color32::TRANSPARENT,
+                    };
+                    let p = ui.ctx().layer_painter(egui::LayerId::new(
+                        egui::Order::Foreground, egui::Id::new("dvr-indicador")
+                    ));
+                    let (largura, alpha) = if fase == Fase::Gravando {
+                        let t = ui.input(|i| i.time) as f32;
+                        let onda = (t * 2.7).sin() * 0.5 + 0.5;
+                        ui.ctx().request_repaint_after(Duration::from_millis(130));
+                        (2.0 + onda * 0.7, (175.0 + onda * 65.0) as u8)
+                    } else { (2.1, 205) };
+                    let suave = Color32::from_rgba_unmultiplied(cor.r(), cor.g(), cor.b(), alpha);
+                    p.circle_stroke(
+                        resposta.rect.center(), resposta.rect.width() * 0.52,
+                        Stroke::new(largura, suave)
+                    );
+                    if fase == Fase::Gravando {
+                        p.text(
+                            resposta.rect.center_top() + egui::vec2(0.0, -10.0),
+                            Align2::CENTER_CENTER, "GRAVANDO", forte(9.0), suave
+                        );
+                    }
+                }
+                if botao_redondo(ui, Icone::Pasta, 42.0, "Abrir pasta das gravações", false).clicked() {
+                    app.abrir_pasta_gravacoes();
+                }
+                if botao_redondo(ui, Icone::Captura, 42.0, "Salvar captura de tela (PNG)", false).clicked() {
+                    app.capturar_ao_vivo();
+                }
+            },
+        );
+    }
+
     pintor.text(Pos2::new(x, topo_bloco + 14.0), Align2::LEFT_CENTER, (indice + 1).to_string(), forte(24.0), ACENTO);
     let x_nome = x + 14.0 + 16.0 * (indice + 1).to_string().len() as f32;
     texto_numa_linha(&pintor, &nome, forte(26.0), TEXTO, Pos2::new(x_nome, topo_bloco + 14.0), fim - x_nome - 10.0);
@@ -823,6 +927,26 @@ fn comuns(app: &mut App, ui: &mut egui::Ui) {
         }
         if botao_redondo(ui, Icone::Teclado, 46.0, "Atalhos do teclado (H)", false).clicked() {
             app.ajuda_aberta = true;
+        }
+        // Controle direto no player, sem abrir Ajustes. Os dois estados usam as
+        // mesmas preferências persistentes de Ajustes > Reprodução.
+        if app.tocando_vod.is_some() {
+            let dica_auto = if app.proximo_automatico {
+                "Próximo episódio automático: ligado (desligar)"
+            } else {
+                "Próximo episódio automático: desligado (ligar)"
+            };
+            if botao_redondo(ui, Icone::ProximoAutomatico, 42.0, dica_auto, app.proximo_automatico).clicked() {
+                app.alternar_proximo_automatico();
+            }
+            let dica_pulos = if app.sugerir_pulos {
+                "Pular abertura/recapitulação: ligado (desligar)"
+            } else {
+                "Pular abertura/recapitulação: desligado (ligar)"
+            };
+            if botao_redondo(ui, Icone::PularAbertura, 42.0, dica_pulos, app.sugerir_pulos).clicked() {
+                app.alternar_sugestoes_de_pulo();
+            }
         }
     });
 }
@@ -1221,4 +1345,363 @@ fn menu_de_velocidade(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
         });
+}
+
+ 
+/// Gravação manual: por padrão não há limite; o botão vermelho encerra.
+pub fn dialogo_gravacao_manual(app: &mut App, ctx: &egui::Context) {
+    if !app.gravacao_dialogo_aberto { return; }
+    let mut com_limite = app.gravacao_com_limite;
+    let mut minutos = app.gravacao_minutos.clone();
+    let mut iniciar = false;
+    let mut cancelar = false;
+    let largura = (ctx.content_rect().width() - 30.0).clamp(260.0, 420.0);
+    let altura = (ctx.content_rect().height() - 100.0).max(140.0);
+    egui::Window::new("Gravar TV ao vivo")
+        .id(egui::Id::new("gravacao-manual-dvr"))
+        .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false).resizable(false).default_width(largura)
+        .show(ctx, |ui| {
+            ui.set_max_width(largura);
+            egui::ScrollArea::vertical()
+                .id_salt("gravacao-manual-scroll")
+                .max_height(altura)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.label("Gravação direta da transmissão, sem recompressão.");
+                    ui.label(egui::RichText::new(
+                        "Trechos independentes de aproximadamente 30 s. Os trechos concluídos permanecem disponíveis após interrupções."
+                    ).small());
+                    ui.add_space(8.0);
+                    ui.radio_value(&mut com_limite, false, "Gravar até clicar em Parar");
+                    ui.radio_value(&mut com_limite, true, "Gravar por um tempo definido");
+                    if com_limite {
+                        ui.horizontal(|ui| {
+                            ui.label("Duração (minutos):");
+                            ui.add(egui::TextEdit::singleline(&mut minutos).desired_width(80.0));
+                        });
+                    }
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("Iniciar gravação").clicked() { iniciar = true; }
+                        if ui.button("Cancelar").clicked() { cancelar = true; }
+                    });
+                });
+        });
+    app.gravacao_com_limite = com_limite;
+    app.gravacao_minutos = minutos;
+    if cancelar { app.gravacao_dialogo_aberto = false; }
+    if iniciar { app.confirmar_gravacao_manual(); }
+}
+
+/// Apresenta o arquivo manual validado e um acesso direto ao seu destino.
+pub fn dialogo_gravacao_concluida(app: &mut App, ctx: &egui::Context) {
+    if !app.gravacao_concluida_dialogo_aberto { return; }
+    let Some(arquivo) = app.ultima_gravacao_manual.as_ref() else {
+        app.gravacao_concluida_dialogo_aberto = false;
+        return;
+    };
+    let nome = arquivo.file_name().and_then(|n| n.to_str()).unwrap_or("Gravação.mkv").to_string();
+    let caminho = arquivo.display().to_string();
+    let largura = (ctx.content_rect().width() - 30.0).clamp(260.0, 410.0);
+    let altura = (ctx.content_rect().height() - 100.0).max(120.0);
+    let mut abrir = false;
+    let mut fechar = false;
+    egui::Window::new("Gravação finalizada")
+        .id(egui::Id::new("gravacao-finalizada-dvr"))
+        .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false).resizable(false).default_width(largura)
+        .show(ctx, |ui| {
+            ui.set_max_width(largura);
+            egui::ScrollArea::vertical().id_salt("gravacao-finalizada-scroll")
+                .max_height(altura).auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new(&nome).strong());
+                    ui.add(egui::Label::new(egui::RichText::new(&caminho).small().color(SECUNDARIO)).wrap());
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("Abrir pasta").clicked() { abrir = true; }
+                        if ui.button("OK").clicked() { fechar = true; }
+                    });
+                });
+        });
+    if abrir {
+        app.abrir_pasta_gravacoes();
+        fechar = true;
+    }
+    if fechar { app.gravacao_concluida_dialogo_aberto = false; }
+}
+
+/// Calendário integrado à interface: visual e portátil (Windows/Linux/macOS).
+/// Não depende de digitar AAAA-MM-DD e dispensa bibliotecas de GUI do SO.
+fn escolher_data(
+    ui: &mut egui::Ui, inicio: &mut String, ano: &mut i32, mes: &mut u32,
+) {
+    use chrono::{Datelike, NaiveDate};
+    const MESES: [&str; 12] = [
+        "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+    ];
+    const DIAS: [&str; 7] = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+    ui.horizontal(|ui| {
+        if ui.button("◀").on_hover_text("Mês anterior").clicked() {
+            if *mes == 1 { *mes = 12; *ano -= 1; } else { *mes -= 1; }
+        }
+        ui.label(egui::RichText::new(format!("{} de {}", MESES[(*mes - 1) as usize], ano)).strong());
+        if ui.button("▶").on_hover_text("Próximo mês").clicked() {
+            if *mes == 12 { *mes = 1; *ano += 1; } else { *mes += 1; }
+        }
+    });
+    let Some(primeiro) = NaiveDate::from_ymd_opt(*ano, *mes, 1) else { return };
+    let deslocamento = primeiro.weekday().num_days_from_sunday() as usize;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for titulo in DIAS {
+            ui.add_sized([33.0, 18.0], egui::Label::new(titulo));
+        }
+    });
+    let atual = inicio.split_whitespace().next()
+        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+    for semana in 0..6 {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for dia_semana in 0..7 {
+                let indice = semana * 7 + dia_semana;
+                let dia = indice as i64 - deslocamento as i64 + 1;
+                let data = primeiro.checked_add_signed(chrono::Duration::days(dia - 1));
+                let data = data.filter(|d| d.month() == *mes);
+                if let Some(data) = data {
+                    let selecionado = atual == Some(data);
+                    if ui.add_sized([33.0, 26.0],
+                        egui::Button::new(data.day().to_string()).selected(selecionado)).clicked() {
+                        let hora = inicio.split_whitespace().nth(1).unwrap_or("19:00").to_string();
+                        *inicio = format!("{} {hora}", data.format("%Y-%m-%d"));
+                    }
+                } else {
+                    ui.add_sized([33.0, 26.0], egui::Label::new(" "));
+                }
+            }
+        });
+    }
+}
+
+/// Agendamento compacto: o calendário abre sob demanda e a grade fica em menu.
+/// O limite de altura evita que o modal ultrapasse a janela em telas pequenas.
+pub fn dialogo_agendamento(app: &mut App, ctx: &egui::Context) {
+    if !app.agendamento_aberto { return; }
+    let mut inicio = app.agendamento_inicio.clone();
+    let mut minutos = app.agendamento_minutos.clone();
+    let mut ano = app.agendamento_ano;
+    let mut mes = app.agendamento_mes;
+    let mut programa = app.agendamento_programa.clone();
+    let mut salvar = false;
+    let mut cancelar = false;
+    let canal = app.tocando.as_ref()
+        .and_then(|t| app.canais.get(t.canal))
+        .map(|c| c.nome.clone()).unwrap_or_default();
+    let largura = (ctx.content_rect().width() - 30.0).clamp(260.0, 350.0);
+    let altura = (ctx.content_rect().height() - 100.0).max(190.0);
+    let mut calendario_aberto = app.agendamento_calendario_aberto;
+    egui::Window::new("Agendar gravação")
+        .id(egui::Id::new("agendamento-dvr"))
+        .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false)
+        .resizable(false)
+        .default_width(largura)
+        .show(ctx, |ui| {
+            ui.set_max_width(largura);
+            egui::ScrollArea::vertical()
+                .id_salt("agenda-editor-scroll")
+                .max_height(altura)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new(&canal).strong());
+                    ui.add_space(3.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Data:");
+                        let mut data = inicio.split_whitespace().next().unwrap_or("").to_string();
+                        if ui.add(egui::TextEdit::singleline(&mut data)
+                            .desired_width(108.0)).changed() {
+                            let hora = inicio.split_whitespace().nth(1).unwrap_or("19:00");
+                            inicio = format!("{data} {hora}");
+                            programa = None;
+                        }
+                        if ui.small_button(if calendario_aberto { "Ocultar calendário" } else { "Calendário" }).clicked() {
+                            calendario_aberto = !calendario_aberto;
+                        }
+                    });
+                    if calendario_aberto {
+                        ui.add_space(4.0);
+                        let anterior = inicio.clone();
+                        escolher_data(ui, &mut inicio, &mut ano, &mut mes);
+                        if anterior != inicio { programa = None; }
+                    }
+                    ui.add_space(5.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Hora:");
+                        let mut hora = inicio.split_whitespace().nth(1).unwrap_or("19:00").to_string();
+                        if ui.add(egui::TextEdit::singleline(&mut hora)
+                            .desired_width(63.0)).changed() {
+                            let data = inicio.split_whitespace().next().unwrap_or("").to_string();
+                            inicio = format!("{data} {hora}");
+                            programa = None;
+                        }
+                        ui.label("Duração:");
+                        ui.add(egui::TextEdit::singleline(&mut minutos).desired_width(48.0));
+                        ui.label("min");
+                    });
+                    let programas: Vec<epg::Programa> = epg::grade(&canal).into_iter()
+                        .filter(|p| p.fim > epg::agora()).take(8).collect();
+                    if !programas.is_empty() {
+                        ui.add_space(6.0);
+                        let programa_resumido = programa.as_deref().map(|titulo| {
+                            if titulo.chars().count() > 25 {
+                                format!("{}…", titulo.chars().take(24).collect::<String>())
+                            } else { titulo.to_string() }
+                        }).unwrap_or_else(|| "Escolher do guia".into());
+                        egui::ComboBox::from_label("Programação")
+                            .selected_text(programa_resumido)
+                            .width((largura - 140.0).max(145.0))
+                            .show_ui(ui, |ui| {
+                                for p in &programas {
+                                    let titulo = format!("{} · {}", p.horario(), p.titulo);
+                                    if ui.selectable_label(
+                                        programa.as_deref() == Some(p.titulo.as_str()),
+                                        titulo
+                                    ).clicked() {
+                                        let inicio_real = p.inicio.max(epg::agora() + 60);
+                                        if let Some(dt) = chrono::DateTime::from_timestamp(inicio_real, 0)
+                                            .map(|x| x.with_timezone(&chrono::Local)) {
+                                            inicio = dt.format("%Y-%m-%d %H:%M").to_string();
+                                            use chrono::Datelike;
+                                            ano = dt.year();
+                                            mes = dt.month();
+                                            minutos = (((p.fim - inicio_real) + 59) / 60)
+                                                .clamp(1, 480).to_string();
+                                            programa = Some(p.titulo.clone());
+                                        }
+                                    }
+                                }
+                            });
+                    }
+                    ui.add_space(7.0);
+                    ui.label(egui::RichText::new(
+                        "O Saimo precisa estar aberto e o computador ligado no horário."
+                    ).small().color(SECUNDARIO));
+                    ui.add_space(7.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Agendar").clicked() { salvar = true; }
+                        if ui.button("Cancelar").clicked() { cancelar = true; }
+                    });
+                });
+        });
+    app.agendamento_calendario_aberto = calendario_aberto;
+    app.agendamento_inicio = inicio;
+    app.agendamento_minutos = minutos;
+    app.agendamento_ano = ano;
+    app.agendamento_mes = mes;
+    app.agendamento_programa = programa;
+    if cancelar { app.agendamento_aberto = false; }
+    if salvar { app.confirmar_agendamento(); }
+}
+
+/// O mesmo botão do calendário abre este resumo quando há agendamentos.
+pub fn dialogo_lista_agendamentos(app: &mut App, ctx: &egui::Context) {
+    if !app.agendamentos_lista_aberta { return; }
+    let canal = app.tocando.as_ref().and_then(|t| app.canais.get(t.canal))
+        .map(|c| c.nome.clone()).unwrap_or_default();
+    let lista = app.dvr.agendamentos_do_canal(&canal);
+    let mut cancelar_indice = None;
+    let mut confirmar_indice = None;
+    let mut excluir_indice = None;
+    let mut novo = false;
+    let mut fechar = false;
+    let largura = (ctx.content_rect().width() - 30.0).clamp(270.0, 385.0);
+    let altura = (ctx.content_rect().height() - 105.0).max(170.0);
+    egui::Window::new("Gravações agendadas")
+        .id(egui::Id::new("dvr-lista-agendamentos"))
+        .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .collapsible(false).resizable(false)
+        .default_width(largura)
+        .show(ctx, |ui| {
+            ui.set_max_width(largura);
+            ui.label(egui::RichText::new(&canal).strong());
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .id_salt("agenda-lista-scroll")
+                .max_height(altura.min(350.0))
+                .show(ui, |ui| {
+                    if lista.is_empty() {
+                        ui.label("Nenhum agendamento ativo ou conclusão pendente.");
+                    }
+                    for (indice, a) in &lista {
+                        let hora = chrono::DateTime::from_timestamp(a.inicio, 0)
+                            .map(|dt| dt.with_timezone(&chrono::Local)
+                                .format("%d/%m/%Y %H:%M").to_string())
+                            .unwrap_or_else(|| "Data inválida".into());
+                        let duracao = ((a.fim - a.inicio) / 60).max(0);
+                        let (status, cor) = if !a.executado {
+                            ("AGUARDANDO", ACENTO)
+                        } else {
+                            match a.status.as_str() {
+                                "iniciando" => ("PREPARANDO", Color32::from_rgb(246, 194, 78)),
+                                "gravando" => ("GRAVANDO", Color32::from_rgb(255, 100, 100)),
+                                "processando" => ("PROCESSANDO", Color32::from_rgb(110, 199, 255)),
+                                "concluida" => ("CONCLUÍDA", Color32::from_rgb(120, 220, 170)),
+                                _ => ("EM ANDAMENTO", SECUNDARIO),
+                            }
+                        };
+                        egui::Frame::new().fill(Color32::from_black_alpha(115))
+                            .corner_radius(10.0).inner_margin(9.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(status).color(cor).strong().small());
+                                    ui.label(egui::RichText::new(hora).small());
+                                });
+                                if let Some(titulo) = a.programa.as_deref() {
+                                    ui.label(egui::RichText::new(titulo).strong());
+                                }
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(egui::RichText::new(format!(
+                                        "{} min · Fonte {}", duracao, a.fonte + 1
+                                    )).small().color(SECUNDARIO));
+                                    if !a.executado && ui.small_button("Cancelar agenda").clicked() {
+                                        cancelar_indice = Some(*indice);
+                                    }
+                                    if a.status == "concluida" {
+                                        if ui.small_button("✓").on_hover_text("Confirmar conclusão").clicked() {
+                                            confirmar_indice = Some(*indice);
+                                        }
+                                        if ui.small_button("✕").on_hover_text("Excluir da programação; não apaga o vídeo").clicked() {
+                                            excluir_indice = Some(*indice);
+                                        }
+                                    }
+                                });
+                            });
+                        ui.add_space(5.0);
+                    }
+                });
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("+ Novo agendamento").clicked() { novo = true; }
+                if ui.button("Fechar").clicked() { fechar = true; }
+            });
+        });
+    if let Some(indice) = cancelar_indice {
+        if let Err(e) = app.dvr.cancelar_agendamento(indice) {
+            app.aviso = Some((format!("Não foi possível cancelar: {e}"), std::time::Instant::now()));
+        }
+    }
+    if let Some(indice) = confirmar_indice {
+        if let Err(e) = app.dvr.confirmar_conclusao(indice) {
+            app.aviso = Some((format!("Não foi possível confirmar: {e}"), std::time::Instant::now()));
+        }
+    }
+    if let Some(indice) = excluir_indice {
+        if let Err(e) = app.dvr.excluir_conclusao(indice) {
+            app.aviso = Some((format!("Não foi possível excluir: {e}"), std::time::Instant::now()));
+        }
+    }
+    if fechar { app.agendamentos_lista_aberta = false; }
+    if novo { app.abrir_agendamento_ao_vivo(); }
 }
