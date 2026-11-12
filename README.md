@@ -309,7 +309,7 @@ onde a tela é `inicio`, `ondemand`, `filmes`, `explorar`, `eventos`, `radios`,
 | `src/pulos.rs` | TheIntroDB: abertura, recapitulação e créditos |
 | `src/legendas.rs` | OpenSubtitles pelo id do TMDB (via `vod/imdb/`) |
 | `src/vod.rs`, `src/progresso.rs` | acervo e onde cada título parou |
-| `src/eventos.rs` | agenda da embedtv e do monitor com os placares da ESPN |
+| `src/eventos.rs` | agenda do Saimo com os placares da ESPN |
 
 ## Versões
 
@@ -422,10 +422,9 @@ Teste da conta: `cargo test telemetria`.
 ## Eventos
 
 A mesma tela de Eventos da TV Box e do celular (menu do topo ou Tab depois de
-Doramas). Duas fontes, buscadas juntas fora da thread do desenho: a agenda da
-embedtv diz em que canal cada jogo passa, a do monitor (`/v1/eventos`) traz os
-jogos dos canais de streaming (CazéTV, Disney+, Prime, Paramount+, GOAT, ge tv,
-N Sports, SportyNet) sem repetir os da embedtv, e os placares da ESPN (23 ligas)
+Doramas). Duas fontes, buscadas juntas fora da thread do desenho: a agenda do
+Saimo (`eventos-extra.json`) diz em que canal cada jogo passa (nenhum site de
+streaming de terceiros é consultado), e os placares da ESPN (23 ligas)
 dizem se já começou, o placar e o tempo de jogo, e trazem escudos melhores.
 
 - Só entra jogo cujo canal está na lista (o fim do endereço do player, sem
