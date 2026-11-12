@@ -636,6 +636,21 @@ impl Mpv {
         Some((posicao, duracao))
     }
 
+    /// Salva somente o vídeo (com legendas), sem botões ou interface do Saimo.
+    /// A libmpv finaliza a escrita de forma assíncrona.
+    pub fn capturar_para(&self, destino: &std::path::Path) -> Result<(), String> {
+        let caminho = destino.to_str().ok_or("Caminho da captura não é UTF-8")?;
+        let args = [
+            CString::new("screenshot-to-file").unwrap(),
+            CString::new(caminho).map_err(|_| "Nome da captura inválido")?,
+            CString::new("subtitles").unwrap(),
+        ];
+        let ponteiros = [args[0].as_ptr(), args[1].as_ptr(), args[2].as_ptr(), std::ptr::null()];
+        let codigo = unsafe { (self.simbolos.command)(self.handle.0, ponteiros.as_ptr()) };
+        if codigo < 0 { Err(format!("O mpv recusou a captura ({codigo})")) }
+        else { Ok(()) }
+    }
+
     pub fn parar(&self) {
         self.comando(&["stop"]);
     }
@@ -668,6 +683,26 @@ impl Mpv {
 
     pub fn avisos(&self) -> impl Iterator<Item = Aviso> + '_ {
         self.avisos.try_iter()
+    }
+
+    /// Grava o fluxo que já está tocando, usando o mesmo demuxer e as
+    /// configurações que permitem a reprodução (inclusive HLS em .txt).
+    /// A gravação acompanha este player: trocar de canal precisa encerrá-la.
+    pub fn gravar_fluxo(&self, arquivo: Option<&std::path::Path>) -> Result<(), String> {
+        let destino = arquivo.and_then(|p| p.to_str()).unwrap_or("");
+        if arquivo.is_some() && destino.is_empty() {
+            return Err("Caminho de gravação incompatível".into());
+        }
+        let nome = CString::new("stream-record").unwrap();
+        let valor = CString::new(destino).map_err(|_| "Caminho inválido".to_string())?;
+        let codigo = unsafe {
+            (self.simbolos.set_property_string)(self.handle.0, nome.as_ptr(), valor.as_ptr())
+        };
+        if codigo < 0 {
+            Err(format!("O mpv recusou a gravação do fluxo (código {codigo})"))
+        } else {
+            Ok(())
+        }
     }
 
     /// Qualquer propriedade do mpv ("speed", "panscan"…).

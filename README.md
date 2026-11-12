@@ -7,7 +7,7 @@
 Aplicativo nativo: janela, lista e letreiro desenhados pela GPU (egui sobre
 OpenGL) e vídeo pelo mpv. Não há navegador nem página HTML em lugar nenhum.
 
-Versão atual: **2.0.0**. O instalador sai no release único de
+Versão atual: **3.0.0**. O instalador sai no release único de
 [SaimoPlayer](https://github.com/SaimoTV/SaimoPlayer/releases/latest), e o
 programa avisa quando há versão nova, lendo o `versao.json` anexado à última release
 (`src/atualizacao.rs`, independente das listas)
@@ -97,37 +97,46 @@ na TV Box (pt, senão en, senão sem idioma; a capa quando não há logo)
 (`src/midia.rs`, `src/ficha.rs`). Filme e
 série pausam por ali; ao vivo o quadro não oferece pausa.
 
-## Placa de vídeo e falhas
+## Placa de vídeo e diagnósticos
 
-O app não escolhe a placa de vídeo: em notebook com placa integrada e
-dedicada, quem decide é o Windows (Configurações > Sistema > Tela > Elementos
-gráficos). A 2.3.0 forçava a dedicada (`NvOptimusEnablement` /
-`AmdPowerXpressRequestHighPerformance` exportados no `.exe`) e decodificava
-com D3D11VA/NVDEC em todos os codecs; em alguns notebooks o app fechava
-sozinho depois de alguns instantes, e só parava abrindo pela integrada. Voltou
-a decodificação segura do mpv (`hwdec=auto-copy-safe`), sem forçar placa.
+O sistema operacional define a placa de vídeo em computadores com GPUs
+integrada e dedicada. O player usa a decodificação compatível do mpv
+(`hwdec=auto-copy-safe`) para diferentes configurações de hardware.
 
-Se o app cair por um erro dele, a causa fica em `falhas.txt`, na pasta de
-dados do app (`%APPDATA%\SaimoTV`). Queda dentro do driver de vídeo não passa
-por ali: essa aparece no Visualizador de Eventos do Windows (Logs do Windows >
-Aplicativo).
+Diagnósticos de abertura e erros ficam na pasta de dados do aplicativo
+(`%APPDATA%\\SaimoTV` no Windows).
 
-## Troca de fonte dos canais (2.7.1)
+## Troca de fonte dos canais
 
-- Sintonizar começa pela **fonte que tocou da última vez** naquele canal
-  (`fonte_preferida::do_canal`, gravado em `fonte-canal.json`), como no Mac e na TV
-  Box. Antes começava sempre na fonte 1: fonte 1 fora do ar custava 14 s por canal.
-- A régua (`/hls`) responde 502 na hora quando a lista não vem, em vez de mandar o
-  mpv tentar sozinho (até 20 s por fonte morta). Sondagem de todas as fontes do
-  catálogo com o mesmo agente (`cargo test -- --ignored sonda`): toda fonte que a
-  régua não baixa também não abre no curl.
-- Lista de "manutenção" (fechada e com menos de 60 s, ou com manutenção/offline no
-  nome) conta como fonte fora do ar, mesma regra do Mac.
-- Fonte que vinha tocando há mais de um minuto e cai é **reaberta** antes de trocar;
-  todas falhando, uma segunda volta antes de desistir.
-- O app abre na **tela inicial** (como Mac e TV Box), com o último canal guardado
-  para quando a pessoa vai ao Ao vivo; o logo do Saimo no topo; gêneros sem números
-  nem nomes repetidos.
+- Os canais priorizam a última fonte reproduzida com sucesso
+  (`src/fonte_preferida.rs`).
+- A rota HLS (`/hls`) identifica listas indisponíveis e permite avançar
+  para fontes alternativas.
+- Playlists de manutenção são reconhecidas como fontes indisponíveis.
+- Uma fonte que cai após reproduzir continuamente é reaberta antes da troca;
+  as alternativas são tentadas conforme necessário.
+- O Saimo abre na tela inicial e guarda o último canal para retorno ao Ao vivo.
+
+## Gravação direta (DVR)
+
+O gravador captura o fluxo original com FFmpeg em segmentos Matroska de
+aproximadamente 30 segundos, sem reencodificação. Os segmentos ficam em
+`Gravacoes/_Processando` até a montagem, verificação e publicação do MKV final.
+Trechos concluídos podem ser recuperados após interrupções.
+
+- **Manual:** gravação contínua ou com duração definida; o aplicativo mostra
+  o nome e o caminho do arquivo validado ao finalizar e oferece **Abrir pasta**.
+- **Agendada:** data, hora, duração e programa do guia. Agendamentos futuros e
+  gravações em andamento ficam visíveis; conclusões aguardam confirmação (✓)
+  ou exclusão da programação (✕). Nenhuma dessas ações apaga o vídeo.
+  Agendamentos cancelados ou perdidos saem da lista.
+- **Localização:** pasta configurável em Ajustes. Há um botão de pasta no player
+  para acessar as gravações.
+- **Execução:** até três gravações simultâneas. O Saimo e o computador
+  precisam estar ligados no horário programado.
+
+Consulte [DVR direto segmentado](docs/DVR-DIRETO-SEGMENTADO.md) para detalhes
+de recuperação, dependências e limitações.
 
 ## Saimo Connect (controle pelo celular)
 
@@ -149,15 +158,9 @@ na TV Box: o mesmo servidor do `Connect.kt`, na porta **8999**
   nem pergunta na tela. Ele fica lembrado
   (`connect-celulares.txt`); **Ajustes > Saimo Connect > Esquecer todos os
   celulares** apaga a lista e derruba quem está ligado.
-- **Queda ao abrir o On Demand (2.5.10)**: `generos::sem_ano` fatiava o título pelos
-  últimos 6 *bytes*; um título terminado em `)` com letra acentuada nessa ponta
-  ("Como Vender Drogas Online (Rápido)") caía no meio do `á` e o pânico, dentro do
-  laço de eventos do Windows, abortava o app. Agora confere o ano pelos bytes sem
-  fatiar o texto (testes em `generos::testes_sem_ano`), os outros cortes por byte
-  de texto vindo da rede usam `.get()`, e o desenho de cada tela roda em
-  `catch_unwind` (`App::ui`): se uma tela cair, o quadro é descartado, a queda vai
-  para `falhas.txt` e o app volta para o Ao vivo; só 3 quadros seguidos com falha
-  deixam o pânico subir.
+- **Resiliência da interface**: validação de limites UTF-8 em textos de
+  catálogo e proteção de quadros de desenho com `catch_unwind`.
+  Eventos de diagnóstico ficam disponíveis em `falhas.txt`.
 - **Setas do celular = teclado**: setas, OK e Voltar entram como teclas de
   verdade no quadro seguinte (`teclas_do_celular` + `raw_input_hook`), então
   valem a lógica do app e a navegação de foco do egui, igual ao teclado físico.
@@ -218,43 +221,21 @@ Para testar num computador que já tem algo na porta 8999:
 abre o app sem o servidor. O servidor de verdade, com um cliente de fora:
 `SAIMO_CONNECT_PORTA=18999 cargo test servidor_de_verdade -- --ignored --nocapture`.
 
-## Novidades da 2.1.2
+## Multi tela, desempenho e reprodução
 
-- **Multi tela**: dois canais ao vivo lado a lado (botão da barra ou tecla D).
-  A tela em foco tem a borda colorida, o som, a lista e o teclado; clicar na
-  outra (ou T) troca. Cada tela troca de fonte sozinha quando a dela cai. Cada
-  mpv desenha num framebuffer próprio, copiado para a metade dele da janela.
-- **Acervo leve**: a grade e as fileiras são montadas uma vez e guardadas até
-  algo mudar (antes, filtrar e ordenar trinta mil títulos a cada quadro);
-  as fileiras do Início só desenham os cartões à vista; as capas baixam por
-  seis baixadores, a mais recente primeiro, em vez de uma thread por capa.
-- Abrir filmes, séries ou qualquer seção do acervo para o que está tocando;
-  voltar ao "Ao vivo" retoma o canal.
-- Ir a Animes ou Doramas e voltar a Séries não deixa mais a série esperando
-  para abrir; as coleções ficam guardadas e não são baixadas de novo.
-
-## Novidades da 2.0
-
-- **Legendas do OpenSubtitles** em filmes e séries (pt-BR, pt-PT, inglês, espanhol), com
-  ajuste de sincronia, no menu A/V (`src/legendas.rs`); sem chave nem cadastro
-- **Pular abertura e recapitulação** com os tempos do
-  [TheIntroDB](https://theintrodb.org) (`src/pulos.rs`): o botão aparece só
-  quando o trecho foi marcado para aquele episódio. Enter pula.
-- **Próximo episódio** nos créditos, seguindo sozinho em 10 s. Enter assiste
-  agora, Esc dispensa. Sem créditos marcados, o cartão sobe nos últimos 30 s.
-- Episódio que acaba emenda no seguinte, na mesma versão (dublado/legendado).
-- O episódio seguinte toca pela mesma fonte que vinha tocando: a do mesmo
-  provedor (host), senão a da mesma posição, senão a ordem de sempre; as outras
-  ficam de reserva. Vale por série, na sessão (`src/fonte_preferida.rs`).
-- Fonte que "termina" nos primeiros 30 s é tratada como quebrada: vai para a
-  próxima em vez de fechar.
-- Abre no último canal assistido.
-- Ao vivo não pausa: o botão de pausa e o Espaço só valem para filme e série.
-- Trocar de canal não derruba mais a fonte nova: o fim do arquivo anterior
-  (motivo STOP do mpv) era lido como queda, e o canal passava por todas as
-  fontes em um segundo até dizer que estava fora do ar. `mpv::Vigia` só conta
-  o fim do arquivo que está no ar, e por erro ou fim de verdade.
-- Guia sem "No Data" no lugar do programa.
+- **Multi tela:** dois canais ao vivo lado a lado (botão da barra ou tecla D).
+  Cada tela tem fonte e controles próprios; clique ou tecla T altera o foco.
+- **Acervo leve:** grades em cache, cartões visíveis renderizados sob demanda
+  e imagens baixadas por uma fila limitada de trabalhadores.
+- **Navegação:** abrir outra seção interrompe o vídeo em tela cheia;
+  voltar a Ao vivo retoma o canal.
+- **Legendas:** OpenSubtitles em filmes e séries, com sincronização no menu A/V.
+- **Episódios:** marcas de abertura e recapitulação pelo TheIntroDB, sugestão
+  para próximo episódio e continuidade automática opcional.
+- **Fontes:** o episódio seguinte prioriza a origem do episódio atual;
+  fontes alternativas são testadas quando necessário.
+- **Ao vivo:** a tecla Espaço e Pausar funcionam somente em filmes e séries.
+  Trocas de canal descartam eventos de parada da reprodução anterior.
 
 ## Minhas listas
 
@@ -297,6 +278,7 @@ onde a tela é `inicio`, `ondemand`, `filmes`, `explorar`, `eventos`, `radios`,
 | `src/tela/` | desenho: menu do topo, páginas em fileiras, grade, ao vivo, player, ficha e série |
 | `src/tela/icones.rs` | os ícones Material da TV Box, rasterizados do `pathData` |
 | `src/radios.rs` | as rádios da lista publicada, estilos e ouvidas por último |
+| `src/dvr.rs`, `src/dvr_stream.rs` | agendamentos, gravação direta e recuperação |
 | `src/mpv.rs` | ponte com o libmpv, carregado da DLL em tempo de execução |
 | `src/connect/` | Saimo Connect: servidor na porta 8999, WebSocket, rota `/hls` e a régua comum |
 | `src/controle.rs` | o que o celular manda fazer e o estado que volta para ele |
@@ -315,14 +297,14 @@ onde a tela é `inicio`, `ondemand`, `filmes`, `explorar`, `eventos`, `radios`,
 
 egui/eframe 0.36 (os painéis agora são desenhados dentro do `Ui` que o
 `eframe::App::ui` recebe), ureq 3 para a rede e libloading 0.9 para carregar a
-libmpv. Compila sem nenhum aviso, e o `cargo clippy` também passa limpo.
+libmpv. A validação inclui testes automatizados e compilação release no Windows.
 
 ## Montar o pacote
 
 Do próprio Mac, com o mingw-w64 (`brew install mingw-w64`):
 
 ```bash
-cd "/Volumes/SSD 1TB/DEV/Saimo/SaimoWin" && ./empacotar.sh
+./empacotar.sh
 ```
 
 Sai `dist/SaimoTV-Instalador.msi`: o executável, a `libmpv-2.dll` e o
@@ -456,7 +438,7 @@ do TMDB (a mesma busca pontuada do TV Box), favoritos e "continuar de onde parou
 A capa é procurada só para as linhas visíveis: a letra "A" tem 2.672 filmes.
 
 
-## Quando o app "abre e fecha"
+## Diagnósticos e modo seguro
 
 A pasta de dados do app (`%APPDATA%\SaimoTV`) guarda as pistas:
 

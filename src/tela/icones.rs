@@ -57,12 +57,35 @@ pub enum Icone {
     /// O "Cast" da TV Box: o Saimo Connect.
     Cast,
     Link,
+    Captura,
+    Gravar,
+    Pasta,
+    Agendar,
+    /// Clapperboard com avanço duplo: controla apenas as sugestões de abertura.
+    PularAbertura,
+    /// Repetição circular + play: controla apenas a troca automática de episódio.
+    ProximoAutomatico,
 }
 
 /// O `pathData` de cada ícone, na caixa de 24 x 24 da Material.
 fn caminhos(icone: Icone) -> &'static [&'static str] {
     match icone {
         Icone::Buscar => &["M15.5,14h-0.79l-0.28,-0.27C15.41,12.59 16,11.11 16,9.5 16,5.91 13.09,3 9.5,3S3,5.91 3,9.5 5.91,16 9.5,16c1.61,0 3.09,-0.59 4.23,-1.57l0.27,0.28v0.79l5,4.99L20.49,19l-4.99,-5zM9.5,14C7.01,14 5,11.99 5,9.5S7.01,5 9.5,5 14,7.01 14,9.5 11.99,14 9.5,14z"],
+        // Os botões extras usam símbolos próprios para não parecerem ações
+        // imediatas como "avançar 10 s" e "próximo episódio".
+        Icone::PularAbertura => &[
+            "M3,3h18v5H3zM5,10h2v12H5z",
+            "M9,12v8l6,-4zM15,12v8l6,-4z",
+        ],
+        Icone::ProximoAutomatico => &[
+            "M12,2a10,10 0 0,1 9.4,6.5h-2.2A8,8 0 1,0 20,13h2A10,10 0 1,1 12,2z",
+            "M17,2h5v7h-7l2,-3z",
+            "M9,8v8l7,-4z",
+        ],
+        Icone::Captura => &["M12,7a5,5 0 1,0 0,10a5,5 0 0,0 0,-10zM12,15a3,3 0 1,1 0,-6a3,3 0 0,1 0,6zM9,3l-2,2H4C2.9,5 2,5.9 2,7v12c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V7c0,-1.1 -0.9,-2 -2,-2h-3l-2,-2H9z"],
+        Icone::Gravar => &["M12,2A10,10 0 1,0 12,22A10,10 0 0,0 12,2zM12,6a6,6 0 1,1 0,12a6,6 0 0,1 0,-12z"],
+        Icone::Pasta => &["M10,4l2,2h8c1.1,0 2,0.9 2,2v11c0,1.1 -0.9,2 -2,2H4c-1.1,0 -2,-0.9 -2,-2V6c0,-1.1 0.9,-2 2,-2h6z"],
+        Icone::Agendar => &["M19,4h-1V2h-2v2H8V2H6v2H5C3.9,4 3,4.9 3,6v15c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2V6c0,-1.1 -0.9,-2 -2,-2zM19,21H5V10h14v11zM12,12a4,4 0 1,0 0,8a4,4 0 0,0 0,-8z"],
         Icone::Link => &["M3.9,12c0,-1.71 1.39,-3.1 3.1,-3.1h4V7H7c-2.76,0 -5,2.24 -5,5s2.24,5 5,5h4v-1.9H7c-1.71,0 -3.1,-1.39 -3.1,-3.1zM8,13h8v-2H8v2zM17,7h-4v1.9h4c1.71,0 3.1,1.39 3.1,3.1s-1.39,3.1 -3.1,3.1h-4V17h4c2.76,0 5,-2.24 5,-5s-2.24,-5 -5,-5z"],
         Icone::Inicio => &["M10,20v-6h4v6h5v-8h3L12,3 2,12h3v8z"],
         Icone::AoVivo => &["M21,6h-7.59l3.29,-3.29L16,2l-4,4 -4,-4 -0.71,0.71L10.59,6H3c-1.1,0 -2,0.89 -2,2v12c0,1.1 0.9,2 2,2h18c1.1,0 2,-0.9 2,-2V8c0,-1.11 -0.9,-2 -2,-2zM21,20H3V8h18v12zM9,10v8l7,-4z"],

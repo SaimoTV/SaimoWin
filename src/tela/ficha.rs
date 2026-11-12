@@ -385,16 +385,13 @@ pub fn serie(app: &mut App, ui: &mut egui::Ui, serie: &vod::Serie) {
         t.dedup();
         t
     };
-    // Onde a pessoa parou na série: é a temporada que abre e o botão principal.
-    let parou = progresso::onde_parou_na_serie(&serie.titulo);
-    let (parou_t, parou_e) = parou
-        .as_ref()
-        .and_then(|(rotulo, _)| {
-            let resto = rotulo.rsplit(" · ").next()?;
-            let (t, e) = resto.trim_start_matches('T').split_once(" E")?;
-            Some((t.parse::<u32>().ok()?, e.parse::<u32>().ok()?))
-        })
-        .unwrap_or((0, 0));
+    // A última reprodução pode estar completa: não depende de uma marca
+    // parcial para lembrar o episódio e a temporada onde o usuário ficou.
+    let ultimo = progresso::episodio_da_serie(&serie.titulo);
+    let (parou_t, parou_e) = ultimo.unwrap_or((0, 0));
+    let pela_metade = ultimo
+        .and_then(|(t, e)| progresso::onde_parou(&format!("{} · T{t} E{e}", serie.titulo)))
+        .is_some();
     if app.temporada_aberta == 0 || !temporadas.contains(&app.temporada_aberta) {
         app.temporada_aberta = if temporadas.contains(&parou_t) { parou_t } else { temporadas.first().copied().unwrap_or(1) };
     }
@@ -449,7 +446,7 @@ pub fn serie(app: &mut App, ui: &mut egui::Ui, serie: &vod::Serie) {
                             .or_else(|| (!app.episodios.is_empty()).then_some(0));
                         if let Some(i) = alvo {
                             let e = &app.episodios[i];
-                            let rotulo = if parou.is_some() {
+                            let rotulo = if pela_metade && (e.temporada, e.numero) == (parou_t, parou_e) {
                                 format!("Continuar T{} E{}", e.temporada, e.numero)
                             } else {
                                 format!("Assistir T{} E{}", e.temporada, e.numero)
