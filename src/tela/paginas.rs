@@ -217,7 +217,11 @@ pub(super) fn executar(app: &mut App, acao: Acao) {
             app.abrir_ficha(item.titulo, serie, Destino::Fileira(f, i));
         }
         Acao::Continuar(item) => app.abrir_item(item),
-        Acao::Canal(nome) => app.abrir_jogo(&nome),
+        Acao::Canal(nome) => {
+            if !nome.is_empty() {
+                app.abrir_jogo(&nome)
+            }
+        }
         Acao::Radio(indice) => {
             if let Some(radio) = app.radios.get(indice).cloned() {
                 app.tocar_radio(radio);
@@ -631,12 +635,16 @@ fn jogos(app: &App) -> Vec<Fila> {
                     let heroi = Heroi::Texto {
                         titulo: titulo.clone(),
                         meta,
-                        sinopse: format!("No canal {} · clique ou Enter assiste", jogo.canal),
+                        sinopse: if jogo.canal.is_empty() {
+                            "Sem canal na lista".to_string()
+                        } else {
+                            format!("No canal {} · clique ou Enter assiste", jogo.canal)
+                        },
                         fundo_de: None,
                     };
                     let logo = jogo.canal_logo.clone().map(Imagem::Logo).unwrap_or(Imagem::Nenhuma);
                     let mut c = Cartao::novo(titulo, logo, Acao::Canal(jogo.canal.clone()), heroi);
-                    c.sub = [jogo.canal.as_str(), jogo.liga.as_str()].iter().filter(|t| !t.is_empty()).copied().collect::<Vec<_>>().join(" · ");
+                    c.sub = [if jogo.canal.is_empty() { "Sem canal" } else { jogo.canal.as_str() }, jogo.liga.as_str()].iter().filter(|t| !t.is_empty()).copied().collect::<Vec<_>>().join(" · ");
                     c.selo = Some((selo, vivo));
                     c.escudos = [jogo.casa_logo.clone(), jogo.fora_logo.clone(), jogo.liga_logo.clone()];
                     c
@@ -1178,6 +1186,7 @@ pub(super) fn desenhar_cartao(app: &mut App, ui: &mut egui::Ui, rect: Rect, cart
         }
     }
     let dica = match &cartao.acao {
+        Acao::Canal(n) if n.is_empty() => "Sem canal para assistir",
         Acao::Canal(_) => "Clique ou Enter assiste ao vivo",
         Acao::Radio(_) => "Clique ou Enter para ouvir",
         Acao::Pagina(_) | Acao::Explorar(..) => "Clique ou Enter abre",

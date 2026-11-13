@@ -258,8 +258,13 @@ fn ler_agenda(agenda: &Value, canais: &[(String, Option<String>)]) -> Vec<Jogo> 
     let mut jogos = Vec::new();
     for o in lista {
         // Jogo com dados faltando fica de fora.
-        let Some(player) = o.get("players").and_then(|p| p.get(0)).and_then(Value::as_str) else { continue };
-        let Some((canal, canal_logo)) = canal_do(player, canais) else { continue };
+        // Sem canal (players vazio ou canal fora da lista) o jogo entra mesmo assim, com canal vazio.
+        let (canal, canal_logo) = o
+            .get("players")
+            .and_then(|p| p.get(0))
+            .and_then(Value::as_str)
+            .and_then(|player| canal_do(player, canais))
+            .unwrap_or_default();
         let Some(inicio) = ler_data(&texto(o, &["time_start"])) else { continue };
         let casa = texto(o, &["teams", "home", "name"]);
         let fora = texto(o, &["teams", "away", "name"]);
