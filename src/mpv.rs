@@ -587,6 +587,16 @@ impl Mpv {
         self.propriedade("sub-delay", &format!("{segundos:.2}"));
     }
 
+    /// Filtro de áudio inteligente para deixar diálogos mais nítidos.
+    pub fn voz_nitida(&self, ligado: bool) {
+        let filtro = if ligado {
+            "lavfi=[highpass=f=80,acompressor=threshold=-20dB:ratio=3:attack=15:release=150,loudnorm=I=-16:TP=-1.5:LRA=7]"
+        } else {
+            ""
+        };
+        self.propriedade("af", filtro);
+    }
+
     /// Faixas que o MPV encontrou no master (variantes de vídeo, idiomas e
     /// legendas). Os nomes vêm do próprio manifesto quando existem.
     pub fn faixas(&self, tipo: &str) -> Vec<Faixa> {
@@ -596,7 +606,10 @@ impl Mpv {
             let id = self.ler(&format!("track-list/{i}/id"))?;
             let idioma = self.ler(&format!("track-list/{i}/lang")).unwrap_or_default();
             let nome = self.ler(&format!("track-list/{i}/title")).unwrap_or_default();
-            let altura = self.ler(&format!("track-list/{i}/demux-h")).unwrap_or_default();
+            let altura = self.ler(&format!("track-list/{i}/demux-h"))
+                .filter(|h| !h.is_empty() && h != "0")
+                .or_else(|| self.ler("video-params/h").filter(|h| !h.is_empty() && h != "0"))
+                .unwrap_or_default();
             let titulo = if tipo == "video" && !altura.is_empty() && altura != "0" {
                 format!("{altura}p")
             } else if !nome.is_empty() && !idioma.is_empty() {

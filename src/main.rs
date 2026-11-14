@@ -367,6 +367,8 @@ struct App {
     quadros_com_falha: u8,
     aba: Aba,
     pip: bool,
+    pub sempre_acima: bool,
+    pub voz_nitida: bool,
     tamanho_antes_pip: Option<egui::Vec2>,
     posicao_antes_pip: Option<egui::Pos2>,
     tamanho_pip: Option<egui::Vec2>,
@@ -691,6 +693,8 @@ impl App {
             quadros_com_falha: 0,
             aba: Aba::Canais,
             pip: false,
+            sempre_acima: false,
+            voz_nitida: false,
             tamanho_antes_pip: None,
             posicao_antes_pip: None,
             tamanho_pip: None,
@@ -1418,13 +1422,41 @@ impl App {
         legendas::guardar_idioma("");
     }
 
-    /// Soma (ou tira) segundos do atraso da legenda escolhida.
+    /// Soma (ou tira) segundos do atraso da legenda escolhida ou embutida.
     pub fn ajustar_atraso_legenda(&mut self, delta: f64) {
         let Some(t) = self.tocando_vod.as_mut() else { return };
         t.legenda_atraso = ((t.legenda_atraso + delta) * 100.0).round() / 100.0;
         if let Some(mpv) = self.mpv.as_ref() {
             mpv.atraso_da_legenda(t.legenda_atraso);
         }
+    }
+
+    /// Volta o atraso da legenda para a sincronia original (0,0 s).
+    pub fn zerar_atraso_legenda(&mut self) {
+        let Some(t) = self.tocando_vod.as_mut() else { return };
+        t.legenda_atraso = 0.0;
+        if let Some(mpv) = self.mpv.as_ref() {
+            mpv.atraso_da_legenda(0.0);
+        }
+    }
+
+    /// Liga ou desliga o áudio inteligente (diálogos mais nítidos).
+    pub fn alternar_voz_nitida(&mut self) {
+        self.voz_nitida = !self.voz_nitida;
+        if let Some(mpv) = self.mpv.as_ref() {
+            mpv.voz_nitida(self.voz_nitida);
+        }
+    }
+
+    /// Mantém a janela do player sempre à frente das outras janelas.
+    pub fn alternar_sempre_acima(&mut self, ctx: &egui::Context) {
+        self.sempre_acima = !self.sempre_acima;
+        let nivel = if self.pip || self.sempre_acima {
+            egui::viewport::WindowLevel::AlwaysOnTop
+        } else {
+            egui::viewport::WindowLevel::Normal
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(nivel));
     }
 
     /// Busca as marcas de pular numa thread; chegam pelo recado.
@@ -2893,7 +2925,7 @@ impl App {
     pub fn alternar_janelinha(&mut self, ctx: &egui::Context) {
         self.sair_da_multi_tela();
         self.pip = !self.pip;
-        let nivel = if self.pip { egui::viewport::WindowLevel::AlwaysOnTop } else { egui::viewport::WindowLevel::Normal };
+        let nivel = if self.pip || self.sempre_acima { egui::viewport::WindowLevel::AlwaysOnTop } else { egui::viewport::WindowLevel::Normal };
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(nivel));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(!self.pip));
         if self.pip {

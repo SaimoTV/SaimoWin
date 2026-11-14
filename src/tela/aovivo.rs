@@ -818,6 +818,10 @@ fn comuns(app: &mut App, ui: &mut egui::Ui) {
         if botao_redondo(ui, Icone::TelaCheia, 46.0, "Tela cheia (F)", false).clicked() {
             app.alternar_tela_cheia(ui.ctx());
         }
+        let dica_acima = if app.sempre_acima { "Deixar de manter à frente" } else { "Manter janela à frente" };
+        if botao_redondo(ui, Icone::Link, 46.0, dica_acima, app.sempre_acima).clicked() {
+            app.alternar_sempre_acima(ui.ctx());
+        }
         if botao_redondo(ui, Icone::Janela, 46.0, "Janelinha por cima de tudo (P)", app.pip).clicked() {
             app.alternar_janelinha(ui.ctx());
         }
@@ -865,7 +869,17 @@ fn player(app: &mut App, ui: &mut egui::Ui, janela: Rect) {
             ui.label(egui::RichText::new(epg::hora_local(epg::agora())).font(forte(22.0)).color(TEXTO));
             ui.add_space(12.0);
             if let Some(info) = info_da_fonte(app) {
-                super::selo(ui, Some(Icone::Hd), &info, TEXTO);
+                let total_fontes = app.tocando_vod.as_ref().map(|f| f.urls.len()).unwrap_or(0);
+                let atual_fonte = app.tocando_vod.as_ref().map(|f| f.fonte).unwrap_or(0);
+                let resp = ui.scope(|ui| {
+                    super::selo(ui, Some(Icone::Hd), &info, TEXTO);
+                }).response.interact(egui::Sense::click());
+                if total_fontes > 1 {
+                    let resp = resp.on_hover_text("Clique para trocar de fonte");
+                    if resp.clicked() {
+                        app.escolher_fonte((atual_fonte + 1) % total_fontes);
+                    }
+                }
             }
         });
     });
@@ -1086,9 +1100,10 @@ fn menu_de_faixas(app: &mut App, ui: &mut egui::Ui) {
     let videos = mpv.faixas("video");
     let audios = mpv.faixas("audio");
     let legendas = mpv.faixas("sub");
+    let resolucao_atual = mpv.ler("video-params/h").filter(|h| !h.is_empty() && h != "0");
     // Legendas do OpenSubtitles do filme ou episódio que está tocando.
     let externas: Vec<crate::legendas::Opcao> = app.tocando_vod.as_ref().map(|t| t.legendas.clone()).unwrap_or_default();
-    if videos.is_empty() && audios.is_empty() && legendas.is_empty() && externas.is_empty() {
+    if app.tocando_vod.is_none() && videos.is_empty() && audios.is_empty() && legendas.is_empty() && externas.is_empty() {
         return;
     }
     let resposta = botao_redondo(ui, Icone::Legendas, 46.0, "Qualidade, idioma do áudio e legendas", false);
@@ -1096,12 +1111,16 @@ fn menu_de_faixas(app: &mut App, ui: &mut egui::Ui) {
         .align(egui::RectAlign::TOP_START)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            ui.set_min_width(240.0);
+            ui.set_min_width(270.0);
             let titulo = |ui: &mut egui::Ui, t: &str| {
                 ui.label(egui::RichText::new(t.to_uppercase()).font(forte(12.0)).color(ACENTO).extra_letter_spacing(1.0));
             };
             titulo(ui, "Qualidade");
-            if ui.selectable_label(!videos.iter().any(|f| f.selecionada), "Automática").clicked() {
+            let auto_rotulo = match resolucao_atual.as_deref() {
+                Some(h) => format!("Automática ({h}p)"),
+                None => "Automática".to_string(),
+            };
+            if ui.selectable_label(!videos.iter().any(|f| f.selecionada), auto_rotulo).clicked() {
                 mpv.escolher_faixa("video", None);
                 ui.close();
             }
@@ -1121,11 +1140,15 @@ fn menu_de_faixas(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
             }
+            ui.separator();
+            if ui.selectable_label(app.voz_nitida, "Áudio inteligente (voz nítida)").clicked() {
+                app.alternar_voz_nitida();
+            }
+            let legenda_embutida_ligada = legendas.iter().any(|f| f.selecionada);
             if !legendas.is_empty() {
                 ui.separator();
                 titulo(ui, "Legendas");
-                let ligada = legendas.iter().any(|f| f.selecionada);
-                if ui.selectable_label(!ligada, "Desligadas").clicked() {
+                if ui.selectable_label(!legenda_embutida_ligada, "Desligadas").clicked() {
                     mpv.escolher_faixa("sub", None);
                     ui.close();
                 }
@@ -1136,15 +1159,15 @@ fn menu_de_faixas(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
             }
+            let (escolhida, atraso, aviso) = app
+                .tocando_vod
+                .as_ref()
+                .map(|t| (t.legenda_escolhida.as_ref().map(|(o, _)| o.id.clone()), t.legenda_atraso, t.legenda_aviso.clone()))
+                .unwrap_or((None, 0.0, None));
             if !externas.is_empty() {
                 ui.separator();
                 titulo(ui, "Legendas · OpenSubtitles");
-                let (escolhida, atraso, aviso) = app
-                    .tocando_vod
-                    .as_ref()
-                    .map(|t| (t.legenda_escolhida.as_ref().map(|(o, _)| o.id.clone()), t.legenda_atraso, t.legenda_aviso.clone()))
-                    .unwrap_or((None, 0.0, None));
-                if ui.selectable_label(escolhida.is_none() && !legendas.iter().any(|f| f.selecionada), "Desligadas").clicked() {
+                if ui.selectable_label(escolhida.is_none() && !legenda_embutida_ligada, "Desligadas").clicked() {
                     app.desligar_legendas();
                     ui.close();
                 }
@@ -1156,21 +1179,32 @@ fn menu_de_faixas(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
                 });
-                if escolhida.is_some() {
-                    ui.horizontal(|ui| {
-                        if ui.button("−0,5 s").on_hover_text("Adiantar a legenda").clicked() {
-                            app.ajustar_atraso_legenda(-0.5);
-                        }
-                        let rotulo = if atraso == 0.0 { "Sincronia original".to_string() } else { format!("{atraso:+.1} s").replace('.', ",") };
-                        ui.label(egui::RichText::new(rotulo).font(forte(12.0)).color(SECUNDARIO));
-                        if ui.button("+0,5 s").on_hover_text("Atrasar a legenda").clicked() {
-                            app.ajustar_atraso_legenda(0.5);
-                        }
-                    });
-                }
-                if let Some(aviso) = aviso {
-                    ui.label(egui::RichText::new(aviso).font(forte(12.0)).color(SECUNDARIO));
-                }
+            } else if app.tocando_vod.is_some() && legendas.is_empty() {
+                ui.separator();
+                titulo(ui, "Legendas");
+                ui.label(egui::RichText::new("Nenhuma legenda externa encontrada ainda").font(forte(12.0)).color(SECUNDARIO));
+            }
+            if escolhida.is_some() || (app.tocando_vod.is_some() && legenda_embutida_ligada) {
+                ui.separator();
+                titulo(ui, "Sincronia da legenda");
+                ui.horizontal(|ui| {
+                    if ui.button("−2 s").clicked() { app.ajustar_atraso_legenda(-2.0); }
+                    if ui.button("−1 s").clicked() { app.ajustar_atraso_legenda(-1.0); }
+                    if ui.button("−0,5 s").on_hover_text("Adiantar a legenda").clicked() { app.ajustar_atraso_legenda(-0.5); }
+                    if ui.button("Original").on_hover_text("Voltar para 0,0 s").clicked() { app.zerar_atraso_legenda(); }
+                    if ui.button("+0,5 s").on_hover_text("Atrasar a legenda").clicked() { app.ajustar_atraso_legenda(0.5); }
+                    if ui.button("+1 s").clicked() { app.ajustar_atraso_legenda(1.0); }
+                    if ui.button("+2 s").clicked() { app.ajustar_atraso_legenda(2.0); }
+                });
+                let rotulo = if atraso == 0.0 {
+                    "Sincronia original (0,0 s)".to_string()
+                } else {
+                    format!("Atraso: {atraso:+.1} s").replace('.', ",")
+                };
+                ui.label(egui::RichText::new(rotulo).font(forte(12.0)).color(SECUNDARIO));
+            }
+            if let Some(aviso) = aviso {
+                ui.label(egui::RichText::new(aviso).font(forte(12.0)).color(SECUNDARIO));
             }
         });
 }

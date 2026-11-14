@@ -224,17 +224,41 @@ pub fn em_alta_resolucao(url: &str) -> String {
     format!("{}{}{}", &url[..inicio], ajustes.join(","), &url[fim..])
 }
 
+fn limpar_nome_canal(texto: &str) -> String {
+    let mut out = String::with_capacity(texto.len());
+    for token in texto.split(|c: char| !c.is_alphanumeric()) {
+        let lower = token.to_lowercase();
+        if matches!(lower.as_str(), "" | "fhd" | "uhd" | "4k" | "hd" | "sd" | "h265" | "hevc" | "br" | "pt" | "tv") {
+            continue;
+        }
+        for ch in lower.chars() {
+            let norm = match ch {
+                'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+                'é' | 'è' | 'ê' | 'ë' => 'e',
+                'í' | 'ì' | 'î' | 'ï' => 'i',
+                'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+                'ú' | 'ù' | 'û' | 'ü' => 'u',
+                'ç' => 'c',
+                _ => ch,
+            };
+            if norm.is_ascii_alphanumeric() {
+                out.push(norm);
+            }
+        }
+    }
+    out
+}
+
 /// O canal pelo fim do endereço do player ("…/premiere-fc" é o Premiere FC).
 fn canal_do(url: &str, canais: &[(String, Option<String>)]) -> Option<(String, Option<String>)> {
-    let slug: String = url.rsplit('/').next().unwrap_or("").to_lowercase().chars().filter(|c| *c != '-' && *c != ' ').collect();
+    let slug = limpar_nome_canal(url.rsplit('/').next().unwrap_or(""));
     if slug.is_empty() {
         return None;
     }
-    let chave = |nome: &str| nome.to_lowercase().replace(' ', "");
     canais
         .iter()
-        .find(|(nome, _)| chave(nome) == slug)
-        .or_else(|| canais.iter().find(|(nome, _)| chave(nome).contains(&slug)))
+        .find(|(nome, _)| limpar_nome_canal(nome) == slug)
+        .or_else(|| canais.iter().find(|(nome, _)| limpar_nome_canal(nome).contains(&slug)))
         .cloned()
 }
 
@@ -261,9 +285,13 @@ fn ler_agenda(agenda: &Value, canais: &[(String, Option<String>)]) -> Vec<Jogo> 
         // Sem canal (players vazio ou canal fora da lista) o jogo entra mesmo assim, com canal vazio.
         let (canal, canal_logo) = o
             .get("players")
-            .and_then(|p| p.get(0))
-            .and_then(Value::as_str)
-            .and_then(|player| canal_do(player, canais))
+            .and_then(Value::as_array)
+            .and_then(|players| {
+                players
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .find_map(|player| canal_do(player, canais))
+            })
             .unwrap_or_default();
         let Some(inicio) = ler_data(&texto(o, &["time_start"])) else { continue };
         let casa = texto(o, &["teams", "home", "name"]);
