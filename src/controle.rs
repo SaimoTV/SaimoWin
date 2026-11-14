@@ -92,6 +92,12 @@ impl App {
                     }
                     mudou = true;
                 }
+                Pedido::AddonsAtualizados => {
+                    self.aviso = Some(("Addons / Debrid atualizados pela rede local".into(), Instant::now()));
+                    self.atualizar_descoberta_addons();
+                    self.mandar_dados();
+                    mudou = true;
+                }
             }
         }
         // A pergunta some sozinha depois do tempo que o servidor espera.

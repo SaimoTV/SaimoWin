@@ -62,6 +62,8 @@ pub enum Pedido {
     Comando(String, Value),
     /// Mudou quem toca o som no celular.
     SomNoCelular,
+    /// A lista de addons ou chaves Debrid foi alterada via página LAN `/addons`.
+    AddonsAtualizados,
 }
 
 /// Uma tela tocando, para o aviso de posição.
@@ -540,9 +542,33 @@ impl Servidor {
 
         if metodo == "OPTIONS" {
             let _ = socket.write_all(
-                b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\n\
+                b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
                   Access-Control-Allow-Headers: *\r\nConnection: close\r\n\r\n",
             );
+            return;
+        }
+        if metodo == "GET" && (alvo == "/addons" || alvo.starts_with("/addons?")) {
+            responder_http(&mut socket, 200, "text/html; charset=utf-8", PAGINA_ADDONS_HTML.as_bytes(), None);
+            return;
+        }
+        if metodo == "GET" && (alvo == "/api/addons" || alvo.starts_with("/api/addons?")) {
+            let corpo = json!({
+                "addons": crate::addons::todos(),
+                "debrid": crate::debrid::config(),
+            })
+            .to_string();
+            responder_http(&mut socket, 200, "application/json; charset=utf-8", corpo.as_bytes(), None);
+            return;
+        }
+        if metodo == "POST" && (alvo == "/addons" || alvo.starts_with("/addons?")) {
+            let Some(corpo) = ler_corpo(&mut socket, &cabecalho) else {
+                let err = json!({"ok": false, "error": "Corpo da requisição ausente ou muito grande."}).to_string();
+                responder_http(&mut socket, 400, "application/json; charset=utf-8", err.as_bytes(), None);
+                return;
+            };
+            let (codigo, resposta_json) = self.tratar_post_addons(&corpo);
+            let texto = resposta_json.to_string();
+            responder_http(&mut socket, codigo, "application/json; charset=utf-8", texto.as_bytes(), None);
             return;
         }
         if metodo == "GET" && (alvo == "/info" || alvo.starts_with("/info?")) {
@@ -759,6 +785,195 @@ fn ler_cabecalho(socket: &mut TcpStream) -> Option<String> {
     None
 }
 
+fn ler_corpo(socket: &mut TcpStream, cabecalho: &str) -> Option<Vec<u8>> {
+    let tamanho = cabecalho
+        .lines()
+        .skip(1)
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.trim().eq_ignore_ascii_case("Content-Length").then(|| v.trim().parse::<usize>().ok())?
+        })
+        .unwrap_or(0);
+    if tamanho > 128 * 1024 {
+        return None;
+    }
+    let mut corpo = vec![0u8; tamanho];
+    if tamanho > 0 && socket.read_exact(&mut corpo).is_err() {
+        return None;
+    }
+    Some(corpo)
+}
+
+impl Servidor {
+    fn tratar_post_addons(&self, corpo: &[u8]) -> (u16, Value) {
+        let Ok(json) = serde_json::from_slice::<Value>(corpo) else {
+            return (400, json!({"ok": false, "error": "JSON inválido."}));
+        };
+        let acao = json.get("action").and_then(Value::as_str).unwrap_or("");
+        match acao {
+            "add" => {
+                let url = json.get("url").and_then(Value::as_str).unwrap_or("");
+                match crate::addons::adicionar_url(url) {
+                    Ok(addon) => {
+                        self.pedir(Pedido::AddonsAtualizados);
+                        (200, json!({"ok": true, "addon": addon}))
+                    }
+                    Err(e) => (400, json!({"ok": false, "error": e})),
+                }
+            }
+            "toggle" => {
+                let url = json.get("transportUrl").and_then(Value::as_str).unwrap_or("");
+                let enabled = json.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+                if crate::addons::alternar(url, enabled) {
+                    self.pedir(Pedido::AddonsAtualizados);
+                    (200, json!({"ok": true}))
+                } else {
+                    (400, json!({"ok": false, "error": "Addon não encontrado."}))
+                }
+            }
+            "move" => {
+                let url = json.get("transportUrl").and_then(Value::as_str).unwrap_or("");
+                let delta = json.get("delta").and_then(Value::as_i64).unwrap_or(0) as isize;
+                if crate::addons::mover(url, delta) {
+                    self.pedir(Pedido::AddonsAtualizados);
+                    (200, json!({"ok": true}))
+                } else {
+                    (400, json!({"ok": false, "error": "Não foi possível reordenar."}))
+                }
+            }
+            "remove" => {
+                let url = json.get("transportUrl").and_then(Value::as_str).unwrap_or("");
+                if crate::addons::remover(url) {
+                    self.pedir(Pedido::AddonsAtualizados);
+                    (200, json!({"ok": true}))
+                } else {
+                    (400, json!({"ok": false, "error": "Addon não encontrado."}))
+                }
+            }
+            "debrid" => {
+                let Some(val) = json.get("debrid") else {
+                    return (400, json!({"ok": false, "error": "Objeto 'debrid' ausente."}));
+                };
+                let Ok(cfg) = serde_json::from_value::<crate::debrid::ConfigDebrid>(val.clone()) else {
+                    return (400, json!({"ok": false, "error": "Configuração Debrid inválida."}));
+                };
+                match crate::debrid::salvar_config(cfg) {
+                    Ok(()) => {
+                        self.pedir(Pedido::AddonsAtualizados);
+                        (200, json!({"ok": true}))
+                    }
+                    Err(e) => (400, json!({"ok": false, "error": e})),
+                }
+            }
+            _ => (400, json!({"ok": false, "error": "Ação desconhecida."})),
+        }
+    }
+}
+
+const PAGINA_ADDONS_HTML: &str = r#"<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Saimo · Addons e Debrid</title>
+<style>
+  body { font-family: system-ui, sans-serif; background:#0d1018; color:#edf2f7; margin:0; padding:20px; }
+  .wrap { max-width:720px; margin:0 auto; }
+  h1 { color:#22d3ee; margin-bottom:4px; font-size:24px; }
+  p.sub { color:#94a3b8; margin-top:0; font-size:14px; }
+  .card { background:#161b26; border:1px solid #263044; border-radius:12px; padding:16px; margin-bottom:16px; }
+  label { display:block; font-size:13px; color:#cbd5e1; margin-bottom:6px; }
+  input[type=text], input[type=password] { width:100%; box-sizing:border-box; background:#0d1018; color:#fff; border:1px solid #334155; border-radius:8px; padding:10px; font-size:14px; }
+  button { background:#22d3ee; color:#09101a; border:0; border-radius:8px; padding:10px 16px; font-weight:700; cursor:pointer; }
+  button.sec { background:#263044; color:#e2e8f0; padding:6px 10px; font-weight:600; }
+  button.del { background:#7f1d1d; color:#fecaca; padding:6px 10px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .addon { border-top:1px solid #263044; padding:10px 0; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .addon:first-child { border-top:0; }
+  .msg { padding:10px 12px; border-radius:8px; margin-top:10px; font-size:14px; display:none; }
+  .err { background:#450a0a; color:#fecaca; display:block; }
+  .ok { background:#064e3b; color:#a7f3d0; display:block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Addons Stremio &amp; Debrid</h1>
+  <p class="sub">Adicione addons compatíveis com o protocolo Stremio (<code>/manifest.json</code>) e chaves Debrid direto no Saimo.</p>
+
+  <div class="card">
+    <label for="addonUrl">URL do Addon (https:// ou stremio://)</label>
+    <div class="row">
+      <input id="addonUrl" type="text" style="flex:1" placeholder="https://seu-addon.exemplo/manifest.json">
+      <button onclick="addAddon()">Adicionar</button>
+    </div>
+    <div id="msg" class="msg"></div>
+  </div>
+
+  <div class="card">
+    <strong>Addons Instalados</strong>
+    <div id="lista" style="margin-top:10px;color:#94a3b8;">Carregando...</div>
+  </div>
+
+  <div class="card">
+    <strong>Provedores Debrid (TorBox, Real-Debrid, AllDebrid, Premiumize)</strong>
+    <div style="margin-top:10px;display:grid;gap:10px;">
+      <div><label><input id="en_tb" type="checkbox"> TorBox API Key</label><input id="k_tb" type="password" placeholder="Chave TorBox"></div>
+      <div><label><input id="en_rd" type="checkbox"> Real-Debrid API Token</label><input id="k_rd" type="password" placeholder="Chave Real-Debrid"></div>
+      <div><label><input id="en_ad" type="checkbox"> AllDebrid API Key</label><input id="k_ad" type="password" placeholder="Chave AllDebrid"></div>
+      <div><label><input id="en_pm" type="checkbox"> Premiumize API Key</label><input id="k_pm" type="password" placeholder="Chave Premiumize"></div>
+      <label><input id="sync_conn" type="checkbox"> Sincronizar chaves pelo Saimo Connect (opcional)</label>
+      <div><button onclick="saveDebrid()">Salvar chaves Debrid</button></div>
+    </div>
+  </div>
+</div>
+<script>
+function showMsg(txt, ok){ const el=document.getElementById('msg'); el.textContent=txt; el.className='msg '+(ok?'ok':'err'); }
+async function load(){
+  const r = await fetch('/api/addons'); const d = await r.json();
+  const box = document.getElementById('lista');
+  if(!d.addons || !d.addons.length){ box.innerHTML='<p style="color:#94a3b8">Nenhum addon instalado ainda.</p>'; }
+  else {
+    box.innerHTML = '';
+    for(const a of d.addons){
+      const div = document.createElement('div'); div.className='addon';
+      div.innerHTML = '<div><strong>'+esc(a.manifest.name)+'</strong> <small style="color:#94a3b8">v'+esc(a.manifest.version)+'</small><br><small style="color:#64748b">'+esc(a.transportUrl)+'</small></div>'
+        + '<div class="row">'
+        + '<button class="sec" onclick="post({action:\'toggle\',transportUrl:'+JSON.stringify(a.transportUrl)+',enabled:'+(!a.enabled)+'})">'+(a.enabled?'Ativo':'Desativado')+'</button>'
+        + '<button class="sec" onclick="post({action:\'move\',transportUrl:'+JSON.stringify(a.transportUrl)+',delta:-1})">▲</button>'
+        + '<button class="sec" onclick="post({action:\'move\',transportUrl:'+JSON.stringify(a.transportUrl)+',delta:1})">▼</button>'
+        + '<button class="del" onclick="post({action:\'remove\',transportUrl:'+JSON.stringify(a.transportUrl)+'})">Remover</button>'
+        + '</div>';
+      box.appendChild(div);
+    }
+  }
+  const db = d.debrid || {};
+  document.getElementById('sync_conn').checked = !!db.sincronizarConnect;
+  const set=(id,p)=>{ document.getElementById('en_'+id).checked = !!(p&&p.enabled); document.getElementById('k_'+id).value = (p&&p.apiKey)||''; };
+  set('tb', db.torbox); set('rd', db.realDebrid); set('ad', db.allDebrid); set('pm', db.premiumize);
+}
+function esc(s){ return String(s||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+async function post(body){
+  const r = await fetch('/addons', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const d = await r.json();
+  if(!r.ok || !d.ok){ showMsg(d.error || 'Erro ao salvar.', false); return false; }
+  load(); return true;
+}
+async function addAddon(){
+  const url = document.getElementById('addonUrl').value.trim();
+  if(!url){ showMsg('Cole a URL do addon.', false); return; }
+  showMsg('Validando manifesto...', true);
+  if(await post({action:'add', url})){ document.getElementById('addonUrl').value=''; showMsg('Addon adicionado!', true); }
+}
+async function saveDebrid(){
+  const get=(id)=>({enabled:document.getElementById('en_'+id).checked, apiKey:document.getElementById('k_'+id).value.trim()});
+  const ok = await post({action:'debrid', debrid:{sincronizarConnect:document.getElementById('sync_conn').checked, torbox:get('tb'), realDebrid:get('rd'), allDebrid:get('ad'), premiumize:get('pm')}});
+  if(ok) showMsg('Configurações Debrid salvas!', true);
+}
+load();
+</script>
+</body>
+</html>"#;
+
 fn responder_http(socket: &mut TcpStream, codigo: u16, tipo: &str, corpo: &[u8], destino: Option<&str>) {
     let status = match codigo {
         200 => "OK",
@@ -768,7 +983,7 @@ fn responder_http(socket: &mut TcpStream, codigo: u16, tipo: &str, corpo: &[u8],
     };
     let mut cabecalho = format!(
         "HTTP/1.1 {codigo} {status}\r\nContent-Type: {tipo}\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n\
-         Access-Control-Allow-Methods: GET, OPTIONS\r\nConnection: close\r\nContent-Length: {}\r\n",
+         Access-Control-Allow-Methods: GET, POST, OPTIONS\r\nConnection: close\r\nContent-Length: {}\r\n",
         corpo.len()
     );
     if let Some(d) = destino {

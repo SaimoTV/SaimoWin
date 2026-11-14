@@ -17,7 +17,7 @@ mod aovivo;
 mod apoie;
 mod ficha;
 mod grade;
-mod janelas;
+pub mod janelas;
 mod paginas;
 mod topo;
 mod video;
@@ -171,18 +171,25 @@ fn ajustar_escala(ctx: &egui::Context) {
 /// Estado vazio de uma lista sem endereço: o texto e o atalho para Ajustes.
 /// Ainda não há lista nenhuma (nem endereço do Saimo, nem lista da pessoa).
 pub fn sem_nenhuma_lista(app: &App) -> bool {
-    crate::listas::canais().is_none() && crate::listas::filmes().is_none() && app.minhas_meta.is_empty()
+    crate::listas::canais().is_none()
+        && crate::listas::filmes().is_none()
+        && app.minhas_meta.is_empty()
+        && !crate::addons::tem_ativo()
 }
 
-pub const BOAS_VINDAS: &str = "Bem-vindo ao Saimo! Para começar, adicione uma lista M3U (só o link já basta), uma lista com usuário e senha ou o endereço de uma lista do Saimo.";
+pub const BOAS_VINDAS: &str = "Bem-vindo ao Saimo! Para começar, adicione uma lista M3U, endereços do Saimo ou configure seus Addons Stremio e Debrid.";
 
 pub fn vazio_com_atalho(app: &mut App, ui: &mut egui::Ui, centro: Pos2, aviso: &str) {
     let aviso = if sem_nenhuma_lista(app) { BOAS_VINDAS } else { aviso };
     ui.painter().text(centro, Align2::CENTER_CENTER, aviso, normal(17.0), SECUNDARIO);
-    let area = Rect::from_center_size(centro + egui::vec2(0.0, 56.0), egui::vec2(460.0, 46.0));
+    let area = Rect::from_center_size(centro + egui::vec2(0.0, 56.0), egui::vec2(690.0, 46.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
         if botao(ui, Some(Icone::Certo), "Adicionar lista", true).clicked() {
             app.minhas_dialogo = Some(crate::minhas_listas_tela::Dialogo::novo());
+        }
+        ui.add_space(10.0);
+        if botao(ui, Some(Icone::Mais), "Addons e Debrid", false).clicked() {
+            app.addons_dialogo = Some(crate::addons_tela::DialogoAddons::novo());
         }
         ui.add_space(10.0);
         if botao(ui, Some(Icone::Ajustes), "Endereços do Saimo", false).clicked() {
@@ -228,6 +235,9 @@ pub fn desenhar(app: &mut App, ui: &mut egui::Ui) {
     if app.dialogo_listas.is_some() {
         janelas::listas(app, ctx);
     }
+    crate::minhas_listas_tela::dialogo(app, ctx);
+    crate::addons_tela::dialogo(app, ctx);
+    crate::addons_tela::seletor_streams(app, ctx);
 }
 
 // MARK: - Fundo do app

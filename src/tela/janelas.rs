@@ -6,7 +6,7 @@ use crate::{atualizacao, listas, App};
 use eframe::egui::{self, Align2, Stroke, Vec2};
 use std::time::Duration;
 
-fn modal() -> egui::Frame {
+pub fn modal() -> egui::Frame {
     egui::Frame::NONE
         .fill(FUNDO)
         .stroke(Stroke::new(1.0, branco(20)))
@@ -16,7 +16,7 @@ fn modal() -> egui::Frame {
 }
 
 /// O véu que escurece o app atrás do modal.
-fn veu(ctx: &egui::Context) {
+pub fn veu(ctx: &egui::Context) {
     let pintor = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("veu-do-modal")));
     pintor.rect_filled(ctx.content_rect(), 0.0, egui::Color32::from_black_alpha(140));
 }

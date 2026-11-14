@@ -84,6 +84,7 @@ fn selos(ui: &mut egui::Ui, f: &ficha::Ficha, serie: bool) {
 enum AcaoDaFicha {
     Fechar,
     Assistir,
+    FontesAddons,
     Favoritar,
     Ator(u32, String, Option<String>),
     Titulo(vod::Achado),
@@ -119,9 +120,17 @@ pub fn ficha_tela(app: &mut App, ui: &mut egui::Ui) {
                         let aviso = if app.ficha_carregando { "Buscando a ficha…" } else { "Sem ficha para este título." };
                         ui.label(egui::RichText::new(aviso).font(normal(16.0)).color(SECUNDARIO));
                         ui.add_space(16.0);
-                        if botao(ui, Some(Icone::Tocar), if serie { "Ver episódios" } else { "Assistir" }, true).clicked() {
-                            acao = Some(AcaoDaFicha::Assistir);
-                        }
+                        ui.horizontal(|ui| {
+                            if botao(ui, Some(Icone::Tocar), if serie { "Ver episódios" } else { "Assistir" }, true).clicked() {
+                                acao = Some(AcaoDaFicha::Assistir);
+                            }
+                            if crate::addons::tem_ativo() {
+                                ui.add_space(10.0);
+                                if botao(ui, Some(Icone::Trocar), "Fontes (Addons)", false).clicked() {
+                                    acao = Some(AcaoDaFicha::FontesAddons);
+                                }
+                            }
+                        });
                         return;
                     };
                     if !f.frase.is_empty() {
@@ -145,6 +154,12 @@ pub fn ficha_tela(app: &mut App, ui: &mut egui::Ui) {
                         };
                         if botao(ui, Some(Icone::Tocar), rotulo, true).clicked() {
                             acao = Some(AcaoDaFicha::Assistir);
+                        }
+                        if crate::addons::tem_ativo() {
+                            ui.add_space(10.0);
+                            if botao(ui, Some(Icone::Trocar), "Fontes (Addons)", false).clicked() {
+                                acao = Some(AcaoDaFicha::FontesAddons);
+                            }
                         }
                         ui.add_space(10.0);
                         let marcado = app.favoritos_vod.contains(&titulo);
@@ -195,6 +210,7 @@ pub fn ficha_tela(app: &mut App, ui: &mut egui::Ui) {
     match acao {
         Some(AcaoDaFicha::Fechar) => app.fechar_ficha(),
         Some(AcaoDaFicha::Assistir) => app.assistir_da_ficha(),
+        Some(AcaoDaFicha::FontesAddons) => app.abrir_fontes_addons_da_ficha(),
         Some(AcaoDaFicha::Favoritar) => app.favoritar_vod(titulo),
         Some(AcaoDaFicha::Ator(id, nome, foto)) => app.abrir_ator(id, nome, foto),
         Some(AcaoDaFicha::Titulo(_)) | None => {}

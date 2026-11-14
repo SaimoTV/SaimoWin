@@ -180,7 +180,7 @@ fn grade(app: &mut App, ui: &mut egui::Ui) {
     let itens = app.itens_na_tela();
     let total = itens.len();
     let area = ui.max_rect();
-    if total == 0 && crate::listas::filmes().is_none() && app.aba != Aba::Favoritos {
+    if total == 0 && crate::listas::filmes().is_none() && !crate::addons::tem_ativo() && app.aba != Aba::Favoritos {
         let aviso = match app.aba {
             Aba::Series => "Nenhuma série. Informe o endereço da lista de filmes e séries em Ajustes > Listas.",
             Aba::Animes => "Nenhum anime. Informe o endereço da lista de filmes e séries em Ajustes > Listas.",
@@ -372,6 +372,24 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
                 acao = Some(12);
             }
             ui.add_space(18.0);
+            rotulo_de_secao(ui, "Addons e Debrid (Stremio)");
+            ui.add_space(4.0);
+            let qtd_addons = crate::addons::todos().len();
+            let ativos_addons = crate::addons::ativos().len();
+            let debrid_ativo = crate::debrid::config().tem_ativo();
+            let resumo_addons = match (qtd_addons, debrid_ativo) {
+                (0, false) => "Nenhum addon instalado · clique para configurar ou escanear QR Code".to_string(),
+                (0, true) => "Debrid configurado · adicione um addon Stremio (/manifest.json)".to_string(),
+                (n, false) => format!("{ativos_addons} de {n} addons ativos · clique para gerenciar"),
+                (n, true) => format!("{ativos_addons} de {n} addons ativos · Debrid ligado"),
+            };
+            if linha(ui, "Addons e Debrid", &resumo_addons, Icone::Mais)
+                .on_hover_text("Instalar addons Stremio por URL/QR Code e configurar chaves TorBox / Real-Debrid / AllDebrid / Premiumize")
+                .clicked()
+            {
+                acao = Some(13);
+            }
+            ui.add_space(18.0);
             rotulo_de_secao(ui, "Legendas");
             ui.add_space(4.0);
             let idioma = legendas::idioma_guardado();
@@ -431,6 +449,7 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         }
         Some(9) => app.abrir_dialogo_listas(),
         Some(12) => app.abrir_minhas_listas(),
+        Some(13) => app.addons_dialogo = Some(crate::addons_tela::DialogoAddons::novo()),
         Some(4) => app.procurar_atualizacao_agora(),
         Some(5) => app.ajuda_aberta = true,
         Some(6) => app.alternar_tela_cheia(ui.ctx()),
@@ -440,7 +459,6 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         }
         _ => {}
     }
-    crate::minhas_listas_tela::dialogo(app, ui.ctx());
 }
 
 /// Faixas de ano do filtro: os três últimos anos, as décadas e antes de 1990.

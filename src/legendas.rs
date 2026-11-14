@@ -43,21 +43,90 @@ fn imdb_de(tmdb: u32, serie: bool) -> Option<String> {
         return mapa.get(&tmdb).cloned();
     }
     // Sem o fragmento (rede fora, título ainda não mapeado) não guarda nada:
-    // a próxima abertura tenta de novo.
-    let base = crate::listas::filmes()?;
-    let texto = crate::rede::texto(&format!("{base}imdb/{nome}.txt"))?;
-    let mut mapa = HashMap::new();
-    for linha in texto.lines() {
-        let mut partes = linha.split('\t');
-        if let (Some(id), Some(imdb)) = (partes.next(), partes.next()) {
-            if let Ok(id) = id.trim().parse::<u32>() {
-                mapa.insert(id, imdb.trim().to_string());
+    // a próxima abertura tenta de novo. Quando não há lista de filmes ou o
+    // fragmento não tem o título, cai na ponte TMDB -> IMDb dos addons.
+    let via_lista = (|| {
+        let base = crate::listas::filmes()?;
+        let texto = crate::rede::texto(&format!("{base}imdb/{nome}.txt"))?;
+        let mut mapa = HashMap::new();
+        for linha in texto.lines() {
+            let mut partes = linha.split('\t');
+            if let (Some(id), Some(imdb)) = (partes.next(), partes.next()) {
+                if let Ok(id) = id.trim().parse::<u32>() {
+                    mapa.insert(id, imdb.trim().to_string());
+                }
             }
         }
+        let achado = mapa.get(&tmdb).cloned();
+        FRAGMENTO.lock().ok()?.get_or_insert_with(HashMap::new).insert(nome, mapa);
+        achado
+    })();
+    via_lista.or_else(|| crate::addons::tmdb_para_imdb(tmdb, serie))
+}
+
+pub fn normalizar_idioma(lang: &str) -> (&'static str, &'static str) {
+    let limpo = lang.trim().to_ascii_lowercase();
+    match limpo.as_str() {
+        "pob" | "pb" | "pt-br" | "pt_br" | "por-br" | "portuguese-brazil" | "brazilian" => ("pob", "Português (BR)"),
+        "por" | "pt" | "portuguese" => ("por", "Português"),
+        "eng" | "en" | "en-us" | "en-gb" | "english" => ("eng", "Inglês"),
+        "spa" | "es" | "es-la" | "es-es" | "spanish" => ("spa", "Espanhol"),
+        _ => ("out", "Outro idioma"),
     }
-    let achado = mapa.get(&tmdb).cloned();
-    FRAGMENTO.lock().ok()?.get_or_insert_with(HashMap::new).insert(nome, mapa);
-    achado
+}
+
+fn sanitizar_id_arquivo(id: &str) -> String {
+    id.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
+}
+
+/// Mescla legendas embutidas no stream e vindas de addons `subtitles` com a lista base.
+pub fn mesclar_com_addons(
+    mut base: Vec<Opcao>,
+    inline: &[crate::addons::StreamSubtitle],
+    extras: &[crate::addons::StreamSubtitle],
+) -> Vec<Opcao> {
+    let mut vistas: std::collections::HashSet<String> = base.iter().map(|o| o.url.clone()).collect();
+    let mut extras_opcoes = Vec::new();
+    let adicionar = |itens: &[crate::addons::StreamSubtitle], prefixo: &str, out: &mut Vec<Opcao>, vistas: &mut std::collections::HashSet<String>| {
+        for (idx, sub) in itens.iter().enumerate() {
+            let url = sub.url.trim();
+            if url.is_empty() || !vistas.insert(url.to_string()) {
+                continue;
+            }
+            let (cod, nome_lang) = normalizar_idioma(&sub.lang);
+            let rotulo_idioma = if cod == "out" && !sub.lang.trim().is_empty() {
+                sub.lang.trim().to_string()
+            } else {
+                nome_lang.to_string()
+            };
+            let sufixo_id = sub
+                .id
+                .as_deref()
+                .map(sanitizar_id_arquivo)
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| format!("{idx}"));
+            let origem = if prefixo == "stream" { "Stream" } else { "Addon" };
+            out.push(Opcao {
+                id: format!("{cod}-{prefixo}-{sufixo_id}-{idx}"),
+                idioma: cod.to_string(),
+                rotulo: format!("{rotulo_idioma} · {origem}"),
+                url: url.to_string(),
+            });
+        }
+    };
+    adicionar(inline, "stream", &mut extras_opcoes, &mut vistas);
+    adicionar(extras, "addon", &mut extras_opcoes, &mut vistas);
+    extras_opcoes.sort_by_key(|o| match o.idioma.as_str() {
+        "pob" => 0,
+        "por" => 1,
+        "eng" => 2,
+        "spa" => 3,
+        _ => 4,
+    });
+    extras_opcoes.append(&mut base);
+    extras_opcoes
 }
 
 /// As legendas do título, do melhor idioma para o pior. Consulta a rede:
@@ -101,13 +170,22 @@ pub fn buscar(tmdb: u32, serie: bool, temporada: u32, episodio: u32) -> Vec<Opca
 /// Baixa o arquivo para a pasta temporária e devolve o caminho, que é o que o
 /// mpv abre. Consulta a rede: chamar fora da thread do desenho.
 pub fn baixar(opcao: &Opcao) -> Option<PathBuf> {
-    let caminho = std::env::temp_dir().join(format!("saimo-legenda-{}.srt", opcao.id));
+    let ext = if opcao.url.split('?').next().unwrap_or("").to_ascii_lowercase().ends_with(".vtt") {
+        "vtt"
+    } else if opcao.url.split('?').next().unwrap_or("").to_ascii_lowercase().ends_with(".ass") {
+        "ass"
+    } else {
+        "srt"
+    };
+    let id_limpo = sanitizar_id_arquivo(&opcao.id);
+    let caminho = std::env::temp_dir().join(format!("saimo-legenda-{id_limpo}.{ext}"));
     if caminho.metadata().map(|m| m.len() > 0).unwrap_or(false) {
         return Some(caminho);
     }
     let texto = crate::rede::texto(&opcao.url)?;
     // Página de erro no lugar do arquivo: melhor sem legenda que com HTML na tela.
-    if !texto.contains("-->") {
+    let eh_legenda = texto.contains("-->") || texto.contains("[Script Info]") || texto.contains("Dialogue:");
+    if !eh_legenda {
         return None;
     }
     std::fs::write(&caminho, texto).ok()?;
@@ -134,5 +212,30 @@ mod testes {
     #[test]
     fn sem_id_nao_consulta_a_rede() {
         assert!(buscar(0, false, 0, 0).is_empty());
+    }
+
+    #[test]
+    fn mescla_legendas_inline_e_addons_ordenando_portugues_primeiro() {
+        let inline = vec![crate::addons::StreamSubtitle {
+            id: Some("sub:en".into()),
+            url: "https://cdn.exemplo/en.vtt".into(),
+            lang: "eng".into(),
+        }];
+        let addons = vec![crate::addons::StreamSubtitle {
+            id: Some("sub/pt".into()),
+            url: "https://cdn.exemplo/pt.srt".into(),
+            lang: "pt-BR".into(),
+        }];
+        let base = vec![Opcao {
+            id: "os-1".into(),
+            idioma: "spa".into(),
+            rotulo: "Espanhol · OpenSubtitles".into(),
+            url: "https://os.exemplo/es.srt".into(),
+        }];
+        let merged = mesclar_com_addons(base, &inline, &addons);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].idioma, "pob");
+        assert_eq!(merged[1].idioma, "eng");
+        assert_eq!(merged[2].idioma, "spa");
     }
 }

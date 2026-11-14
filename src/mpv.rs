@@ -536,7 +536,7 @@ impl Mpv {
     pub fn tocar_ao_vivo(&self, url: &str, referer: Option<&str>, agente: Option<&str>) {
         crate::diagnostico::etapa("mpv: abrindo um canal ao vivo");
         match crate::connect::pela_regua(url, referer, agente, self.id) {
-            Some(local) => self.carregar(&local, url, referer, agente, None, &["rebase-start-time=no"]),
+            Some(local) => self.carregar(&local, url, referer, agente, None, &["rebase-start-time=no"], &[]),
             None => self.tocar(url, referer, agente),
         }
     }
@@ -545,14 +545,38 @@ impl Mpv {
     /// abertura. Trocar de fonte do mesmo título passa por aqui: a legenda
     /// escolhida acompanha, e não some junto com o arquivo anterior.
     pub fn tocar_com_legenda(&self, url: &str, referer: Option<&str>, agente: Option<&str>, legenda: Option<&str>) {
-        self.carregar(url, url, referer, agente, legenda, &[]);
+        self.carregar(url, url, referer, agente, legenda, &[], &[]);
+    }
+
+    /// Como `tocar_com_legenda`, encaminhando cabeçalhos HTTP extras vindos de
+    /// `behaviorHints.proxyHeaders.request` de addons Stremio.
+    pub fn tocar_com_opcoes(
+        &self,
+        url: &str,
+        referer: Option<&str>,
+        agente: Option<&str>,
+        legenda: Option<&str>,
+        cabecalhos: &[(String, String)],
+    ) {
+        self.carregar(url, url, referer, agente, legenda, &[], cabecalhos);
     }
 
     /// Abre `endereco`; `original` é o endereço da fonte (o mesmo, fora da
     /// régua), que decide as opções.
-    fn carregar(&self, endereco: &str, original: &str, referer: Option<&str>, agente: Option<&str>, legenda: Option<&str>, extras: &[&str]) {
-        self.propriedade("referrer", referer.unwrap_or(""));
-        self.propriedade("user-agent", agente.unwrap_or(crate::AGENTE));
+    fn carregar(
+        &self,
+        endereco: &str,
+        original: &str,
+        referer: Option<&str>,
+        agente: Option<&str>,
+        legenda: Option<&str>,
+        extras: &[&str],
+        cabecalhos: &[(String, String)],
+    ) {
+        let (ref_hdr, ua_hdr, campo_headers) = preparar_cabecalhos(cabecalhos);
+        self.propriedade("referrer", referer.or(ref_hdr.as_deref()).unwrap_or(""));
+        self.propriedade("user-agent", agente.or(ua_hdr.as_deref()).unwrap_or(crate::AGENTE));
+        self.propriedade("http-header-fields", &campo_headers);
         // O atraso da legenda é do arquivo: o próximo recomeça no original.
         self.propriedade("sub-delay", "0");
         let mut opcoes: Vec<String> = extras.iter().map(|o| o.to_string()).collect();
@@ -721,6 +745,47 @@ impl Drop for Mpv {
     }
 }
 
+/// Extrai `Referer` / `User-Agent` dos cabeçalhos extras (quando presentes)
+/// e formata a lista restante no formato `http-header-fields` do libmpv.
+pub fn preparar_cabecalhos(cabecalhos: &[(String, String)]) -> (Option<String>, Option<String>, String) {
+    let mut referer = None;
+    let mut agente = None;
+    let mut tem_accept = false;
+    let mut extras = Vec::new();
+    for (chave, valor) in cabecalhos {
+        let k = chave.trim();
+        let v = valor.trim();
+        if k.is_empty() || v.is_empty() {
+            continue;
+        }
+        if k.eq_ignore_ascii_case("referer") || k.eq_ignore_ascii_case("referrer") {
+            referer = Some(v.to_string());
+        } else if k.eq_ignore_ascii_case("user-agent") {
+            agente = Some(v.to_string());
+        } else {
+            if k.eq_ignore_ascii_case("accept") {
+                tem_accept = true;
+            }
+            extras.push(format!("{k}: {v}"));
+        }
+    }
+    if !tem_accept {
+        extras.insert(0, "Accept: */*".to_string());
+    }
+    let formatado = extras
+        .into_iter()
+        .map(|campo| {
+            if campo.contains(',') {
+                format!("%{}%{}", campo.len(), campo)
+            } else {
+                campo
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    (referer, agente, formatado)
+}
+
 #[cfg(test)]
 mod testes {
     use super::*;
@@ -772,7 +837,7 @@ mod testes {
 
 #[cfg(test)]
 mod testes_versao {
-    use super::versao_do_mpv;
+    use super::{preparar_cabecalhos, versao_do_mpv};
 
     #[test]
     fn le_a_versao_do_mpv() {
@@ -780,5 +845,22 @@ mod testes_versao {
         assert_eq!(versao_do_mpv("mpv v0.40.0-dirty"), (0, 40));
         assert_eq!(versao_do_mpv("mpv"), (99, 0));
         assert!(versao_do_mpv("mpv 0.38.0") >= (0, 38));
+    }
+
+    #[test]
+    fn prepara_cabecalhos_para_mpv_preservando_accept_e_extraindo_referer_ua() {
+        let (r0, u0, f0) = preparar_cabecalhos(&[]);
+        assert_eq!((r0, u0), (None, None));
+        assert_eq!(f0, "Accept: */*");
+
+        let headers = vec![
+            ("Referer".into(), "https://origem.exemplo/".into()),
+            ("User-Agent".into(), "SaimoProxy/2.0".into()),
+            ("Origin".into(), "https://origem.exemplo".into()),
+        ];
+        let (r1, u1, f1) = preparar_cabecalhos(&headers);
+        assert_eq!(r1.as_deref(), Some("https://origem.exemplo/"));
+        assert_eq!(u1.as_deref(), Some("SaimoProxy/2.0"));
+        assert_eq!(f1, "Accept: */*,Origin: https://origem.exemplo");
     }
 }

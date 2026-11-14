@@ -15,9 +15,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
-const CHAVE: &str = "15d2ea6d0dc1d476efbca3eba2b9bbfb";
-const BASE: &str = "https://api.themoviedb.org/3";
-const IMAGENS: &str = "https://image.tmdb.org/t/p/";
+pub(crate) const CHAVE: &str = "15d2ea6d0dc1d476efbca3eba2b9bbfb";
+pub(crate) const BASE: &str = "https://api.themoviedb.org/3";
+pub(crate) const IMAGENS: &str = "https://image.tmdb.org/t/p/";
 
 #[derive(Clone, Debug, Default)]
 pub struct Pessoa {
@@ -64,6 +64,13 @@ pub fn conhecida(titulo: &str, serie: bool) -> Option<Ficha> {
 
 fn chave(titulo: &str, serie: bool) -> String {
     format!("{}{titulo}", if serie { "s:" } else { "f:" })
+}
+
+/// Registra uma ficha vinda de um addon `/meta` quando não há entrada TMDB.
+pub fn registrar(titulo: &str, serie: bool, ficha: Ficha) {
+    if let Ok(mut mapa) = guardadas().lock() {
+        mapa.entry(chave(titulo, serie)).or_insert(ficha);
+    }
 }
 
 /// A logo do título, se a ficha dele já chegou. Barata: é consultada a cada

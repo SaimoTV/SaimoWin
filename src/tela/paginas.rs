@@ -62,6 +62,8 @@ pub enum Acao {
     Pagina(Aba),
     /// A grade de A a Z de um tipo, com um gênero já escolhido (ou todos).
     Explorar(Aba, String),
+    /// Título vindo da descoberta TMDB ou catálogo de addon Stremio.
+    ObraAddon(crate::addons_tela::ObraAddon),
 }
 
 #[derive(Clone, Debug)]
@@ -145,6 +147,7 @@ fn chave(app: &App) -> u64 {
     app.favoritos.hash(&mut h);
     app.liberado.hash(&mut h);
     (app.filas.len(), app.acervo.len(), app.canais.len(), app.radios.len(), app.eventos.len()).hash(&mut h);
+    (app.descoberta_addons.len(), app.busca_addons_resultados.len(), crate::addons::tem_ativo()).hash(&mut h);
     app.colecoes_carregadas().hash(&mut h);
     // O que passa agora no canal e o grupo do jogo mudam com o relógio.
     if matches!(app.aba, Aba::Inicio | Aba::Eventos | Aba::Buscar) {
@@ -205,6 +208,7 @@ pub fn ficha_em_foco_na_fileira(app: &mut App) {
                 app.abrir_ficha(titulo, serie, Destino::Fileira(f, i));
             }
         }
+        Acao::ObraAddon(obra) => app.abrir_obra_addon(obra),
         _ => {}
     }
 }
@@ -218,6 +222,7 @@ pub(super) fn executar(app: &mut App, acao: Acao) {
             let serie = item.serie();
             app.abrir_ficha(item.titulo, serie, Destino::Fileira(f, i));
         }
+        Acao::ObraAddon(obra) => app.abrir_obra_addon(obra),
         Acao::Continuar(item) => app.abrir_item(item),
         Acao::Canal(nome) => {
             if !nome.is_empty() {
@@ -301,8 +306,58 @@ pub(super) fn cartao_de_titulo(app: &App, item: ItemNaTela, capa: Option<String>
     c
 }
 
-/// "Continue assistindo", só com o que existe no acervo comum: o título
-/// reservado não pode reaparecer por aqui sem o código.
+fn cartao_obra_addon(app: &App, obra: crate::addons_tela::ObraAddon) -> Cartao {
+    let imagem = match obra.capa.clone() {
+        Some(url) => Imagem::Url(url),
+        None => Imagem::Capa(obra.titulo.clone(), obra.serie),
+    };
+    let meta_txt = if obra.detalhe.is_empty() {
+        if obra.serie { "Série".into() } else { "Filme".into() }
+    } else {
+        obra.detalhe.clone()
+    };
+    let heroi = if ficha::conhecida(&obra.titulo, obra.serie).is_some() {
+        heroi_titulo(&obra.titulo, obra.serie)
+    } else {
+        Heroi::Texto {
+            titulo: crate::generos::sem_ano(&obra.titulo),
+            meta: meta_txt,
+            sinopse: obra.sinopse.clone(),
+            fundo_de: Some((obra.titulo.clone(), obra.serie)),
+        }
+    };
+    let mut c = Cartao::novo(obra.titulo.clone(), imagem, Acao::ObraAddon(obra.clone()), heroi);
+    c.favorito = app.favoritos_vod.contains(&obra.titulo);
+    if !obra.serie {
+        c.progresso = progresso::onde_parou(&obra.titulo).map(|m| progresso::fracao(&m));
+    }
+    c
+}
+
+fn filas_addons(app: &App, filtro_tipo: Option<&str>) -> Vec<Fila> {
+    if !crate::addons::tem_ativo() {
+        return Vec::new();
+    }
+    app.descoberta_addons
+        .iter()
+        .filter(|f| match filtro_tipo {
+            None => true,
+            Some("movie") => f.tipo_stremio == "movie",
+            Some("series") => f.tipo_stremio == "series",
+            Some("anime") => f.tipo_stremio == "anime" || f.tipo_stremio == "series",
+            Some(t) => f.tipo_stremio == t,
+        })
+        .filter(|f| !f.itens.is_empty())
+        .map(|f| Fila {
+            titulo: f.titulo.clone(),
+            tipo: Tipo::Capa,
+            cartoes: f.itens.iter().cloned().map(|o| cartao_obra_addon(app, o)).collect(),
+        })
+        .collect()
+}
+
+/// "Continue assistindo", só com o que existe no acervo comum ou histórico de
+/// addons: o título reservado não pode reaparecer por aqui sem o código.
 fn continuar(app: &App, filtro: impl Fn(bool) -> bool) -> Option<Fila> {
     let no_acervo: std::collections::HashMap<&str, &crate::vod::Achado> =
         app.acervo.iter().map(|a| (a.titulo.as_str(), a)).collect();
@@ -310,17 +365,41 @@ fn continuar(app: &App, filtro: impl Fn(bool) -> bool) -> Option<Fila> {
         .into_iter()
         .filter_map(|(rotulo, marca)| {
             let nome = rotulo.split(" · ").next().unwrap_or(&rotulo).to_string();
-            let achado = no_acervo.get(nome.as_str())?;
-            if !filtro(achado.serie) {
-                return None;
+            if let Some(achado) = no_acervo.get(nome.as_str()) {
+                if !filtro(achado.serie) {
+                    return None;
+                }
+                let item = ItemNaTela { titulo: nome.clone(), detalhe: achado.ano.clone(), serie: achado.serie, letra: achado.letra.clone() };
+                let mut c = Cartao::novo(rotulo.clone(), Imagem::Capa(nome.clone(), achado.serie), Acao::Continuar(item), heroi_titulo(&nome, achado.serie));
+                c.progresso = Some(progresso::fracao(&marca).max(0.02));
+                c.sub = progresso::falta(&marca);
+                c.favorito = app.favoritos_vod.contains(&nome);
+                c.remover = Some(rotulo);
+                return Some(c);
             }
-            let item = ItemNaTela { titulo: nome.clone(), detalhe: achado.ano.clone(), serie: achado.serie, letra: achado.letra.clone() };
-            let mut c = Cartao::novo(rotulo.clone(), Imagem::Capa(nome.clone(), achado.serie), Acao::Continuar(item), heroi_titulo(&nome, achado.serie));
-            c.progresso = Some(progresso::fracao(&marca).max(0.02));
-            c.sub = progresso::falta(&marca);
-            c.favorito = app.favoritos_vod.contains(&nome);
-            c.remover = Some(rotulo);
-            Some(c)
+            if crate::addons::tem_ativo() {
+                if let Some(obra) = app.obra_addon_conhecida(&nome) {
+                    if !filtro(obra.serie) {
+                        return None;
+                    }
+                    let imagem = match obra.capa.clone() {
+                        Some(u) => Imagem::Url(u),
+                        None => Imagem::Capa(nome.clone(), obra.serie),
+                    };
+                    let mut c = Cartao::novo(
+                        rotulo.clone(),
+                        imagem,
+                        Acao::ObraAddon(obra.clone()),
+                        heroi_titulo(&nome, obra.serie),
+                    );
+                    c.progresso = Some(progresso::fracao(&marca).max(0.02));
+                    c.sub = progresso::falta(&marca);
+                    c.favorito = app.favoritos_vod.contains(&nome);
+                    c.remover = Some(rotulo);
+                    return Some(c);
+                }
+            }
+            None
         })
         .take(20)
         .collect();
@@ -401,6 +480,7 @@ fn inicio(app: &App) -> Vec<Fila> {
         let cartoes = fila.itens.iter().enumerate().map(|(i, item)| cartao_de_destaque(app, f, i, item)).collect();
         filas.push(Fila { titulo: fila.titulo.clone(), tipo: Tipo::Capa, cartoes });
     }
+    filas.extend(filas_addons(app, None));
     filas
 }
 
@@ -569,7 +649,10 @@ fn on_demand(app: &App) -> Vec<Fila> {
         let titulo = format!("Filmes de {}", genero.to_lowercase());
         filas.extend(por_genero(app, &filmes, genero, Aba::Filmes, titulo));
     }
-    filas.push(categorias(app, true));
+    filas.extend(filas_addons(app, None));
+    if crate::listas::filmes().is_some() {
+        filas.push(categorias(app, true));
+    }
     filas
 }
 
@@ -602,15 +685,25 @@ fn do_tipo(app: &App, aba: Aba) -> Vec<Fila> {
     for genero in generos {
         filas.extend(por_genero(app, &candidatos, &genero, aba, genero.clone()));
     }
-    // O fim da página: o acervo inteiro do tipo, de A a Z.
-    let (nome, _, cor, icone, sobre) = categoria(aba);
-    let colagem: Vec<String> = candidatos.iter().take(4).map(|c| c.capa.clone()).collect();
-    let heroi = Heroi::Texto { titulo: format!("{nome} de A a Z"), meta: format!("{} títulos", numero(candidatos.len().max(1))), sinopse: sobre.into(), fundo_de: None };
-    let mut todos = Cartao::novo("Todos de A a Z", Imagem::Nenhuma, Acao::Explorar(aba, String::new()), heroi);
-    todos.colagem = colagem;
-    todos.cor = cor;
-    todos.icone = Some(icone);
-    filas.push(Fila { titulo: "Explorar".into(), tipo: Tipo::Secao, cartoes: vec![todos] });
+    let tipo_addon = match aba {
+        Aba::Filmes => Some("movie"),
+        Aba::Series => Some("series"),
+        Aba::Animes => Some("anime"),
+        Aba::Doramas => Some("series"),
+        _ => None,
+    };
+    filas.extend(filas_addons(app, tipo_addon));
+    // O fim da página: o acervo inteiro do tipo, de A a Z (quando há lista VOD).
+    if !candidatos.is_empty() || crate::listas::filmes().is_some() {
+        let (nome, _, cor, icone, sobre) = categoria(aba);
+        let colagem: Vec<String> = candidatos.iter().take(4).map(|c| c.capa.clone()).collect();
+        let heroi = Heroi::Texto { titulo: format!("{nome} de A a Z"), meta: format!("{} títulos", numero(candidatos.len().max(1))), sinopse: sobre.into(), fundo_de: None };
+        let mut todos = Cartao::novo("Todos de A a Z", Imagem::Nenhuma, Acao::Explorar(aba, String::new()), heroi);
+        todos.colagem = colagem;
+        todos.cor = cor;
+        todos.icone = Some(icone);
+        filas.push(Fila { titulo: "Explorar".into(), tipo: Tipo::Secao, cartoes: vec![todos] });
+    }
     filas
 }
 
@@ -748,12 +841,31 @@ fn busca(app: &App) -> Vec<Fila> {
             }
             lista
         });
-    vec![
+    let mut filas = vec![
         Fila { titulo: "Canais".into(), tipo: Tipo::Largo, cartoes: canais },
         Fila { titulo: "Filmes".into(), tipo: Tipo::Capa, cartoes: achados(false) },
         Fila { titulo: "Séries".into(), tipo: Tipo::Capa, cartoes: achados(true) },
         Fila { titulo: "Animes e doramas".into(), tipo: Tipo::Capa, cartoes: colecoes },
-    ]
+    ];
+    if crate::addons::tem_ativo() && !app.busca_addons_resultados.is_empty() {
+        let filmes_addons: Vec<Cartao> = app
+            .busca_addons_resultados
+            .iter()
+            .filter(|o| !o.serie)
+            .cloned()
+            .map(|o| cartao_obra_addon(app, o))
+            .collect();
+        let series_addons: Vec<Cartao> = app
+            .busca_addons_resultados
+            .iter()
+            .filter(|o| o.serie)
+            .cloned()
+            .map(|o| cartao_obra_addon(app, o))
+            .collect();
+        filas.push(Fila { titulo: "Filmes (Addons & TMDB)".into(), tipo: Tipo::Capa, cartoes: filmes_addons });
+        filas.push(Fila { titulo: "Séries (Addons & TMDB)".into(), tipo: Tipo::Capa, cartoes: series_addons });
+    }
+    filas
 }
 
 // MARK: - Desenho
@@ -798,8 +910,9 @@ pub fn pagina(app: &mut App, ui: &mut egui::Ui) {
     destaque(app, ui, area, altura_do_destaque);
 
     let lista = Rect::from_min_max(Pos2::new(area.left(), area.top() + altura_do_destaque), area.max);
-    if filas.is_empty() || (app.aba.de_tipo() && crate::listas::filmes().is_none()) {
-        let sem_filmes = crate::listas::filmes().is_none();
+    let tem_addons = crate::addons::tem_ativo();
+    if filas.is_empty() || (app.aba.de_tipo() && crate::listas::filmes().is_none() && !tem_addons) {
+        let sem_filmes = crate::listas::filmes().is_none() && !tem_addons;
         let sem_canais = crate::listas::canais().is_none();
         let sem_lista = match app.aba {
             Aba::Inicio | Aba::OnDemand | Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas => sem_filmes,
@@ -810,8 +923,8 @@ pub fn pagina(app: &mut App, ui: &mut egui::Ui) {
         if sem_lista {
             let aviso = match app.aba {
                 Aba::Radios => "Nenhuma rádio. Informe o endereço da lista de canais em Ajustes > Listas.",
-                Aba::Buscar => "Nada para buscar. Informe os endereços das listas em Ajustes > Listas.",
-                _ => "Nenhum filme ou série. Informe o endereço da lista de filmes e séries em Ajustes > Listas.",
+                Aba::Buscar => "Nada para buscar. Adicione listas em Ajustes ou configure Addons Stremio.",
+                _ => "Nenhum filme ou série. Adicione uma lista ou configure Addons Stremio.",
             };
             super::vazio_com_atalho(app, ui, lista.center() - egui::vec2(0.0, 40.0), aviso);
             return;
@@ -819,6 +932,8 @@ pub fn pagina(app: &mut App, ui: &mut egui::Ui) {
         let aviso = if buscando {
             if app.busca_vod.trim().chars().count() < 2 {
                 "Digite o nome — os resultados aparecem enquanto você digita."
+            } else if app.busca_addons_carregando {
+                "Buscando no TMDB e nos addons…"
             } else {
                 "Nada com esse nome. Confira a grafia ou tente uma parte do nome."
             }
@@ -970,8 +1085,14 @@ fn padrao(app: &App) -> (String, String, bool, String, Option<(String, bool)>) {
         }
         Aba::OnDemand => {
             let total = app.acervo.len() + app.colecao(Aba::Animes).map(|l| l.len()).unwrap_or(0) + app.colecao(Aba::Doramas).map(|l| l.len()).unwrap_or(0);
-            ("On Demand".into(), if total > 0 { format!("{} títulos", numero(total)) } else { "Carregando…".into() },
-                "Filmes, séries, animes e doramas, dublados e legendados.".into())
+            let meta = if total > 0 {
+                format!("{} títulos", numero(total))
+            } else if crate::addons::tem_ativo() {
+                "Addons & TMDB".into()
+            } else {
+                "Carregando…".into()
+            };
+            ("On Demand".into(), meta, "Filmes, séries, animes e doramas, dublados e legendados.".into())
         }
         Aba::Eventos => ("Eventos".into(), eventos::resumo(&app.jogos_na_tela()), "Os jogos nos canais da lista, com o placar ao vivo. A agenda se atualiza a cada três minutos.".into()),
         Aba::Radios => {

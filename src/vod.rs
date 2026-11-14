@@ -30,6 +30,18 @@ pub struct Serie {
     pub episodios: usize,
 }
 
+impl Serie {
+    /// Constrói uma série vinda de catálogos/metadados de addons externos.
+    pub fn de_addon(titulo: String, ano: String, episodios: usize) -> Self {
+        Self {
+            titulo,
+            ano,
+            pedaco: 0,
+            episodios,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Episodio {
     pub temporada: u32,

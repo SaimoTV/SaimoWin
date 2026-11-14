@@ -32,6 +32,10 @@ mod rede;
 mod listas;
 mod minhas_listas;
 mod minhas_listas_tela;
+mod addons;
+mod addons_tela;
+mod debrid;
+mod qr;
 mod xtream;
 mod seletor;
 mod sincronia;
@@ -183,6 +187,33 @@ enum Recado {
     Temporada,
     /// A procura pedida nos Ajustes não achou versão nova.
     SemAtualizacao,
+    /// Resultado de adicionar um addon Stremio em segundo plano.
+    AddonAdicionado(Result<addons::AddonInstalado, String>),
+    /// Filas de descoberta TMDB + catálogos dos addons.
+    DescobertaAddons(Vec<addons_tela::FilaDescoberta>),
+    /// Resultados de busca TMDB + catálogos dos addons.
+    BuscaAddons(String, Vec<addons_tela::ObraAddon>),
+    /// Temporadas/episódios montados para série via TMDB ou addon `/meta`.
+    SerieAddonEpisodios(String, Option<u32>, Option<String>, Option<String>, Vec<vod::Episodio>),
+    /// Streams retornados pelos addons ativos.
+    StreamsAddon(u64, Vec<addons::AddonStream>),
+    /// Resolução (direta ou Debrid) de um stream selecionado.
+    StreamResolvido {
+        id: u64,
+        stream: addons::AddonStream,
+        resultado: Result<debrid::StreamResolvido, String>,
+    },
+    /// Avanço automático (ou seleção) do próximo episódio via addons + bingeGroup.
+    ProximoEpisodioAddon {
+        serie: String,
+        episodio: vod::Episodio,
+        lista: Vec<vod::Episodio>,
+        tmdb: Option<u32>,
+        imdb: Option<String>,
+        extra_id: Option<String>,
+        stream_resolvido: Option<(addons::AddonStream, debrid::StreamResolvido)>,
+        todas: Vec<addons::AddonStream>,
+    },
 }
 
 /// Ordem da grade pelos detalhes do TMDB.
@@ -257,6 +288,8 @@ pub enum Destino {
     Item(ItemNaTela),
     /// Um destaque publicado: a fila e a posição dele em `filas`.
     Fileira(usize, usize),
+    /// Título vindo da descoberta TMDB ou catálogo de addon.
+    ObraAddon(addons_tela::ObraAddon),
 }
 
 /// O que está tocando quando não é canal: filme ou episódio.
@@ -280,6 +313,14 @@ pub struct TocandoVod {
     /// O cartão do próximo episódio: quando subiu, e se foi dispensado.
     pub proximo_desde: Option<Instant>,
     pub proximo_dispensado: bool,
+    /// Cabeçalhos HTTP do stream (`proxyHeaders.request`), usados ao trocar fonte.
+    pub cabecalhos: Vec<(String, String)>,
+    /// `behaviorHints.bingeGroup` e origem do addon para o próximo episódio.
+    pub binge_group: Option<String>,
+    pub addon_id: Option<String>,
+    pub addon_tmdb: Option<u32>,
+    pub addon_imdb: Option<String>,
+    pub addon_extra_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -531,6 +572,19 @@ struct App {
     connect_publicado: Instant,
     /// O filme ou episódio que o celular mandou abrir, a caminho.
     remoto: controle::Remoto,
+    /// Diálogo de configuração "Addons e Debrid" (com QR Code na porta 8999).
+    pub addons_dialogo: Option<addons_tela::DialogoAddons>,
+    /// Seletor de fontes (streams) de addons Stremio + Debrid.
+    pub seletor_addon: Option<addons_tela::SeletorStreams>,
+    /// Fileiras de descoberta TMDB + catálogos dos addons ativos.
+    pub descoberta_addons: Vec<addons_tela::FilaDescoberta>,
+    descoberta_pedida: bool,
+    pub busca_addons_resultados: Vec<addons_tela::ObraAddon>,
+    pub busca_addons_carregando: bool,
+    busca_addons_ultima: String,
+    obras_addons_cache: HashMap<String, addons_tela::ObraAddon>,
+    id_seletor_addon: u64,
+    proximo_addon_em_curso: bool,
 }
 
 /// A segunda tela da multi tela: outro mpv, outro canal, sem som.
@@ -805,6 +859,16 @@ impl App {
             minhas_adicionando: false,
             connect_publicado: Instant::now(),
             remoto: controle::Remoto::default(),
+            addons_dialogo: None,
+            seletor_addon: None,
+            descoberta_addons: Vec::new(),
+            descoberta_pedida: false,
+            busca_addons_resultados: Vec::new(),
+            busca_addons_carregando: false,
+            busca_addons_ultima: String::new(),
+            obras_addons_cache: addons_tela::carregar_obras_salvas(),
+            id_seletor_addon: 0,
+            proximo_addon_em_curso: false,
         };
         app.ligar_baixadores_de_imagem(&cc.egui_ctx);
         app.reordenar();
@@ -1279,6 +1343,17 @@ impl App {
     }
 
     fn tocar_vod(&mut self, titulo: String, urls: Vec<String>, fonte: usize, nova: bool) {
+        self.tocar_vod_com_cabecalhos(titulo, urls, fonte, nova, None);
+    }
+
+    fn tocar_vod_com_cabecalhos(
+        &mut self,
+        titulo: String,
+        urls: Vec<String>,
+        fonte: usize,
+        nova: bool,
+        cabecalhos_novos: Option<Vec<(String, String)>>,
+    ) {
         // Trocar de filme fecha a conta do anterior antes de perder a posição.
         self.guardar_progresso(true);
         // Filme ocupa a janela inteira e tem som próprio; o canal parado
@@ -1298,14 +1373,39 @@ impl App {
         // legenda escolhida — que segue junto para o arquivo novo.
         let anterior = self.tocando_vod.take().filter(|t| t.titulo == titulo);
         let legenda = anterior.as_ref().and_then(|t| t.legenda_escolhida.as_ref().map(|(_, c)| c.clone()));
-        mpv.tocar_com_legenda(&url, None, None, legenda.as_deref());
+        let cabecalhos = cabecalhos_novos.unwrap_or_else(|| {
+            anterior.as_ref().map(|t| t.cabecalhos.clone()).unwrap_or_default()
+        });
+        mpv.tocar_com_opcoes(&url, None, None, legenda.as_deref(), &cabecalhos);
         mpv.pausa(false);
         self.pausado = false;
         self.tocando = None;
         telemetria::comecou("vod", &titulo, &url, fonte + 1, nova);
-        let (episodio, marcas, legendas, legenda_escolhida) = anterior
-            .map(|t| (t.episodio, t.marcas, t.legendas, t.legenda_escolhida))
-            .unwrap_or((None, None, Vec::new(), None));
+        let (
+            episodio,
+            marcas,
+            legendas,
+            legenda_escolhida,
+            binge_group,
+            addon_id,
+            addon_tmdb,
+            addon_imdb,
+            addon_extra_id,
+        ) = anterior
+            .map(|t| {
+                (
+                    t.episodio,
+                    t.marcas,
+                    t.legendas,
+                    t.legenda_escolhida,
+                    t.binge_group,
+                    t.addon_id,
+                    t.addon_tmdb,
+                    t.addon_imdb,
+                    t.addon_extra_id,
+                )
+            })
+            .unwrap_or((None, None, Vec::new(), None, None, None, None, None, None));
         self.tocando_vod = Some(TocandoVod {
             titulo,
             urls,
@@ -1321,6 +1421,12 @@ impl App {
             visto: (0.0, 0.0),
             proximo_desde: None,
             proximo_dispensado: false,
+            cabecalhos,
+            binge_group,
+            addon_id,
+            addon_tmdb,
+            addon_imdb,
+            addon_extra_id,
         });
         self.letreiro_ate = Instant::now() + SUMIR_LETREIRO;
         self.aba = Aba::Canais;
@@ -1328,6 +1434,10 @@ impl App {
     }
 
     fn tocar_episodio(&mut self, serie: &str, episodio: vod::Episodio, lista: Vec<vod::Episodio>) {
+        if episodio.urls.is_empty() && (addons::tem_ativo() || self.obra_addon_conhecida(serie).is_some()) {
+            self.abrir_seletor_addons_episodio(serie, episodio, lista);
+            return;
+        }
         let titulo = format!("{} · T{} E{}", serie, episodio.temporada, episodio.numero);
         let urls = self.fontes_preferidas(serie, &episodio.urls);
         // Some antes de tocar: senão a troca de título apagaria o episódio.
@@ -1341,8 +1451,9 @@ impl App {
             versao: episodio.versao.clone(),
             lista,
         });
-        self.pedir_legendas(titulo.clone(), self.generos.id(serie, true), true, episodio.temporada, episodio.numero);
-        self.pedir_marcas(titulo, self.generos.id(serie, true), episodio.temporada, episodio.numero);
+        let tmdb = self.id_tmdb_de(serie, true);
+        self.pedir_legendas(titulo.clone(), tmdb, true, episodio.temporada, episodio.numero);
+        self.pedir_marcas(titulo, tmdb, episodio.temporada, episodio.numero);
         self.pedir_logo(serie, true);
     }
 
@@ -1383,17 +1494,39 @@ impl App {
         diagnostico::etapa(&format!("filme: {titulo} ({} fontes)", urls.len()));
         self.fonte_preferida = None;
         self.tocar_vod(titulo.clone(), urls, 0, true);
-        self.pedir_legendas(titulo.clone(), self.generos.id(&titulo, false), false, 0, 0);
+        let tmdb = self.id_tmdb_de(&titulo, false);
+        self.pedir_legendas(titulo.clone(), tmdb, false, 0, 0);
         self.pedir_logo(&titulo, false);
     }
 
     /// Busca as legendas numa thread; chegam pelo recado. Se a pessoa já
     /// escolhera um idioma antes, a primeira versão dele liga sozinha.
     fn pedir_legendas(&self, titulo: String, tmdb: Option<u32>, serie: bool, temporada: u32, numero: u32) {
-        let Some(tmdb) = tmdb else { return };
+        if tmdb.is_none() && !addons::tem_ativo() {
+            return;
+        }
         let emissor = self.emissor.clone();
         std::thread::spawn(move || {
-            let lista = legendas::buscar(tmdb, serie, temporada, numero);
+            let base = match tmdb {
+                Some(id) => legendas::buscar(id, serie, temporada, numero),
+                None => Vec::new(),
+            };
+            let lista = if addons::tem_ativo() {
+                let tipo = if serie { "series" } else { "movie" };
+                let extras = addons::buscar_subtitles(
+                    tipo,
+                    tmdb,
+                    None,
+                    if serie { Some(temporada) } else { None },
+                    if serie { Some(numero) } else { None },
+                    None,
+                    None,
+                    None,
+                );
+                legendas::mesclar_com_addons(base, &[], &extras)
+            } else {
+                base
+            };
             if !lista.is_empty() {
                 let _ = emissor.send(Recado::Legendas(titulo, lista));
             }
@@ -1503,9 +1636,59 @@ impl App {
         let Some(t) = self.tocando_vod.as_ref() else { return false };
         let Some(ep) = t.episodio.clone() else { return false };
         let Some(seguinte) = ep.seguinte() else { return false };
-        // O que acabou não fica no "continuar assistindo".
+        if !seguinte.urls.is_empty() {
+            // O que acabou não fica no "continuar assistindo".
+            progresso::esquecer(&t.titulo);
+            self.tocar_episodio(&ep.serie, seguinte, ep.lista);
+            return true;
+        }
+        let obra = self.obra_addon_conhecida(&ep.serie);
+        let tmdb = t.addon_tmdb.or_else(|| obra.as_ref().and_then(|o| o.tmdb_id)).or_else(|| self.id_tmdb_de(&ep.serie, true));
+        let imdb = t.addon_imdb.clone().or_else(|| obra.as_ref().and_then(|o| o.imdb_id.clone()));
+        let extra_id = t.addon_extra_id.clone().or_else(|| obra.as_ref().and_then(|o| o.addon_id.clone()));
+        if tmdb.is_none() && imdb.is_none() && extra_id.is_none() && !addons::tem_ativo() {
+            return false;
+        }
+        if self.proximo_addon_em_curso {
+            return false;
+        }
+        self.proximo_addon_em_curso = true;
         progresso::esquecer(&t.titulo);
-        self.tocar_episodio(&ep.serie, seguinte, ep.lista);
+        self.aviso = Some((
+            format!("{} · T{} E{}: buscando fonte…", ep.serie, seguinte.temporada, seguinte.numero),
+            Instant::now(),
+        ));
+        let binge = t.binge_group.clone();
+        let addon_pref = t.addon_id.clone();
+        let emissor = self.emissor.clone();
+        std::thread::spawn(move || {
+            let streams = addons::buscar_streams(
+                "series",
+                tmdb,
+                imdb.as_deref(),
+                extra_id.as_deref(),
+                Some(seguinte.temporada),
+                Some(seguinte.numero),
+            );
+            let mut resolvido = None;
+            if let Some(ref bg) = binge {
+                if let Some(escolhido) = addons::selecionar_por_binge_group(&streams, bg, addon_pref.as_deref()) {
+                    if let Ok(res) = debrid::resolver_stream(escolhido) {
+                        resolvido = Some((escolhido.clone(), res));
+                    }
+                }
+            }
+            let _ = emissor.send(Recado::ProximoEpisodioAddon {
+                serie: ep.serie,
+                episodio: seguinte,
+                lista: ep.lista,
+                tmdb,
+                imdb,
+                extra_id,
+                stream_resolvido: resolvido,
+                todas: streams,
+            });
+        });
         true
     }
 
@@ -1556,7 +1739,7 @@ impl App {
             t.proximo_desde = None;
         }
         let venceu = t.proximo_desde.map(|d| d.elapsed() >= ESPERA_DO_PROXIMO).unwrap_or(false);
-        if venceu && !self.pausado {
+        if venceu && !self.pausado && !self.proximo_addon_em_curso {
             self.tocar_proximo();
         }
     }
@@ -1603,7 +1786,7 @@ impl App {
             self.ficha_carregando = false;
             return;
         }
-        let Some(id) = self.generos.id(&titulo, serie) else {
+        let Some(id) = self.id_tmdb_de(&titulo, serie) else {
             self.ficha_carregando = false;
             return;
         };
@@ -1641,8 +1824,453 @@ impl App {
         match destino {
             Some(Destino::Item(item)) => self.abrir_item(item),
             Some(Destino::Fileira(fila, indice)) => tela::seguir_destaque(self, fila, indice),
+            Some(Destino::ObraAddon(obra)) => self.assistir_obra_addon(obra),
             None => {}
         }
+    }
+
+    pub fn atualizar_descoberta_addons(&mut self) {
+        if !addons::tem_ativo() {
+            self.descoberta_addons.clear();
+            self.descoberta_pedida = false;
+            return;
+        }
+        self.descoberta_pedida = true;
+        let emissor = self.emissor.clone();
+        std::thread::spawn(move || {
+            let filas = addons_tela::montar_descoberta();
+            let _ = emissor.send(Recado::DescobertaAddons(filas));
+        });
+    }
+
+    fn cuidar_dos_addons(&mut self) {
+        if addons::tem_ativo() && !self.descoberta_pedida {
+            self.atualizar_descoberta_addons();
+        }
+        if self.aba == Aba::Buscar && addons::tem_ativo() {
+            let q = self.busca_vod.trim().to_string();
+            if q != self.busca_addons_ultima {
+                self.busca_addons_ultima = q.clone();
+                if q.chars().count() < 2 {
+                    self.busca_addons_resultados.clear();
+                    self.busca_addons_carregando = false;
+                } else {
+                    self.busca_addons_carregando = true;
+                    let emissor = self.emissor.clone();
+                    std::thread::spawn(move || {
+                        let itens = addons_tela::buscar_obras(&q);
+                        let _ = emissor.send(Recado::BuscaAddons(q, itens));
+                    });
+                }
+            }
+        }
+    }
+
+    fn guardar_obra_addon(&mut self, obra: &addons_tela::ObraAddon) {
+        self.obras_addons_cache.insert(obra.titulo.clone(), obra.clone());
+        addons_tela::salvar_obras_salvas(&self.obras_addons_cache);
+    }
+
+    pub fn obra_addon_conhecida(&self, titulo: &str) -> Option<addons_tela::ObraAddon> {
+        if let Some(o) = self.obras_addons_cache.get(titulo) {
+            return Some(o.clone());
+        }
+        let alvo = catalogo::chave_de_ordem(titulo);
+        self.obras_addons_cache
+            .values()
+            .find(|o| catalogo::chave_de_ordem(&o.titulo) == alvo)
+            .cloned()
+    }
+
+    pub fn id_tmdb_de(&self, titulo: &str, serie: bool) -> Option<u32> {
+        self.generos.id(titulo, serie).or_else(|| {
+            self.obra_addon_conhecida(titulo)
+                .filter(|o| o.serie == serie)
+                .and_then(|o| o.tmdb_id)
+        })
+    }
+
+    pub fn abrir_obra_addon(&mut self, obra: addons_tela::ObraAddon) {
+        self.guardar_obra_addon(&obra);
+        self.ficha_destino = Some(Destino::ObraAddon(obra.clone()));
+        self.ficha_ator = None;
+        self.filmografia.clear();
+        self.ficha = ficha::conhecida(&obra.titulo, obra.serie);
+        self.ficha_aberta = Some((obra.titulo.clone(), obra.serie));
+        if self.ficha.is_some() {
+            self.ficha_carregando = false;
+            return;
+        }
+        self.ficha_carregando = true;
+        let emissor = self.emissor.clone();
+        std::thread::spawn(move || {
+            let mut tmdb = obra.tmdb_id;
+            if tmdb.is_none() {
+                if let Some(ref im) = obra.imdb_id {
+                    tmdb = addons::imdb_para_tmdb(im, Some(obra.serie)).map(|(id, _)| id);
+                }
+            }
+            let mut achada = tmdb.and_then(|id| ficha::baixar(&obra.titulo, obra.serie, id));
+            if achada.is_none() {
+                let meta_id = obra
+                    .addon_id
+                    .clone()
+                    .or_else(|| obra.imdb_id.clone())
+                    .or_else(|| tmdb.map(|id| format!("tmdb:{id}")));
+                if let Some(mid) = meta_id {
+                    if let Some(meta) = addons::buscar_meta(&obra.tipo_stremio, &mid) {
+                        let f = addons::ficha_de_meta(&meta);
+                        ficha::registrar(&obra.titulo, obra.serie, f.clone());
+                        achada = Some(f);
+                    }
+                }
+            }
+            if achada.is_none() && (!obra.sinopse.is_empty() || obra.capa.is_some() || obra.fundo.is_some()) {
+                let f = ficha::Ficha {
+                    sinopse: obra.sinopse.clone(),
+                    frase: String::new(),
+                    duracao: None,
+                    classificacao: None,
+                    nota: 0.0,
+                    ano: obra.detalhe.clone(),
+                    generos: Vec::new(),
+                    assinatura: String::new(),
+                    roteiro: String::new(),
+                    produtora: String::new(),
+                    elenco: Vec::new(),
+                    capa: obra.capa.clone(),
+                    fundo: obra.fundo.clone().or_else(|| obra.capa.clone()),
+                    temporadas: None,
+                    logo: None,
+                };
+                ficha::registrar(&obra.titulo, obra.serie, f.clone());
+                achada = Some(f);
+            }
+            let _ = emissor.send(Recado::Ficha(obra.titulo, obra.serie, achada));
+        });
+    }
+
+    pub fn assistir_obra_addon(&mut self, obra: addons_tela::ObraAddon) {
+        self.guardar_obra_addon(&obra);
+        if obra.serie {
+            self.serie_aberta = Some(vod::Serie::de_addon(obra.titulo.clone(), obra.detalhe.clone(), 0));
+            self.episodios.clear();
+            self.temporada_aberta = 0;
+            self.carregando_vod = true;
+            self.pedir_ficha_do_destaque(&obra.titulo, true);
+            let emissor = self.emissor.clone();
+            std::thread::spawn(move || {
+                let mut tmdb = obra.tmdb_id;
+                let mut imdb = obra.imdb_id.clone();
+                if tmdb.is_none() {
+                    if let Some(ref im) = imdb {
+                        tmdb = addons::imdb_para_tmdb(im, Some(true)).map(|(id, _)| id);
+                    }
+                }
+                if imdb.is_none() {
+                    if let Some(tid) = tmdb {
+                        imdb = addons::tmdb_para_imdb(tid, true);
+                    }
+                }
+                let mut episodios = Vec::new();
+                let meta_id = obra
+                    .addon_id
+                    .clone()
+                    .or_else(|| imdb.clone())
+                    .or_else(|| tmdb.map(|id| format!("tmdb:{id}")));
+                if let Some(mid) = meta_id {
+                    if let Some(meta) = addons::buscar_meta(&obra.tipo_stremio, &mid) {
+                        for v in meta.videos {
+                            if v.episode > 0 {
+                                episodios.push(vod::Episodio {
+                                    temporada: v.season.max(1),
+                                    numero: v.episode,
+                                    versao: String::new(),
+                                    urls: Vec::new(),
+                                });
+                            }
+                        }
+                    }
+                }
+                if episodios.is_empty() {
+                    if let Some(tid) = tmdb {
+                        let temps = addons::temporadas_por_tmdb(tid);
+                        for temp in temps {
+                            for ep in ficha::temporada(tid, temp) {
+                                episodios.push(vod::Episodio {
+                                    temporada: temp,
+                                    numero: ep.numero,
+                                    versao: String::new(),
+                                    urls: Vec::new(),
+                                });
+                            }
+                        }
+                    }
+                }
+                episodios.sort_by_key(|e| (e.temporada, e.numero));
+                episodios.dedup_by_key(|e| (e.temporada, e.numero));
+                let _ = emissor.send(Recado::SerieAddonEpisodios(
+                    obra.titulo,
+                    tmdb,
+                    imdb,
+                    obra.addon_id,
+                    episodios,
+                ));
+            });
+            return;
+        }
+        self.abrir_seletor_addons(
+            obra.titulo.clone(),
+            obra.titulo,
+            false,
+            None,
+            None,
+            obra.tmdb_id,
+            obra.imdb_id,
+            obra.addon_id,
+            Vec::new(),
+        );
+    }
+
+    pub fn abrir_fontes_addons_da_ficha(&mut self) {
+        if let Some(Destino::ObraAddon(obra)) = self.ficha_destino.clone() {
+            self.fechar_ficha();
+            self.assistir_obra_addon(obra);
+            return;
+        }
+        let Some((titulo, serie)) = self.ficha_aberta.clone() else { return };
+        let tmdb_id = self.id_tmdb_de(&titulo, serie);
+        let obra = addons_tela::ObraAddon {
+            titulo,
+            detalhe: String::new(),
+            serie,
+            capa: self.ficha.as_ref().and_then(|f| f.capa.clone()),
+            fundo: self.ficha.as_ref().and_then(|f| f.fundo.clone()),
+            sinopse: self.ficha.as_ref().map(|f| f.sinopse.clone()).unwrap_or_default(),
+            tmdb_id,
+            imdb_id: None,
+            addon_id: None,
+            tipo_stremio: if serie { "series" } else { "movie" }.to_string(),
+        };
+        self.fechar_ficha();
+        self.assistir_obra_addon(obra);
+    }
+
+    fn abrir_seletor_addons_episodio(
+        &mut self,
+        serie: &str,
+        episodio: vod::Episodio,
+        lista: Vec<vod::Episodio>,
+    ) {
+        let obra = self.obra_addon_conhecida(serie);
+        let tmdb = obra
+            .as_ref()
+            .and_then(|o| o.tmdb_id)
+            .or_else(|| self.id_tmdb_de(serie, true));
+        let imdb = obra.as_ref().and_then(|o| o.imdb_id.clone());
+        let extra = obra.as_ref().and_then(|o| o.addon_id.clone());
+        let titulo_exibicao = format!("{} · T{} E{}", serie, episodio.temporada, episodio.numero);
+        self.abrir_seletor_addons(
+            titulo_exibicao,
+            serie.to_string(),
+            true,
+            Some(episodio.temporada),
+            Some(episodio.numero),
+            tmdb,
+            imdb,
+            extra,
+            lista,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn abrir_seletor_addons(
+        &mut self,
+        titulo_exibicao: String,
+        serie_nome: String,
+        serie: bool,
+        temporada: Option<u32>,
+        episodio: Option<u32>,
+        tmdb_id: Option<u32>,
+        imdb_id: Option<String>,
+        extra_id: Option<String>,
+        lista_episodios: Vec<vod::Episodio>,
+    ) {
+        self.id_seletor_addon = self.id_seletor_addon.wrapping_add(1);
+        let id = self.id_seletor_addon;
+        let ativo = addons::tem_ativo();
+        self.seletor_addon = Some(addons_tela::SeletorStreams {
+            titulo_exibicao,
+            serie_nome,
+            serie,
+            temporada,
+            episodio,
+            tmdb_id,
+            imdb_id: imdb_id.clone(),
+            extra_id: extra_id.clone(),
+            lista_episodios,
+            carregando: ativo,
+            resolvendo: false,
+            streams: Vec::new(),
+            erro: if ativo {
+                None
+            } else {
+                Some("Nenhum addon ativo configurado. Abra 'Addons e Debrid' para instalar.".into())
+            },
+            aviso_sem_debrid: false,
+        });
+        if !ativo {
+            return;
+        }
+        let emissor = self.emissor.clone();
+        let tipo = if serie { "series" } else { "movie" };
+        std::thread::spawn(move || {
+            let streams = addons::buscar_streams(
+                tipo,
+                tmdb_id,
+                imdb_id.as_deref(),
+                extra_id.as_deref(),
+                temporada,
+                episodio,
+            );
+            let _ = emissor.send(Recado::StreamsAddon(id, streams));
+        });
+    }
+
+    pub fn resolver_e_tocar_addon_stream(&mut self, stream: addons::AddonStream) {
+        let Some(sel) = self.seletor_addon.as_mut() else { return };
+        if stream.e_torrent() && !debrid::config().tem_ativo() {
+            sel.erro = Some(debrid::AVISO_SEM_CHAVE.into());
+            sel.aviso_sem_debrid = true;
+            return;
+        }
+        sel.resolvendo = true;
+        sel.erro = None;
+        sel.aviso_sem_debrid = false;
+        let id = self.id_seletor_addon;
+        let emissor = self.emissor.clone();
+        std::thread::spawn(move || {
+            let res = debrid::resolver_stream(&stream);
+            let _ = emissor.send(Recado::StreamResolvido {
+                id,
+                stream,
+                resultado: res,
+            });
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn tocar_addon_stream_resolvido(
+        &mut self,
+        titulo_exibicao: String,
+        serie_nome: String,
+        serie: bool,
+        temporada: Option<u32>,
+        episodio: Option<u32>,
+        tmdb_id: Option<u32>,
+        imdb_id: Option<String>,
+        extra_id: Option<String>,
+        lista_episodios: Vec<vod::Episodio>,
+        stream: addons::AddonStream,
+        resolvido: debrid::StreamResolvido,
+    ) {
+        if !serie {
+            self.fonte_preferida = None;
+        }
+        self.tocando_vod = None;
+        self.tocar_vod_com_cabecalhos(
+            titulo_exibicao.clone(),
+            vec![resolvido.url],
+            0,
+            true,
+            Some(resolvido.cabecalhos),
+        );
+        if let Some(t) = self.tocando_vod.as_mut() {
+            t.binge_group = stream.behavior_hints.binge_group.clone();
+            t.addon_id = if stream.addon_id.is_empty() {
+                None
+            } else {
+                Some(stream.addon_id.clone())
+            };
+            t.addon_tmdb = tmdb_id;
+            t.addon_imdb = imdb_id.clone();
+            t.addon_extra_id = extra_id;
+            if serie {
+                t.episodio = Some(EpisodioTocando {
+                    serie: serie_nome.clone(),
+                    temporada: temporada.unwrap_or(1),
+                    numero: episodio.unwrap_or(1),
+                    versao: String::new(),
+                    lista: lista_episodios,
+                });
+            }
+        }
+        self.pedir_legendas_addon(
+            titulo_exibicao.clone(),
+            serie,
+            tmdb_id,
+            imdb_id,
+            temporada,
+            episodio,
+            &stream,
+        );
+        if serie {
+            self.pedir_marcas(
+                titulo_exibicao,
+                tmdb_id,
+                temporada.unwrap_or(1),
+                episodio.unwrap_or(1),
+            );
+            self.pedir_logo(&serie_nome, true);
+        } else {
+            self.pedir_logo(&serie_nome, false);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn pedir_legendas_addon(
+        &self,
+        titulo: String,
+        serie: bool,
+        tmdb_id: Option<u32>,
+        imdb_id: Option<String>,
+        temporada: Option<u32>,
+        episodio: Option<u32>,
+        stream: &addons::AddonStream,
+    ) {
+        let inline = stream.subtitles.clone();
+        let vhash = stream.behavior_hints.video_hash.clone();
+        let vsize = stream.behavior_hints.video_size;
+        let fname = stream.behavior_hints.filename.clone();
+        if tmdb_id.is_none() && imdb_id.is_none() && inline.is_empty() && !addons::tem_ativo() {
+            return;
+        }
+        let emissor = self.emissor.clone();
+        std::thread::spawn(move || {
+            let mut base = match tmdb_id {
+                Some(id) => legendas::buscar(id, serie, temporada.unwrap_or(0), episodio.unwrap_or(0)),
+                None => Vec::new(),
+            };
+            let tipo = if serie { "series" } else { "movie" };
+            let extras = if addons::tem_ativo() {
+                addons::buscar_subtitles(
+                    tipo,
+                    tmdb_id,
+                    imdb_id.as_deref(),
+                    temporada,
+                    episodio,
+                    vhash.as_deref(),
+                    vsize,
+                    fname.as_deref(),
+                )
+            } else {
+                Vec::new()
+            };
+            base = legendas::mesclar_com_addons(base, &inline, &extras);
+            if !base.is_empty() {
+                let _ = emissor.send(Recado::Legendas(titulo, base));
+            }
+        });
     }
 
     /// Fecha a ficha e solta as imagens grandes dela: o fundo tem 1280 pixels
@@ -1747,7 +2375,7 @@ impl App {
         if ficha::conhecida(titulo, serie).is_some() {
             return;
         }
-        let Some(id) = self.generos.id(titulo, serie) else { return };
+        let Some(id) = self.id_tmdb_de(titulo, serie) else { return };
         let titulo = titulo.to_string();
         std::thread::spawn(move || {
             ficha::baixar(&titulo, serie, id);
@@ -2172,6 +2800,145 @@ impl App {
                         self.carregando_vod = false;
                     }
                 }
+                Recado::AddonAdicionado(res) => {
+                    if let Some(d) = self.addons_dialogo.as_mut() {
+                        d.adicionando = false;
+                        match &res {
+                            Ok(a) => {
+                                d.url_nova.clear();
+                                d.status = Some((true, format!("Addon '{}' instalado.", a.manifest.name)));
+                            }
+                            Err(e) => {
+                                d.status = Some((false, e.clone()));
+                            }
+                        }
+                    }
+                    if res.is_ok() {
+                        self.atualizar_descoberta_addons();
+                        self.mandar_dados();
+                    }
+                }
+                Recado::DescobertaAddons(filas) => {
+                    self.descoberta_addons = filas;
+                    self.carregando_vod = false;
+                }
+                Recado::BuscaAddons(consulta, itens) => {
+                    if consulta == self.busca_vod.trim() {
+                        self.busca_addons_resultados = itens;
+                        self.busca_addons_carregando = false;
+                    }
+                }
+                Recado::SerieAddonEpisodios(serie, tmdb, imdb, extra_id, lista) => {
+                    if let Some(o) = self.obras_addons_cache.get_mut(&serie) {
+                        if tmdb.is_some() {
+                            o.tmdb_id = tmdb;
+                        }
+                        if imdb.is_some() {
+                            o.imdb_id = imdb;
+                        }
+                        if extra_id.is_some() {
+                            o.addon_id = extra_id;
+                        }
+                        addons_tela::salvar_obras_salvas(&self.obras_addons_cache);
+                    }
+                    if let Some(s) = self.serie_aberta.as_mut().filter(|s| s.titulo == serie) {
+                        s.episodios = lista.len();
+                        self.episodios = lista;
+                        self.carregando_vod = false;
+                    }
+                }
+                Recado::StreamsAddon(id, streams) => {
+                    if id == self.id_seletor_addon {
+                        if let Some(sel) = self.seletor_addon.as_mut() {
+                            sel.carregando = false;
+                            if streams.is_empty() {
+                                sel.erro = Some("Nenhuma fonte retornada pelos addons ativos.".into());
+                            }
+                            sel.streams = streams;
+                        }
+                    }
+                }
+                Recado::StreamResolvido { id, stream, resultado } => {
+                    if id == self.id_seletor_addon {
+                        match resultado {
+                            Ok(resolvido) => {
+                                if let Some(sel) = self.seletor_addon.take() {
+                                    self.tocar_addon_stream_resolvido(
+                                        sel.titulo_exibicao,
+                                        sel.serie_nome,
+                                        sel.serie,
+                                        sel.temporada,
+                                        sel.episodio,
+                                        sel.tmdb_id,
+                                        sel.imdb_id,
+                                        sel.extra_id,
+                                        sel.lista_episodios,
+                                        stream,
+                                        resolvido,
+                                    );
+                                }
+                            }
+                            Err(err) => {
+                                let sem_debrid = err == debrid::AVISO_SEM_CHAVE;
+                                if let Some(sel) = self.seletor_addon.as_mut() {
+                                    sel.resolvendo = false;
+                                    sel.erro = Some(err);
+                                    sel.aviso_sem_debrid = sem_debrid;
+                                }
+                            }
+                        }
+                    }
+                }
+                Recado::ProximoEpisodioAddon {
+                    serie,
+                    episodio,
+                    lista,
+                    tmdb,
+                    imdb,
+                    extra_id,
+                    stream_resolvido,
+                    todas,
+                } => {
+                    self.proximo_addon_em_curso = false;
+                    let titulo_exibicao = format!("{} · T{} E{}", serie, episodio.temporada, episodio.numero);
+                    if let Some((stream, resolvido)) = stream_resolvido {
+                        self.tocar_addon_stream_resolvido(
+                            titulo_exibicao,
+                            serie,
+                            true,
+                            Some(episodio.temporada),
+                            Some(episodio.numero),
+                            tmdb,
+                            imdb,
+                            extra_id,
+                            lista,
+                            stream,
+                            resolvido,
+                        );
+                    } else {
+                        self.id_seletor_addon = self.id_seletor_addon.wrapping_add(1);
+                        self.seletor_addon = Some(addons_tela::SeletorStreams {
+                            titulo_exibicao,
+                            serie_nome: serie,
+                            serie: true,
+                            temporada: Some(episodio.temporada),
+                            episodio: Some(episodio.numero),
+                            tmdb_id: tmdb,
+                            imdb_id: imdb,
+                            extra_id,
+                            lista_episodios: lista,
+                            carregando: false,
+                            resolvendo: false,
+                            erro: if todas.is_empty() {
+                                Some("Nenhuma fonte encontrada para o próximo episódio.".into())
+                            } else {
+                                None
+                            },
+                            streams: todas,
+                            aviso_sem_debrid: false,
+                        });
+                    }
+                }
             }
         }
         // Sem isto, a lista só redesenharia no próximo movimento do mouse — e a
@@ -2397,7 +3164,11 @@ impl App {
                 self.abrir_secao(proxima);
             }
             egui::Key::Escape => {
-                if self.minhas_dialogo.is_some() {
+                if self.seletor_addon.is_some() {
+                    self.seletor_addon = None;
+                } else if self.addons_dialogo.is_some() {
+                    self.addons_dialogo = None;
+                } else if self.minhas_dialogo.is_some() {
                     self.minhas_dialogo = None;
                 } else if self.dialogo_listas.is_some() {
                     self.dialogo_listas = None;
@@ -3464,8 +4235,11 @@ vec4 hook() {{
                 let _ = emissor.send(Recado::Destaques(destaques::filas()));
             });
         }
+        if com_destaques && addons::tem_ativo() && !self.descoberta_pedida {
+            self.atualizar_descoberta_addons();
+        }
         if matches!(aba, Aba::Inicio | Aba::OnDemand) {
-            if self.filas.is_empty() {
+            if self.filas.is_empty() && self.descoberta_addons.is_empty() {
                 self.carregando_vod = true;
             }
             // Os cartões de Animes e Doramas do On Demand contam os títulos
@@ -3619,7 +4393,7 @@ vec4 hook() {{
         if !self.fichas_pedidas.insert(chave) {
             return;
         }
-        let Some(id) = self.generos.id(titulo, serie) else { return };
+        let Some(id) = self.id_tmdb_de(titulo, serie) else { return };
         let (titulo, emissor) = (titulo.to_string(), self.emissor.clone());
         std::thread::spawn(move || {
             ficha::baixar(&titulo, serie, id);
@@ -3629,7 +4403,7 @@ vec4 hook() {{
 
     /// Os episódios de uma temporada pelo TMDB: nome, sinopse e imagem.
     pub fn pedir_temporada(&mut self, serie: &str, temporada: u32) -> Option<Vec<ficha::EpisodioTmdb>> {
-        let id = self.generos.id(serie, true)?;
+        let id = self.id_tmdb_de(serie, true)?;
         if let Some(lista) = ficha::temporada_conhecida(id, temporada) {
             return Some(lista);
         }
@@ -4000,6 +4774,12 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
                     visto: (0.0, 0.0),
                     proximo_desde: None,
                     proximo_dispensado: false,
+                    cabecalhos: Vec::new(),
+                    binge_group: None,
+                    addon_id: None,
+                    addon_tmdb: None,
+                    addon_imdb: None,
+                    addon_extra_id: None,
                 });
                 app.episodios_no_player = std::env::var("SAIMO_FOTO_EPISODIOS").is_ok();
                 app.pedir_ficha_do_destaque("Ted Lasso", true);
@@ -4088,6 +4868,7 @@ impl eframe::App for App {
             }
         }
         self.cuidar_dos_recados(ctx);
+        self.cuidar_dos_addons();
         self.cuidar_dos_eventos(ctx);
         self.cuidar_do_mpv(ctx);
         self.cuidar_do_connect(ctx);
