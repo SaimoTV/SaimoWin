@@ -71,6 +71,7 @@ pub struct Cartao {
     pub imagem: Imagem,
     pub progresso: Option<f32>,
     pub favorito: bool,
+    pub remover: Option<String>,
     pub acao: Acao,
     pub heroi: Heroi,
     /// O selo do canto: o texto e se é o vermelho do "ao vivo".
@@ -91,6 +92,7 @@ impl Cartao {
             imagem,
             progresso: None,
             favorito: false,
+            remover: None,
             acao,
             heroi,
             selo: None,
@@ -317,6 +319,7 @@ fn continuar(app: &App, filtro: impl Fn(bool) -> bool) -> Option<Fila> {
             c.progresso = Some(progresso::fracao(&marca).max(0.02));
             c.sub = progresso::falta(&marca);
             c.favorito = app.favoritos_vod.contains(&nome);
+            c.remover = Some(rotulo);
             Some(c)
         })
         .take(20)
@@ -1162,16 +1165,40 @@ fn uma_fileira(
 
 /// Um cartão, em qualquer dos quatro formatos.
 pub(super) fn desenhar_cartao(app: &mut App, ui: &mut egui::Ui, rect: Rect, cartao: &Cartao, tipo: Tipo, focado: bool, id: egui::Id) -> egui::Response {
-    let resposta = ui.interact(rect, id, Sense::click());
+    let (_, imagem) = medidas(tipo);
+    let quadro = Rect::from_min_size(rect.min + egui::vec2(6.0, 6.0), imagem);
+    let mut removeu = false;
+    if let Some(chave_rem) = cartao.remover.as_deref() {
+        let bot_centro = quadro.left_top() + egui::vec2(18.0, 18.0);
+        let bot_rect = Rect::from_center_size(bot_centro, egui::vec2(26.0, 26.0));
+        let bot_resp = ui.interact(bot_rect, id.with("remover"), Sense::click());
+        if bot_resp.clicked() {
+            crate::progresso::esquecer(chave_rem);
+            removeu = true;
+        }
+        bot_resp.on_hover_text("Remover de Continue assistindo").on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
+    let mut resposta = ui.interact(rect, id, Sense::click());
     let t = aceso(ui, id.with("aceso"), focado || resposta.hovered());
     let pintor = ui.painter().clone();
     moldura_de_foco(&pintor, rect, t, 14.0);
-    let (_, imagem) = medidas(tipo);
-    let quadro = Rect::from_min_size(rect.min + egui::vec2(6.0, 6.0), imagem);
     match tipo {
         Tipo::Secao => secao(app, ui, quadro, cartao),
         Tipo::Evento => jogo(app, ui, quadro, cartao),
         _ => imagem_do_cartao(app, ui, quadro, cartao, tipo),
+    }
+    if cartao.remover.is_some() {
+        let bot_centro = quadro.left_top() + egui::vec2(18.0, 18.0);
+        let bot_rect = Rect::from_center_size(bot_centro, egui::vec2(26.0, 26.0));
+        let hovered_rem = ui.rect_contains_pointer(bot_rect);
+        let bg = if hovered_rem { Color32::from_rgb(220, 38, 38) } else { Color32::from_black_alpha(195) };
+        pintor.circle_filled(bot_centro, 13.0, bg);
+        pintor.circle_stroke(bot_centro, 13.0, egui::Stroke::new(1.0, Color32::from_white_alpha(90)));
+        pintor.text(bot_centro, Align2::CENTER_CENTER, "×", forte(16.0), Color32::WHITE);
+    }
+    if removeu {
+        // Evita abrir o item quando clicou no botão ×.
+        resposta = ui.interact(Rect::NOTHING, id.with("vazio"), Sense::hover());
     }
     if tipo != Tipo::Secao {
         let x = quadro.left();
