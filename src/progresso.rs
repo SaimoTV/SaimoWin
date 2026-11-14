@@ -203,6 +203,13 @@ pub fn esquecer(titulo: &str) {
         let mut guarda = marcas();
         guarda.as_mut().unwrap().remove(titulo);
     }
+    {
+        let mut q = quando();
+        if let Some(mapa) = q.as_mut() {
+            mapa.remove(titulo);
+        }
+    }
+    gravar_quando();
     gravar();
 }
 

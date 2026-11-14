@@ -1167,19 +1167,21 @@ fn uma_fileira(
 pub(super) fn desenhar_cartao(app: &mut App, ui: &mut egui::Ui, rect: Rect, cartao: &Cartao, tipo: Tipo, focado: bool, id: egui::Id) -> egui::Response {
     let (_, imagem) = medidas(tipo);
     let quadro = Rect::from_min_size(rect.min + egui::vec2(6.0, 6.0), imagem);
+    let mut resposta = ui.interact(rect, id, Sense::click());
     let mut removeu = false;
-    if let Some(chave_rem) = cartao.remover.as_deref() {
+    let bot_resp = cartao.remover.as_deref().map(|chave_rem| {
         let bot_centro = quadro.left_top() + egui::vec2(18.0, 18.0);
-        let bot_rect = Rect::from_center_size(bot_centro, egui::vec2(26.0, 26.0));
+        let bot_rect = Rect::from_center_size(bot_centro, egui::vec2(28.0, 28.0));
         let bot_resp = ui.interact(bot_rect, id.with("remover"), Sense::click());
         if bot_resp.clicked() {
             crate::progresso::esquecer(chave_rem);
             removeu = true;
+            ui.ctx().request_repaint();
         }
-        bot_resp.on_hover_text("Remover de Continue assistindo").on_hover_cursor(egui::CursorIcon::PointingHand);
-    }
-    let mut resposta = ui.interact(rect, id, Sense::click());
-    let t = aceso(ui, id.with("aceso"), focado || resposta.hovered());
+        bot_resp
+    });
+    let hovered_rem = bot_resp.as_ref().is_some_and(|r| r.hovered());
+    let t = aceso(ui, id.with("aceso"), focado || (resposta.hovered() && !hovered_rem));
     let pintor = ui.painter().clone();
     moldura_de_foco(&pintor, rect, t, 14.0);
     match tipo {
@@ -1187,17 +1189,16 @@ pub(super) fn desenhar_cartao(app: &mut App, ui: &mut egui::Ui, rect: Rect, cart
         Tipo::Evento => jogo(app, ui, quadro, cartao),
         _ => imagem_do_cartao(app, ui, quadro, cartao, tipo),
     }
-    if cartao.remover.is_some() {
+    if let Some(bot_resp) = bot_resp {
         let bot_centro = quadro.left_top() + egui::vec2(18.0, 18.0);
-        let bot_rect = Rect::from_center_size(bot_centro, egui::vec2(26.0, 26.0));
-        let hovered_rem = ui.rect_contains_pointer(bot_rect);
-        let bg = if hovered_rem { Color32::from_rgb(220, 38, 38) } else { Color32::from_black_alpha(195) };
+        let bg = if bot_resp.hovered() { Color32::from_rgb(220, 38, 38) } else { Color32::from_black_alpha(195) };
         pintor.circle_filled(bot_centro, 13.0, bg);
         pintor.circle_stroke(bot_centro, 13.0, egui::Stroke::new(1.0, Color32::from_white_alpha(90)));
         pintor.text(bot_centro, Align2::CENTER_CENTER, "×", forte(16.0), Color32::WHITE);
+        bot_resp.on_hover_text("Remover de Continue assistindo").on_hover_cursor(egui::CursorIcon::PointingHand);
     }
-    if removeu {
-        // Evita abrir o item quando clicou no botão ×.
+    if removeu || hovered_rem {
+        // Evita abrir o item quando clicou (ou está sobre) no botão ×.
         resposta = ui.interact(Rect::NOTHING, id.with("vazio"), Sense::hover());
     }
     if tipo != Tipo::Secao {
