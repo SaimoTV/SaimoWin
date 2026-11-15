@@ -259,6 +259,14 @@ pub fn resolver_stream(stream: &AddonStream) -> Result<StreamResolvido, String> 
         .ok_or_else(|| "Stream sem URL direta e sem infoHash válido.".to_string())?;
     let cfg = config();
     if !cfg.tem_ativo() {
+        // Sem Debrid: toca pelo motor de torrent embutido, como o Stremio.
+        if crate::motor_torrent::disponivel() {
+            return Ok(StreamResolvido {
+                url: crate::motor_torrent::endereco(&magnet, stream.file_idx)?,
+                cabecalhos: Vec::new(),
+                provedor: Some("Torrent".into()),
+            });
+        }
         return Err(AVISO_SEM_CHAVE.into());
     }
     let mut erros = Vec::new();

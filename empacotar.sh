@@ -40,8 +40,15 @@ cp "$DLL" dist/SaimoTV/
 if [ -f "mpv/vulkan-1.dll" ]; then
   cp "mpv/vulkan-1.dll" dist/SaimoTV/
 fi
+# Motor de torrent (SaimoTorrent, Rust): toca fonte de addon sem Debrid.
+MOTOR="${SAIMO_TORRENT_DIR:-../SaimoTorrent}/target/x86_64-pc-windows-gnu/release/saimo-torrent.exe"
+if [ ! -f "$MOTOR" ]; then
+  ( cd "${SAIMO_TORRENT_DIR:-../SaimoTorrent}" && cargo build --release --target x86_64-pc-windows-gnu -q )
+fi
+cp "$MOTOR" dist/SaimoTV/saimo-torrent.exe
 if [ -n "${SAIMO_ASSINAR:-}" ]; then
   "$SAIMO_ASSINAR" "dist/SaimoTV/Saimo TV.exe"
+  "$SAIMO_ASSINAR" "dist/SaimoTV/saimo-torrent.exe"
 fi
 cat > dist/SaimoTV/LEIAME.txt <<TXT
 Saimo TV para Windows $VERSAO
@@ -63,7 +70,8 @@ Seus favoritos e o ponto onde cada filme parou ficam em %APPDATA%\\SaimoTV, e
 a desinstalação pergunta antes de apagá-los.
 
 Arquivos necessários
-  Mantenha o executável na mesma pasta dos arquivos libmpv-2.dll e vulkan-1.dll.
+  Mantenha o executável na mesma pasta dos arquivos libmpv-2.dll, vulkan-1.dll
+  e saimo-torrent.exe (o tocador de torrent dos addons).
   Se o Windows bloquear algum arquivo baixado, clique com botão direito nele,
   vá em Propriedades e marque a opção "Desbloquear".
 

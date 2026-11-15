@@ -403,7 +403,7 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                         });
                     });
                     ui.label(
-                        egui::RichText::new("Usado sob demanda apenas quando você escolhe um stream com infoHash. Zero torrent P2P local.")
+                        egui::RichText::new("Opcional. Sem Debrid, torrents tocam pelo tocador embutido (baixa enquanto assiste); com Debrid, abrem mais rápido.")
                             .font(normal(12.5))
                             .color(SECUNDARIO),
                     );

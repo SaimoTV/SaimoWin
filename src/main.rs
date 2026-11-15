@@ -35,6 +35,7 @@ mod minhas_listas_tela;
 mod addons;
 mod addons_tela;
 mod debrid;
+mod motor_torrent;
 mod qr;
 mod xtream;
 mod seletor;
@@ -2139,7 +2140,7 @@ impl App {
 
     pub fn resolver_e_tocar_addon_stream(&mut self, stream: addons::AddonStream) {
         let Some(sel) = self.seletor_addon.as_mut() else { return };
-        if stream.e_torrent() && !debrid::config().tem_ativo() {
+        if stream.e_torrent() && !debrid::config().tem_ativo() && !motor_torrent::disponivel() {
             sel.erro = Some(debrid::AVISO_SEM_CHAVE.into());
             sel.aviso_sem_debrid = true;
             return;
