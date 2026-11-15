@@ -288,8 +288,9 @@ pub fn episodios(letra: &str, serie: &Serie) -> Vec<Episodio> {
                 break;
             }
             let campos: Vec<&str> = identidade.split('\t').collect();
+            let chunk_ano = campos.get(1).copied().unwrap_or("");
             dentro = campos.first().copied().unwrap_or("") == serie.titulo
-                && campos.get(1).copied().unwrap_or("") == serie.ano;
+                && (chunk_ano == serie.ano || chunk_ano.is_empty() || serie.ano.is_empty());
             continue;
         }
         if !dentro {
