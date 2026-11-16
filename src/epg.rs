@@ -199,14 +199,18 @@ fn montar_com(canais: &[Canal], tabelas: &Tabelas) -> HashMap<String, Vec<Progra
         }
     }
 
+    // Guia central (epg.json, montado no servidor às 11h e às 18h): o que estiver
+    // nele não é baixado página por página.
+    let (central_g, central_m) = guia_central(de, ate).unwrap_or_default();
+
     // O guiadetv.com vem primeiro: cobre 121+ canais com horários precisos no
     // fuso de Brasília, sem rate limit 429 e trazendo a sinopse em português.
-    for (canal, lista) in do_guiadetv(canais, tabelas, de, ate) {
+    for (canal, lista) in do_guiadetv(canais, tabelas, de, ate, &central_g) {
         grade.entry(canal).or_insert(lista);
     }
 
     // O meuguia entra como reserva para canais que o guiadetv não lista (ex.: Canal Brasil).
-    for (canal, lista) in do_meuguia(canais, tabelas, de, ate) {
+    for (canal, lista) in do_meuguia(canais, tabelas, de, ate, &central_m) {
         grade.entry(canal).or_insert(lista);
     }
 
@@ -228,9 +232,56 @@ fn montar_com(canais: &[Canal], tabelas: &Tabelas) -> HashMap<String, Vec<Progra
     grade
 }
 
+/// `epg.json` do endereço de canais: `{g: {slug: [[inicio, fim, título, sinopse]]},
+/// m: {código: [[inicio, fim, título, gênero]]}}`, em segundos. None quando o
+/// endereço não publica o arquivo.
+fn guia_central(de: i64, ate: i64) -> Option<(HashMap<String, Vec<Programa>>, HashMap<String, Vec<Programa>>)> {
+    let base = crate::listas::canais()?;
+    let texto = crate::rede::texto(&format!("{base}epg.json"))?;
+    let raiz: serde_json::Value = serde_json::from_str(&texto).ok()?;
+    let ler = |chave: &str, sinopse: bool| -> HashMap<String, Vec<Programa>> {
+        let mut saida = HashMap::new();
+        let Some(mapa) = raiz.get(chave).and_then(|v| v.as_object()) else { return saida };
+        for (k, lista) in mapa {
+            let programas: Vec<Programa> = lista
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|p| {
+                    let p = p.as_array()?;
+                    let inicio = p.first()?.as_i64()?;
+                    let fim = p.get(1)?.as_i64()?;
+                    let titulo = p.get(2)?.as_str()?.to_string();
+                    let extra = p.get(3).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    (fim > de && inicio < ate).then(|| Programa {
+                        titulo,
+                        descricao: if sinopse { extra.clone() } else { String::new() },
+                        categoria: if sinopse { String::new() } else { extra },
+                        inicio,
+                        fim,
+                    })
+                })
+                .collect();
+            if !programas.is_empty() {
+                saida.insert(k.clone(), programas);
+            }
+        }
+        saida
+    };
+    let g = ler("g", true);
+    let m = ler("m", false);
+    (!g.is_empty() || !m.is_empty()).then_some((g, m))
+}
+
 /// Páginas do guiadetv.com, seis de cada vez. Agrupa por slug para baixar cada
 /// página apenas uma vez mesmo quando múltiplos canais compartilham o mesmo slug.
-fn do_guiadetv(canais: &[Canal], tabelas: &Tabelas, de: i64, ate: i64) -> HashMap<String, Vec<Programa>> {
+fn do_guiadetv(
+    canais: &[Canal],
+    tabelas: &Tabelas,
+    de: i64,
+    ate: i64,
+    central: &HashMap<String, Vec<Programa>>,
+) -> HashMap<String, Vec<Programa>> {
     let mut slug_para_canais: HashMap<String, Vec<String>> = HashMap::new();
     for c in canais {
         let chave = normalizar(&c.nome);
@@ -241,9 +292,20 @@ fn do_guiadetv(canais: &[Canal], tabelas: &Tabelas, de: i64, ate: i64) -> HashMa
     if slug_para_canais.is_empty() {
         return HashMap::new();
     }
-    let slugs: Vec<String> = slug_para_canais.keys().cloned().collect();
+    let mut ja_tem: HashMap<String, Vec<Programa>> = HashMap::new();
+    let slugs: Vec<String> = slug_para_canais
+        .keys()
+        .filter(|slug| match central.get(*slug) {
+            Some(lista) => {
+                ja_tem.insert((*slug).clone(), lista.clone());
+                false
+            }
+            None => true,
+        })
+        .cloned()
+        .collect();
     let fila = std::sync::Mutex::new(slugs.into_iter());
-    let slug_programas: std::sync::Mutex<HashMap<String, Vec<Programa>>> = std::sync::Mutex::new(HashMap::new());
+    let slug_programas: std::sync::Mutex<HashMap<String, Vec<Programa>>> = std::sync::Mutex::new(ja_tem);
     std::thread::scope(|escopo| {
         for _ in 0..6 {
             escopo.spawn(|| loop {
@@ -355,17 +417,31 @@ fn ler_guiadetv(html: &str) -> Vec<Programa> {
 
 /// Páginas do meuguia.tv, seis de cada vez: trinta e três downloads ao mesmo
 /// tempo tiram banda do vídeo e fazem o site devolver 429.
-fn do_meuguia(canais: &[Canal], tabelas: &Tabelas, de: i64, ate: i64) -> HashMap<String, Vec<Programa>> {
+fn do_meuguia(
+    canais: &[Canal],
+    tabelas: &Tabelas,
+    de: i64,
+    ate: i64,
+    central: &HashMap<String, Vec<Programa>>,
+) -> HashMap<String, Vec<Programa>> {
+    let mut ja_tem: HashMap<String, Vec<Programa>> = HashMap::new();
     let alvos: Vec<(String, String)> = canais
         .iter()
         .filter_map(|c| tabelas.meuguia(&normalizar(&c.nome)).map(|codigo| (c.nome.clone(), codigo.to_string())))
+        .filter(|(nome, codigo)| match central.get(codigo) {
+            Some(lista) => {
+                ja_tem.insert(nome.clone(), lista.clone());
+                false
+            }
+            None => true,
+        })
         .collect();
     if alvos.is_empty() {
-        return HashMap::new();
+        return ja_tem;
     }
 
     let fila = std::sync::Mutex::new(alvos.into_iter());
-    let saida: std::sync::Mutex<HashMap<String, Vec<Programa>>> = std::sync::Mutex::new(HashMap::new());
+    let saida: std::sync::Mutex<HashMap<String, Vec<Programa>>> = std::sync::Mutex::new(ja_tem);
     std::thread::scope(|escopo| {
         for _ in 0..6 {
             escopo.spawn(|| loop {
