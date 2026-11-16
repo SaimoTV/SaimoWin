@@ -46,8 +46,16 @@ fn aba(ui: &mut egui::Ui, rotulo: &str, icone: Icone, atual: bool) -> egui::Resp
     if atual {
         pintor.rect_filled(rect, 20.0, branco(31));
     } else if rotulo == "Apoie" {
-        // Apoie fica sempre em destaque, chamando atenção no menu.
-        pintor.rect_filled(rect, 20.0, Color32::from_rgb(15, 168, 154));
+        // Apoie chama atenção: a cor corre pelo arco-íris (4 s por volta) e um
+        // brilho pulsa em volta.
+        let tempo = ui.input(|i| i.time);
+        let volta = (tempo / 4.0).fract() as f32;
+        let pulso = (0.5 + 0.5 * (tempo * std::f64::consts::TAU / 1.6).sin()) as f32;
+        let cor = egui::ecolor::Hsva::new((0.92 + volta) % 1.0, 0.72, 0.95, 1.0);
+        let cor: Color32 = cor.into();
+        pintor.rect_filled(rect.expand(2.0 + 5.0 * pulso), 24.0, cor.gamma_multiply(0.28 * (1.0 - pulso)));
+        pintor.rect_filled(rect, 20.0, cor);
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
     }
     if t > 0.01 {
         pintor.rect_filled(rect.expand(t), 20.0, Color32::WHITE.gamma_multiply(t));
