@@ -185,17 +185,33 @@ pub fn onde_parou_na_serie(titulo: &str) -> Option<(String, Marca)> {
 }
 
 /// O que dá para continuar, do mais recente para o mais antigo.
+/// O que está em andamento, do mais recente para o mais antigo. Série aparece
+/// uma vez só, no episódio assistido por último: cada episódio tem a sua marca
+/// ("Série · T1 E3"), e antes a fileira mostrava vários da mesma série, em
+/// ordem alfabética.
 pub fn pendentes() -> Vec<(String, Marca)> {
-    let guarda = marcas();
-    let Some(mapa) = guarda.as_ref() else { return Vec::new() };
-    let mut lista: Vec<(String, Marca)> = mapa
-        .iter()
-        .map(|(titulo, (posicao, duracao))| {
-            (titulo.clone(), Marca { posicao: *posicao, duracao: *duracao })
-        })
-        .collect();
-    lista.sort_by(|a, b| a.0.cmp(&b.0));
+    let lista: Vec<(String, Marca)> = {
+        let guarda = marcas();
+        let Some(mapa) = guarda.as_ref() else { return Vec::new() };
+        mapa.iter()
+            .map(|(titulo, (posicao, duracao))| (titulo.clone(), Marca { posicao: *posicao, duracao: *duracao }))
+            .collect()
+    };
+    let momentos: HashMap<String, i64> = quando().as_ref().cloned().unwrap_or_default();
+    let mut lista = lista;
+    lista.sort_by(|a, b| {
+        let qa = momentos.get(&a.0).copied().unwrap_or(0);
+        let qb = momentos.get(&b.0).copied().unwrap_or(0);
+        qb.cmp(&qa).then_with(|| b.0.cmp(&a.0))
+    });
+    let mut vistos = std::collections::HashSet::new();
     lista
+        .into_iter()
+        .filter(|(rotulo, _)| {
+            let nome = rotulo.split(" · ").next().unwrap_or(rotulo).to_string();
+            vistos.insert(nome)
+        })
+        .collect()
 }
 
 pub fn esquecer(titulo: &str) {
