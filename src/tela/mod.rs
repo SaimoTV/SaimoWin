@@ -204,6 +204,7 @@ pub fn desenhar(app: &mut App, ui: &mut egui::Ui) {
         ajustar_escala(ctx);
     }
     video::video(app, ctx);
+    video::logo_carregando(app, ctx);
 
     if app.aba == Aba::Canais {
         aovivo::tela(app, ui);

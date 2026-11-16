@@ -228,3 +228,32 @@ unsafe fn estado_padrao_de_opengl(gl: &eframe::glow::Context) {
     gl.bind_texture(eframe::glow::TEXTURE_2D, None);
 }
 
+
+
+/// Logo do canal (ou a capa do filme) enchendo de cor enquanto a fonte abre:
+/// aparece apagada e vai ganhando cor da esquerda para a direita. Não há medida
+/// real de progresso, então a cor avança sozinha e desacelera perto do fim
+/// (nunca chega a 92 % antes de o vídeo começar). Some quando `confirmado`.
+pub fn logo_carregando(app: &mut App, ctx: &egui::Context) {
+    let (aberto_ha, endereco) = if let Some(t) = app.tocando_vod.as_ref().filter(|t| !t.confirmado) {
+        (t.desde.elapsed().as_secs_f32(), app.endereco_da_capa(&t.titulo, t.episodio.is_some()))
+    } else if let Some(t) = app.tocando.as_ref().filter(|t| !t.confirmado) {
+        (t.desde.elapsed().as_secs_f32(), app.canais.get(t.canal).and_then(|c| c.logo.clone()))
+    } else {
+        return;
+    };
+    let Some(endereco) = endereco else { return };
+    let Some(textura) = app.imagem(&endereco, 256) else { return };
+    // Rápido no começo, lento no fim: 92 % com 1 - e^(-t/4).
+    let progresso = 0.92 * (1.0 - (-aberto_ha / 4.0).exp());
+    let centro = ctx.content_rect().center();
+    let lado = 150.0;
+    let caixa = Rect::from_center_size(centro, egui::vec2(lado, lado));
+    let pintor = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("logo_carregando")));
+    let tudo = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    pintor.image(textura.id(), caixa, tudo, Color32::from_white_alpha(56));
+    let parte = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(progresso, 1.0));
+    let caixa_parte = Rect::from_min_max(caixa.min, egui::pos2(caixa.min.x + lado * progresso, caixa.max.y));
+    pintor.image(textura.id(), caixa_parte, parte, Color32::WHITE);
+    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+}
