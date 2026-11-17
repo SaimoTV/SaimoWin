@@ -24,6 +24,14 @@ O app não traz endereço de lista nenhum. Na primeira abertura as telas mostram
   categorias) ou, se ela não responde, pelo M3U. Cada canal ganha as fontes
   `.m3u8` e `.ts`. A conta é guardada como esse link, então viaja pelo Saimo
   Connect como qualquer outra lista.
+- **Filmes e séries das listas** (`classificar.rs`, `acervo_lista.rs`): cada item de uma
+  lista M3U ou conta Xtream é classificado em canal, filme ou episódio pelas regras de
+  `SaimoPlayer/docs/listas-m3u.md` (tipo declarado, caminho `/movie/` `/series/`,
+  extensão de vídeo, grupo + marca S01E02). Os canais vão para o Ao vivo; filmes e
+  séries viram um acervo no formato Saimo na pasta `minhas-listas/<id>-acervo/`, com
+  capa (`tvg-logo`, menos a genérica do provedor) e o grupo como gênero, e o `vod` lê
+  esse acervo junto do publicado. Conta Xtream: canais pela API, filmes e séries pelo
+  M3U completo da conta. Gabarito comum em `tests/dados/classificar.*`.
 - **Endereços do Saimo** (Ajustes > Listas, `src/listas.rs`): os dois endereços
   no formato do Saimo (o link novo é testado antes); salvar um campo em branco
   desliga aquela lista (arquivo `link-canais.txt`/`link-filmes.txt` com a marca

@@ -180,7 +180,7 @@ fn grade(app: &mut App, ui: &mut egui::Ui) {
     let itens = app.itens_na_tela();
     let total = itens.len();
     let area = ui.max_rect();
-    if total == 0 && crate::listas::filmes().is_none() && !crate::addons::tem_ativo() && app.aba != Aba::Favoritos {
+    if total == 0 && !crate::vod::tem_acervo() && !crate::addons::tem_ativo() && app.aba != Aba::Favoritos {
         let aviso = match app.aba {
             Aba::Series => "Nenhuma série. Informe o endereço da lista de filmes e séries em Ajustes > Listas.",
             Aba::Animes => "Nenhum anime. Informe o endereço da lista de filmes e séries em Ajustes > Listas.",

@@ -796,7 +796,7 @@ fn do_tipo(app: &App, aba: Aba) -> Vec<Fila> {
     };
     filas.extend(filas_addons(app, tipo_addon));
     // O fim da página: o acervo inteiro do tipo, de A a Z (quando há lista VOD).
-    if aba.de_tipo() && (!candidatos.is_empty() || crate::listas::filmes().is_some()) {
+    if aba.de_tipo() && (!candidatos.is_empty() || crate::vod::tem_acervo()) {
         let (nome, _, cor, icone, sobre) = categoria(aba);
         let colagem: Vec<String> = candidatos.iter().take(4).map(|c| c.capa.clone()).collect();
         let heroi = Heroi::Texto { titulo: format!("{nome} de A a Z"), meta: format!("{} títulos", numero(candidatos.len().max(1))), sinopse: sobre.into(), fundo_de: None };
@@ -1048,8 +1048,8 @@ pub fn pagina(app: &mut App, ui: &mut egui::Ui) {
 
     let lista = Rect::from_min_max(Pos2::new(area.left(), area.top() + altura_do_destaque), area.max);
     let tem_addons = crate::addons::tem_ativo();
-    if filas.is_empty() || (app.aba.de_tipo() && crate::listas::filmes().is_none() && !tem_addons) {
-        let sem_filmes = crate::listas::filmes().is_none() && !tem_addons;
+    if filas.is_empty() || (app.aba.de_tipo() && !crate::vod::tem_acervo() && !tem_addons) {
+        let sem_filmes = !crate::vod::tem_acervo() && !tem_addons;
         let sem_canais = crate::listas::canais().is_none();
         let sem_lista = match app.aba {
             Aba::Inicio | Aba::OnDemand | Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas => sem_filmes,

@@ -28,6 +28,9 @@ pub struct Serie {
     pub ano: String,
     pedaco: usize,
     pub episodios: usize,
+    /// De que acervo veio: `None` o publicado, `Some(pasta)` o de uma lista
+    /// do usuário (docs/listas-m3u.md).
+    origem: Option<std::path::PathBuf>,
 }
 
 impl Serie {
@@ -38,6 +41,7 @@ impl Serie {
             ano,
             pedaco: 0,
             episodios,
+            origem: None,
         }
     }
 }
@@ -67,6 +71,33 @@ fn pasta() -> std::path::PathBuf {
 /// base, então um índice velho com as bases noutra ordem manda todo mundo para
 /// o servidor errado. São menos de um kilobyte.
 pub fn indice() -> Vec<Gaveta> {
+    let mut gavetas = indice_publicado();
+    // As listas do usuário somam as contagens de cada letra.
+    for (_, pasta) in crate::minhas_listas::acervos_ativos() {
+        let Ok(texto) = std::fs::read_to_string(pasta.join("indice.txt")) else { continue };
+        for linha in texto.lines() {
+            let campos: Vec<&str> = linha.split('\t').collect();
+            if campos.len() < 3 || campos[0].is_empty() {
+                continue;
+            }
+            let n = campos[1].parse::<usize>().unwrap_or(0) + campos[2].parse::<usize>().unwrap_or(0);
+            match gavetas.iter_mut().find(|g| g.letra == campos[0]) {
+                Some(g) => g.filmes += n,
+                None => gavetas.push(Gaveta { letra: campos[0].to_string(), filmes: n }),
+            }
+        }
+    }
+    // "#" primeiro, depois A-Z, como no índice publicado.
+    gavetas.sort_by_key(|g| if g.letra == "#" { String::new() } else { g.letra.clone() });
+    gavetas
+}
+
+/// Há filmes e séries para mostrar (o acervo publicado ou o de alguma lista)?
+pub fn tem_acervo() -> bool {
+    crate::listas::filmes().is_some() || !crate::minhas_listas::acervos_ativos().is_empty()
+}
+
+fn indice_publicado() -> Vec<Gaveta> {
     // Sem endereço de filmes não há pedido de rede nem acervo.
     let Some(base) = crate::listas::filmes() else { return Vec::new() };
     let texto = crate::rede::texto(&format!("{base}indice.txt")).or_else(|| {
@@ -148,6 +179,21 @@ pub fn arquivo_publico(nome: &str) -> Option<String> {
     arquivo(nome)
 }
 
+/// O arquivo de um acervo: o publicado (`None`) ou o de uma lista.
+fn arquivo_de(origem: Option<&std::path::Path>, nome: &str) -> Option<String> {
+    match origem {
+        None => arquivo(nome),
+        Some(pasta) => std::fs::read_to_string(pasta.join(crate::acervo_lista::nome_no_disco(nome))).ok(),
+    }
+}
+
+/// O publicado e o de cada lista ativa.
+fn origens() -> Vec<Option<std::path::PathBuf>> {
+    let mut todas = vec![None];
+    todas.extend(crate::minhas_listas::acervos_ativos().into_iter().map(|(_, p)| Some(p)));
+    todas
+}
+
 fn arquivo(nome: &str) -> Option<String> {
     let base = crate::listas::filmes()?;
     let local = pasta().join(nome.replace("%23", "hash"));
@@ -174,9 +220,41 @@ fn reservados_bruto(letra: &str) -> Vec<Filme> {
 }
 
 fn ler_filmes(letra: &str, prefixo: &str) -> Vec<Filme> {
-    let Some(texto) = arquivo(&format!("{prefixo}-{}.txt", gaveta_do_arquivo(letra))) else {
-        return Vec::new();
-    };
+    let nome = format!("{prefixo}-{}.txt", gaveta_do_arquivo(letra));
+    // Os reservados são só do acervo publicado.
+    let fontes = if prefixo == "filmes" { origens() } else { vec![None] };
+    let mut saida: Vec<Filme> = Vec::new();
+    let mut varias = false;
+    for (i, origem) in fontes.iter().enumerate() {
+        let Some(texto) = arquivo_de(origem.as_deref(), &nome) else { continue };
+        let lidos = ler_filmes_do_texto(&texto, prefixo);
+        if i == 0 || saida.is_empty() {
+            saida.extend(lidos);
+            continue;
+        }
+        varias = true;
+        // O mesmo título em outro acervo: as fontes dele viram reserva.
+        for f in lidos {
+            match saida.iter_mut().find(|s| s.titulo == f.titulo) {
+                Some(s) => {
+                    for (v, urls) in f.versoes {
+                        match s.versoes.iter_mut().find(|(sv, _)| *sv == v) {
+                            Some((_, su)) => su.extend(urls.into_iter().filter(|u| !su.contains(u)).collect::<Vec<_>>()),
+                            None => s.versoes.push((v, urls)),
+                        }
+                    }
+                }
+                None => saida.push(f),
+            }
+        }
+    }
+    if varias {
+        saida.sort_by(|a, b| crate::catalogo::chave_de_ordem(&a.titulo).cmp(&crate::catalogo::chave_de_ordem(&b.titulo)));
+    }
+    saida
+}
+
+fn ler_filmes_do_texto(texto: &str, prefixo: &str) -> Vec<Filme> {
     texto
         .lines()
         .filter_map(|linha| {
@@ -207,12 +285,11 @@ fn ler_filmes(letra: &str, prefixo: &str) -> Vec<Filme> {
 }
 
 fn series_bruto(letra: &str) -> Vec<Serie> {
-    let Some(texto) = arquivo(&format!("series-{}.txt", gaveta_do_arquivo(letra))) else {
-        return Vec::new();
-    };
-    texto
-        .lines()
-        .filter_map(|linha| {
+    let nome = format!("series-{}.txt", gaveta_do_arquivo(letra));
+    let mut saida = Vec::new();
+    for origem in origens() {
+        let Some(texto) = arquivo_de(origem.as_deref(), &nome) else { continue };
+        saida.extend(texto.lines().filter_map(|linha| {
             let campos: Vec<&str> = linha.split('\t').collect();
             if campos.len() < 4 || campos[0].is_empty() {
                 return None;
@@ -222,9 +299,11 @@ fn series_bruto(letra: &str) -> Vec<Serie> {
                 ano: campos[1].to_string(),
                 pedaco: campos[2].parse().unwrap_or(0),
                 episodios: campos[3].parse().unwrap_or(0),
+                origem: origem.clone(),
             })
-        })
-        .collect()
+        }));
+    }
+    saida
 }
 
 /// Animes e doramas já vêm com todos os episódios no mesmo arquivo.
@@ -250,7 +329,7 @@ fn colecao_bruto(tipo: &str) -> Vec<(Serie, Vec<Episodio>)> {
         let Some((titulo, ano)) = identidade.take() else { return };
         if episodios.is_empty() { return; }
         let lista = std::mem::take(episodios);
-        saida.push((Serie { titulo, ano, pedaco: 0, episodios: lista.len() }, lista));
+        saida.push((Serie { titulo, ano, pedaco: 0, episodios: lista.len(), origem: None }, lista));
     };
     for linha in texto.lines() {
         if let Some(cabecalho) = linha.strip_prefix('@') {
@@ -279,7 +358,7 @@ fn colecao_bruto(tipo: &str) -> Vec<(Serie, Vec<Episodio>)> {
 /// Episódios de uma série: baixa só o pedaço em que ela está.
 pub fn episodios(letra: &str, serie: &Serie) -> Vec<Episodio> {
     let nome = format!("series-{}-{}.txt", gaveta_do_arquivo(letra), serie.pedaco);
-    let Some(texto) = arquivo(&nome) else { return Vec::new() };
+    let Some(texto) = arquivo_de(serie.origem.as_deref(), &nome) else { return Vec::new() };
     let mut saida = Vec::new();
     let mut dentro = false;
     for linha in texto.lines() {
@@ -326,7 +405,14 @@ pub struct Achado {
 /// O acervo inteiro só com nome, tipo e letra (uns 800 KB para trinta mil
 /// títulos): dá para procurar em tudo sem baixar tudo.
 fn busca_bruto() -> Vec<Achado> {
-    let Some(texto) = arquivo("busca.txt") else { return Vec::new() };
+    origens()
+        .into_iter()
+        .filter_map(|origem| arquivo_de(origem.as_deref(), "busca.txt"))
+        .flat_map(|texto| busca_do_texto(&texto))
+        .collect()
+}
+
+fn busca_do_texto(texto: &str) -> Vec<Achado> {
     texto
         .lines()
         .filter_map(|linha| {

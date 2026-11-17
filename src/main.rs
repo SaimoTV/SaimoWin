@@ -33,6 +33,8 @@ mod controle;
 mod rede;
 mod listas;
 mod minhas_listas;
+mod classificar;
+mod acervo_lista;
 mod minhas_listas_tela;
 mod addons;
 mod addons_tela;
@@ -663,23 +665,18 @@ fn buscar_canais(emissor: &std::sync::mpsc::Sender<Recado>) {
 
 /// Baixa o índice, a busca e os gêneros do endereço de filmes; no-op sem endereço.
 fn buscar_filmes(emissor: &std::sync::mpsc::Sender<Recado>) {
-    if listas::filmes().is_none() {
+    if !vod::tem_acervo() {
         return;
     }
     // O índice do acervo é pequeno e dá as bases dos endereços; sem ele
     // nenhum filme abre.
     let emissor = emissor.clone();
     std::thread::spawn(move || {
-        let gavetas = vod::indice();
-        if !gavetas.is_empty() {
-            let _ = emissor.send(Recado::Gavetas(gavetas));
-        }
+        // Sempre: uma lista removida tira letras que não voltam do zero.
+        let _ = emissor.send(Recado::Gavetas(vod::indice()));
         // O índice de busca são uns 800 KB para trinta mil títulos:
         // procurar no acervo inteiro sem baixar o acervo.
-        let acervo = vod::busca();
-        if !acervo.is_empty() {
-            let _ = emissor.send(Recado::Acervo(acervo));
-        }
+        let _ = emissor.send(Recado::Acervo(vod::busca()));
         // Os gêneros vêm do mesmo lugar, e só servem para a régua do
         // acervo: podem chegar depois de tudo.
         let lidos = generos::baixar();
@@ -1018,6 +1015,13 @@ impl App {
         self.minhas_meta = minhas_listas::listar();
         self.minhas = minhas_listas::canais_ativos();
         self.reordenar();
+        // Os filmes e séries das listas (docs/listas-m3u.md) entram no acervo.
+        self.gavetas.clear();
+        buscar_filmes(&self.emissor);
+        let letra = std::mem::take(&mut self.letra);
+        if !letra.is_empty() {
+            self.abrir_letra(letra);
+        }
         if era_minha && tocando.is_some_and(|n| !self.canais.iter().any(|c| c.nome == n)) {
             self.parar_o_que_toca();
         }

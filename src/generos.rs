@@ -116,9 +116,17 @@ impl Generos {
 
 /// Busca a lista. Chamada de uma thread: fala com a rede.
 pub fn baixar() -> Generos {
-    let Some(texto) = crate::vod::arquivo_publico("fichas.txt") else {
+    // O publicado e o de cada lista do usuário (capas e grupos dela).
+    let mut texto = crate::vod::arquivo_publico("fichas.txt").unwrap_or_default();
+    for (_, pasta) in crate::minhas_listas::acervos_ativos() {
+        if let Ok(t) = std::fs::read_to_string(pasta.join("fichas.txt")) {
+            texto.push('\n');
+            texto.push_str(&t);
+        }
+    }
+    if texto.trim().is_empty() {
         return Generos::default();
-    };
+    }
     ler(&texto)
 }
 

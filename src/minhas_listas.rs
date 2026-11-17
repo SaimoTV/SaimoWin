@@ -16,7 +16,8 @@ use std::time::Duration;
 pub const SECAO: &str = "Minhas listas";
 pub const MAXIMO_DE_LISTAS: usize = 10;
 const LIMITE_CANAIS: usize = 20_000;
-const LIMITE_BYTES: u64 = 30 * 1024 * 1024;
+/// Listas com filmes e séries passam fácil de 70 MB (300 mil itens).
+const LIMITE_BYTES: u64 = 250 * 1024 * 1024;
 const VALIDADE_S: u64 = 12 * 3600;
 const AGENTE_VLC: &str = "VLC/3.0.20 LibVLC/3.0.20";
 
@@ -215,6 +216,19 @@ struct Pendente {
     tvg_id: Option<String>,
     logo: Option<String>,
     grupo: Option<String>,
+    /// tvg-type / type / media-type: o tipo que a lista declara.
+    declarado: Option<String>,
+}
+
+/// Um filme ou episódio da lista (docs/listas-m3u.md): vai para o acervo da lista.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ItemVod {
+    pub tipo: crate::classificar::Tipo,
+    pub nome: String,
+    pub grupo: String,
+    pub url: String,
+    /// Pôster (tvg-logo), quando a lista traz.
+    pub logo: Option<String>,
 }
 
 #[derive(Default)]
@@ -228,6 +242,12 @@ struct Opcoes {
 
 /// Lê um texto .m3u. Nunca falha: texto sem canais devolve lista vazia.
 pub fn ler(texto: &str) -> Vec<CanalM3u> {
+    ler_tudo(texto).0
+}
+
+/// Os canais e, à parte, os filmes e episódios da lista (docs/listas-m3u.md).
+pub fn ler_tudo(texto: &str) -> (Vec<CanalM3u>, Vec<ItemVod>) {
+    let mut vod: Vec<ItemVod> = Vec::new();
     let texto = texto.trim_start_matches('\u{feff}').replace("\r\n", "\n").replace('\r', "\n");
     let mut canais: Vec<CanalM3u> = Vec::new();
     let mut indice: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -248,6 +268,7 @@ pub fn ler(texto: &str) -> Vec<CanalM3u> {
                 tvg_id: atributo(linha, "tvg-id"),
                 logo: atributo(linha, "tvg-logo"),
                 grupo: atributo(linha, "group-title"),
+                declarado: atributo(linha, "tvg-type").or_else(|| atributo(linha, "type")).or_else(|| atributo(linha, "media-type")),
             });
             opts = Opcoes::default();
             continue;
@@ -314,6 +335,16 @@ pub fn ler(texto: &str) -> Vec<CanalM3u> {
             }
         }
         let grupo = grupo.filter(|g| !g.is_empty());
+        let tipo = crate::classificar::tipo(url, &bruto, grupo.as_deref().unwrap_or(""), p.declarado.as_deref().unwrap_or(""));
+        if tipo != crate::classificar::Tipo::Canal {
+            // Adulto não entra no acervo da lista.
+            if !e_restrito(grupo.as_deref(), &bruto) {
+                let logo = p.logo.clone().filter(|l| comeca_com_http(l));
+                vod.push(ItemVod { tipo, nome: bruto, grupo: grupo.unwrap_or_default(), url: url.to_string(), logo });
+            }
+            opts = Opcoes::default();
+            continue;
+        }
         let logo = p.logo.filter(|l| comeca_com_http(l));
         let (key_id, key) = match chave_clearkey(&opts.lic_tipo, &opts.lic_chave) {
             Some((a, b)) => (Some(a), Some(b)),
@@ -345,7 +376,7 @@ pub fn ler(texto: &str) -> Vec<CanalM3u> {
         }
         opts = Opcoes::default();
     }
-    canais
+    (canais, vod)
 }
 
 // MARK: - Restritos
@@ -414,21 +445,31 @@ fn parece_lista(texto: &str) -> bool {
     t.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("#EXTM3U")) || t.contains("#EXTINF")
 }
 
-/// Os canais de um link: conta com usuário e senha (Xtream) pela API do
-/// servidor; qualquer outro link é uma lista M3U comum.
-fn obter_canais(link: &str) -> Result<Vec<CanalM3u>, Erro> {
+/// Os canais, filmes e episódios de um link: conta com usuário e senha
+/// (Xtream) tem os canais pela API do servidor e os filmes e séries pelo M3U
+/// completo da conta; qualquer outro link é uma lista M3U comum.
+fn obter(link: &str) -> Result<Lido, Erro> {
     if let Some(conta) = crate::xtream::de_link(link) {
-        return crate::xtream::canais(&conta, &|u| baixar_texto(u), &ler);
+        let canais = crate::xtream::canais(&conta, &|u| baixar_texto(u), &ler);
+        let vod = baixar_texto(&conta.link_m3u()).map(|t| ler_tudo(&t).1).unwrap_or_default();
+        return match canais {
+            Ok(c) => Ok((c, vod)),
+            Err(_) if !vod.is_empty() => Ok((Vec::new(), vod)),
+            Err(e) => Err(e),
+        };
     }
     interpretar(&baixar_texto(link)?)
 }
+
+/// Canais + filmes e episódios.
+pub type Lido = (Vec<CanalM3u>, Vec<ItemVod>);
 
 fn baixar_texto(link: &str) -> Result<String, Erro> {
     if !comeca_com_http(link) {
         return Err(Erro::Esquema);
     }
     let agente: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(30)))
+        .timeout_global(Some(Duration::from_secs(300)))
         .user_agent(AGENTE_VLC)
         .build()
         .into();
@@ -446,7 +487,7 @@ fn baixar_texto(link: &str) -> Result<String, Erro> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Lê o arquivo da pessoa: até 30 MB, UTF-8 (byte inválido vira "�" em vez de falhar).
+/// Lê o arquivo da pessoa: até 250 MB, UTF-8 (byte inválido vira "�" em vez de falhar).
 pub fn ler_arquivo(caminho: &Path) -> Result<String, Erro> {
     let mut f = std::fs::File::open(caminho).map_err(|_| Erro::Arquivo)?;
     let mut bytes = Vec::new();
@@ -457,16 +498,16 @@ pub fn ler_arquivo(caminho: &Path) -> Result<String, Erro> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Texto baixado -> canais, com os erros da especificação.
-pub fn interpretar(texto: &str) -> Result<Vec<CanalM3u>, Erro> {
+/// Texto baixado -> canais e acervo, com os erros da especificação.
+pub fn interpretar(texto: &str) -> Result<Lido, Erro> {
     if !parece_lista(texto) {
         return Err(Erro::NaoELista);
     }
-    let canais = ler(texto);
-    if canais.is_empty() {
+    let lido = ler_tudo(texto);
+    if lido.0.is_empty() && lido.1.is_empty() {
         return Err(Erro::SemCanais);
     }
-    Ok(canais)
+    Ok(lido)
 }
 
 // MARK: - Guardar
@@ -484,6 +525,11 @@ pub struct Lista {
     /// Quantos canais a lista tem (para mostrar sem abrir o arquivo dela).
     #[serde(default)]
     pub canais: usize,
+    /// Quantos filmes e séries foram para Filmes e séries.
+    #[serde(default)]
+    pub filmes: usize,
+    #[serde(default)]
+    pub series: usize,
 }
 
 static TRAVA: Mutex<()> = Mutex::new(());
@@ -521,6 +567,21 @@ fn gravar_canais(id: &str, canais: &[CanalM3u]) {
     }
 }
 
+/// A pasta do acervo (filmes e séries) da lista, no formato Saimo.
+pub fn pasta_do_acervo(id: &str) -> PathBuf {
+    pasta().join(format!("{id}-acervo"))
+}
+
+/// As pastas de acervo das listas ativas que têm filmes ou séries.
+pub fn acervos_ativos() -> Vec<(String, PathBuf)> {
+    listar()
+        .into_iter()
+        .filter(|l| l.ativa && (l.filmes > 0 || l.series > 0))
+        .map(|l| (l.id.clone(), pasta_do_acervo(&l.id)))
+        .filter(|(_, p)| p.join("indice.txt").exists())
+        .collect()
+}
+
 fn ler_canais(id: &str) -> Vec<CanalM3u> {
     std::fs::read_to_string(arquivo_da(id))
         .ok()
@@ -542,8 +603,8 @@ pub fn adicionar(link: &str, nome: &str) -> Result<(), Erro> {
     if listar().len() >= MAXIMO_DE_LISTAS {
         return Err(Erro::Limite);
     }
-    let canais = obter_canais(link)?;
-    guardar_nova(&canais, Some(link.to_string()), nome)
+    let lido = obter(link)?;
+    guardar_nova(&lido, Some(link.to_string()), nome)
 }
 
 /// Adiciona uma lista a partir de um arquivo .m3u/.m3u8 (sem link guardado).
@@ -551,11 +612,11 @@ pub fn adicionar_arquivo(caminho: &Path, nome: &str) -> Result<(), Erro> {
     if listar().len() >= MAXIMO_DE_LISTAS {
         return Err(Erro::Limite);
     }
-    let canais = interpretar(&ler_arquivo(caminho)?)?;
-    guardar_nova(&canais, None, nome)
+    let lido = interpretar(&ler_arquivo(caminho)?)?;
+    guardar_nova(&lido, None, nome)
 }
 
-fn guardar_nova(canais: &[CanalM3u], link: Option<String>, nome: &str) -> Result<(), Erro> {
+fn guardar_nova((canais, vod): &Lido, link: Option<String>, nome: &str) -> Result<(), Erro> {
     let _g = TRAVA.lock();
     let mut listas = ler_indice();
     if listas.len() >= MAXIMO_DE_LISTAS {
@@ -568,7 +629,8 @@ fn guardar_nova(canais: &[CanalM3u], link: Option<String>, nome: &str) -> Result
     let nome = nome.trim();
     let nome = if nome.is_empty() { format!("Lista {}", listas.len() + 1) } else { nome.to_string() };
     gravar_canais(&id, canais);
-    listas.push(Lista { id, nome, link, atualizada_em: agora(), ativa: true, canais: canais.len() });
+    let r = crate::acervo_lista::gravar(&pasta_do_acervo(&id), vod);
+    listas.push(Lista { id, nome, link, atualizada_em: agora(), ativa: true, canais: canais.len(), filmes: r.filmes, series: r.series });
     gravar_indice(&listas);
     Ok(())
 }
@@ -576,23 +638,26 @@ fn guardar_nova(canais: &[CanalM3u], link: Option<String>, nome: &str) -> Result
 /// Baixa de novo. Se falhar, a versão guardada continua.
 pub fn atualizar(id: &str) -> Result<(), Erro> {
     let link = listar().into_iter().find(|l| l.id == id).and_then(|l| l.link).ok_or(Erro::Download)?;
-    let canais = obter_canais(&link)?;
-    substituir_canais(id, &canais);
+    let lido = obter(&link)?;
+    substituir_canais(id, &lido);
     Ok(())
 }
 
 /// Atualiza uma lista de arquivo com outro arquivo. Se falhar, a versão guardada continua.
 pub fn atualizar_arquivo(id: &str, caminho: &Path) -> Result<(), Erro> {
-    let canais = interpretar(&ler_arquivo(caminho)?)?;
-    substituir_canais(id, &canais);
+    let lido = interpretar(&ler_arquivo(caminho)?)?;
+    substituir_canais(id, &lido);
     Ok(())
 }
 
-fn substituir_canais(id: &str, canais: &[CanalM3u]) {
+fn substituir_canais(id: &str, (canais, vod): &Lido) {
     let _g = TRAVA.lock();
     let mut listas = ler_indice();
     if let Some(l) = listas.iter_mut().find(|l| l.id == id) {
         gravar_canais(id, canais);
+        let r = crate::acervo_lista::gravar(&pasta_do_acervo(id), vod);
+        l.filmes = r.filmes;
+        l.series = r.series;
         l.atualizada_em = agora();
         l.canais = canais.len();
         gravar_indice(&listas);
@@ -614,6 +679,7 @@ pub fn remover(id: &str) {
     listas.retain(|l| l.id != id);
     gravar_indice(&listas);
     let _ = std::fs::remove_file(arquivo_da(id));
+    let _ = std::fs::remove_dir_all(pasta_do_acervo(id));
 }
 
 /// As listas ativas com mais de 12 h.
@@ -731,7 +797,7 @@ mod testes {
         assert_eq!(interpretar("").unwrap_err(), Erro::NaoELista);
         assert_eq!(interpretar("#EXTM3U\n").unwrap_err(), Erro::SemCanais);
         assert_eq!(interpretar("#EXTM3U\n#EXTINF:-1,A\nrtmp://x/y\n").unwrap_err(), Erro::SemCanais);
-        assert_eq!(interpretar("#EXTINF:-1,A\nhttp://x/y.m3u8\n").unwrap().len(), 1);
+        assert_eq!(interpretar("#EXTINF:-1,A\nhttp://x/y.m3u8\n").unwrap().0.len(), 1);
         assert_eq!(baixar_texto("ftp://x/y").unwrap_err(), Erro::Esquema);
         assert_eq!(baixar_texto("exemplo.com/lista.m3u").unwrap_err(), Erro::Esquema);
     }
@@ -768,10 +834,10 @@ mod testes {
         std::fs::create_dir_all(&d).unwrap();
         let bom = d.join("a.m3u");
         std::fs::write(&bom, "\u{feff}#EXTM3U\n#EXTINF:-1,Canal \u{e9}\nhttps://a/1.m3u8\n").unwrap();
-        assert_eq!(interpretar(&ler_arquivo(&bom).unwrap()).unwrap().len(), 1);
+        assert_eq!(interpretar(&ler_arquivo(&bom).unwrap()).unwrap().0.len(), 1);
         let latin = d.join("l.m3u"); // byte inválido em UTF-8 não derruba
         std::fs::write(&latin, b"#EXTM3U\n#EXTINF:-1,Caf\xe9\nhttps://a/1.m3u8\n").unwrap();
-        assert_eq!(interpretar(&ler_arquivo(&latin).unwrap()).unwrap().len(), 1);
+        assert_eq!(interpretar(&ler_arquivo(&latin).unwrap()).unwrap().0.len(), 1);
         let lixo = d.join("b.txt");
         std::fs::write(&lixo, "ola mundo").unwrap();
         assert_eq!(interpretar(&ler_arquivo(&lixo).unwrap()), Err(Erro::NaoELista));
