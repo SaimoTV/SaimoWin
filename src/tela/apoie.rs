@@ -46,20 +46,22 @@ pub fn tela(ui: &mut egui::Ui) {
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.label(egui::RichText::new("Ajude a manter tudo ").font(forte(38.0)).color(TEXTO));
+                    ui.label(egui::RichText::new("Ajude a manter o Saimo TV ").font(forte(38.0)).color(TEXTO));
                     ui.label(egui::RichText::new("100% gratuito").font(forte(38.0)).color(ACENTO));
                 });
                 ui.add_space(6.0);
-                ui.label(egui::RichText::new("Sem anúncios, sem mensalidade e livre para todo mundo.").font(normal(18.0)).color(TEXTO));
+                ui.label(egui::RichText::new("Sem anúncios e sem mensalidade.").font(normal(18.0)).color(TEXTO));
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new("Manter servidores rápidos, a transmissão e as atualizações de todo dia custa dinheiro todo mês. Quem puder ajudar com qualquer valor faz uma diferença enorme para o Saimo TV continuar no ar para todos.").font(normal(15.0)).color(SECUNDARIO));
+                ui.label(egui::RichText::new("O Saimo TV é um player: ele toca as listas e os links que você mesmo adiciona. O app não traz nenhum canal, filme ou série dentro; o que você assiste vem das suas próprias listas.").font(normal(15.0)).color(TEXTO));
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("O desenvolvimento e as atualizações do app e do site custam dinheiro todo mês. Quem puder ajudar com qualquer valor faz uma diferença enorme para o Saimo TV continuar gratuito e sem anúncios.").font(normal(15.0)).color(SECUNDARIO));
                 ui.add_space(8.0);
                 ui.label(egui::RichText::new("Agora o Pix é direto: o valor vai direto para o desenvolvedor, Gabriel Saimo Ferreira, sem intermediário. Aponte a câmera do celular para o QR code ou copie o código Pix e cole no app do seu banco.").font(normal(15.0)).color(TEXTO));
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
-                    vantagem(ui, "Zero anúncios", "Nada interrompendo o que você assiste");
-                    vantagem(ui, "Servidores rápidos", "Transmissão estável e em alta qualidade");
-                    vantagem(ui, "Sem mensalidade", "Canais, filmes e séries para todo mundo");
+                    vantagem(ui, "Zero anúncios", "Nada interrompendo o que você usa");
+                    vantagem(ui, "Atualizações constantes", "Melhorias e correções para o app e o site");
+                    vantagem(ui, "Sem mensalidade", "O app é gratuito para todo mundo");
                 });
                 ui.add_space(18.0);
                 let id_copia = egui::Id::new("pix-copiado");
