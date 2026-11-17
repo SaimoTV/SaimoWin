@@ -320,6 +320,17 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(direita.width().min(760.0));
             ui.add_space(34.0);
+            rotulo_de_secao(ui, "Perfis");
+            ui.add_space(4.0);
+            let ativo = crate::perfis::ativo();
+            let resumo = format!("{}{} · {} perfil(is)", ativo.nome, if ativo.kids { " (Kids)" } else { "" }, crate::perfis::todos().len());
+            if linha(ui, "Trocar de perfil", &resumo, Icone::Mais).clicked() {
+                acao = Some(20);
+            }
+            if linha(ui, "Gerenciar perfis", "Criar, editar, avatares e perfil Kids (até 10)", Icone::Mais).clicked() {
+                acao = Some(21);
+            }
+            ui.add_space(18.0);
             rotulo_de_secao(ui, "Reprodução");
             ui.add_space(4.0);
             let primeira = linha(ui, "Preencher a tela", if app.preencher { "Ligado: corta as bordas, sem faixas pretas" } else { "Desligado: o vídeo inteiro, com faixas se preciso" }, Icone::Preencher);
@@ -428,6 +439,24 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             if linha(ui, "Tela cheia", "F ou F11 · Esc sai", Icone::TelaCheia).clicked() {
                 acao = Some(6);
             }
+            // Controle parental: no fim, separado e discreto. No Kids não aparece.
+            if !crate::perfis::kids_ativo() {
+                ui.add_space(30.0);
+                ui.scope(|ui| {
+                    ui.set_opacity(0.7);
+                    rotulo_de_secao(ui, "Controle parental");
+                    ui.add_space(4.0);
+                    let estado = if app.adulto_liberado() { "Liberado · clique para bloquear" } else { "Bloqueado · clique para liberar com a senha" };
+                    if linha(ui, "Conteúdo adulto", estado, Icone::Mais).clicked() {
+                        acao = Some(22);
+                    }
+                    let senha = if crate::perfis::senha_padrao() { "A senha inicial é 0000" } else { "Senha própria" };
+                    if linha(ui, "Trocar a senha", senha, Icone::Mais).clicked() {
+                        acao = Some(23);
+                    }
+                    parental(app, ui);
+                });
+            }
             ui.add_space(40.0);
         });
     });
@@ -453,6 +482,22 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         Some(4) => app.procurar_atualizacao_agora(),
         Some(5) => app.ajuda_aberta = true,
         Some(6) => app.alternar_tela_cheia(ui.ctx()),
+        Some(20) => {
+            app.perfis_tela = Some(super::perfis::Estado::novo(false, false));
+        }
+        Some(21) => {
+            app.perfis_tela = Some(super::perfis::Estado::novo(false, true));
+        }
+        Some(22) => {
+            if app.adulto_liberado() {
+                app.definir_liberado(false);
+            } else {
+                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("parental"), (1u8, String::new(), String::new(), String::new())));
+            }
+        }
+        Some(23) => {
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("parental"), (2u8, String::new(), String::new(), String::new())));
+        }
         Some(8) => {
             crate::connect::esquecer_todos();
             app.aviso = Some(("Celulares esquecidos. Na próxima conexão o computador vai perguntar de novo.".into(), std::time::Instant::now()));
@@ -477,4 +522,48 @@ fn faixas_de_ano() -> Vec<(String, (u32, u32))> {
     }
     out.push(("Antes de 1990".to_string(), (1, 1989)));
     out
+}
+
+/// O formulário do controle parental (liberar com a senha ou trocar a senha), quando aberto.
+fn parental(app: &mut App, ui: &mut egui::Ui) {
+    let id = egui::Id::new("parental");
+    let Some((modo, mut senha, mut nova, mut aviso)) = ui.ctx().data(|d| d.get_temp::<(u8, String, String, String)>(id)) else {
+        return;
+    };
+    let mut fechar = false;
+    ui.horizontal(|ui| {
+        ui.add(egui::TextEdit::singleline(&mut senha).password(true).hint_text(if modo == 2 { "Senha atual" } else { "Senha" }).desired_width(120.0));
+        if modo == 2 {
+            ui.add(egui::TextEdit::singleline(&mut nova).password(true).hint_text("Senha nova").desired_width(120.0));
+        }
+        if ui.button(if modo == 2 { "Trocar" } else { "Liberar" }).clicked() {
+            if modo == 1 {
+                if crate::perfis::conferir_senha(&senha) {
+                    app.definir_liberado(true);
+                    fechar = true;
+                } else {
+                    aviso = "Senha errada.".into();
+                    senha.clear();
+                }
+            } else if !crate::perfis::conferir_senha(&senha) {
+                aviso = "Senha atual errada.".into();
+                senha.clear();
+            } else if crate::perfis::trocar_senha(&senha, &nova) {
+                fechar = true;
+            } else {
+                aviso = "A senha nova tem 4 números.".into();
+            }
+        }
+        if ui.button("Cancelar").clicked() {
+            fechar = true;
+        }
+        ui.label(egui::RichText::new(&aviso).color(egui::Color32::from_rgb(255, 179, 179)));
+    });
+    ui.ctx().data_mut(|d| {
+        if fechar {
+            d.remove::<(u8, String, String, String)>(id);
+        } else {
+            d.insert_temp(id, (modo, senha, nova, aviso));
+        }
+    });
 }

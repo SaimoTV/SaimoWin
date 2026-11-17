@@ -127,6 +127,18 @@ pub fn menu(app: &mut App, ui_pai: &mut egui::Ui, sobre_video: bool) {
 
             let engrenagem = Rect::from_min_size(Pos2::new(direita - 42.0, area.center().y - 20.0), egui::vec2(42.0, 40.0));
             direita = engrenagem.left() - 8.0;
+            // O perfil ativo: o avatar abre a troca de perfil.
+            let lugar_avatar = Rect::from_min_size(Pos2::new(direita - 34.0, area.center().y - 17.0), egui::vec2(34.0, 34.0));
+            direita = lugar_avatar.left() - 8.0;
+            let perfil = crate::perfis::ativo();
+            ui.scope_builder(egui::UiBuilder::new().max_rect(lugar_avatar), |ui| {
+                if super::perfis::avatar(ui, &perfil.nome, &perfil.avatar, 34.0, None)
+                    .on_hover_text(format!("Perfil: {} (trocar)", perfil.nome))
+                    .clicked()
+                {
+                    app.perfis_tela = Some(super::perfis::Estado::novo(false, false));
+                }
+            });
             let mut escolhida = None;
             ui.scope_builder(egui::UiBuilder::new().max_rect(engrenagem), |ui| {
                 if aba(ui, "", Icone::Ajustes, app.aba == Aba::Ajustes).on_hover_text("Ajustes").clicked() {

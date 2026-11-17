@@ -19,6 +19,7 @@ mod ficha;
 mod grade;
 pub mod janelas;
 mod paginas;
+pub mod perfis;
 mod topo;
 mod video;
 
@@ -217,7 +218,15 @@ pub fn desenhar(app: &mut App, ui: &mut egui::Ui) {
             } else if let Some(serie) = app.serie_aberta.clone() {
                 ficha::serie(app, ui, &serie);
             } else if app.aba == Aba::Ajustes {
-                grade::ajustes(app, ui);
+                // No perfil Kids os Ajustes pedem o código (a criança não mexe nas listas).
+                if crate::perfis::pede_codigo(&crate::perfis::ativo()) && !app.ajustes_liberados {
+                    if app.perfis_tela.is_none() {
+                        perfis::pedir_ajustes(app);
+                    }
+                    app.aba = Aba::Inicio;
+                } else {
+                    grade::ajustes(app, ui);
+                }
             } else if app.aba == Aba::Apoie {
                 apoie::tela(ui);
             } else if paginas::em_fileiras(app) {
@@ -239,6 +248,7 @@ pub fn desenhar(app: &mut App, ui: &mut egui::Ui) {
     crate::minhas_listas_tela::dialogo(app, ctx);
     crate::addons_tela::dialogo(app, ctx);
     crate::addons_tela::seletor_streams(app, ctx);
+    perfis::desenhar(app, ctx);
 }
 
 // MARK: - Fundo do app

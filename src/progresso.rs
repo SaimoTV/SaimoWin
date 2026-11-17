@@ -29,7 +29,7 @@ pub fn versao() -> u64 {
 }
 
 fn arquivo() -> std::path::PathBuf {
-    crate::catalogo::pasta().join("progresso.json")
+    crate::perfis::caminho("progresso.json")
 }
 
 fn marcas() -> std::sync::MutexGuard<'static, Option<HashMap<String, (f64, f64)>>> {
@@ -50,7 +50,7 @@ fn marcas() -> std::sync::MutexGuard<'static, Option<HashMap<String, (f64, f64)>
 static QUANDO: Mutex<Option<HashMap<String, i64>>> = Mutex::new(None);
 
 fn arquivo_quando() -> std::path::PathBuf {
-    crate::catalogo::pasta().join("progresso-quando.json")
+    crate::perfis::caminho("progresso-quando.json")
 }
 
 fn quando() -> std::sync::MutexGuard<'static, Option<HashMap<String, i64>>> {

@@ -47,10 +47,14 @@ fn letra(titulo: &str) -> String {
 }
 
 impl App {
-    pub(crate) fn pacote_de_dados(&self) -> Value {
+    /// Onde parou, títulos e canais favoritos de um perfil, no formato do pacote (lidos da pasta dele).
+    fn campos_de(&self, id: &str) -> (Vec<Value>, Vec<Value>, Vec<String>) {
         let achado = |titulo: &str| self.acervo.iter().find(|a| a.titulo == titulo);
         let mut lista = Vec::new();
-        for (chave, pos, dur, em) in progresso::todas() {
+        for (chave, pos, dur, em) in crate::perfis::progresso_de(id) {
+            if pos <= 0.0 {
+                continue;
+            }
             let (tipo, titulo, ano, temporada, numero) = match episodio(&chave) {
                 Some((serie, t, e)) => {
                     let (titulo, ano) = separar_ano(&serie);
@@ -65,8 +69,7 @@ impl App {
                 "pos": (pos * 1000.0).round() as i64, "dur": (dur * 1000.0).round() as i64, "em": em,
             }));
         }
-        let fav_titulos: Vec<Value> = self
-            .favoritos_vod
+        let fav_titulos: Vec<Value> = crate::perfis::ler_lista_de(id, "favoritos-vod.txt")
             .iter()
             .map(|t| {
                 let a = achado(t);
@@ -78,18 +81,38 @@ impl App {
                 })
             })
             .collect();
+        (lista, fav_titulos, crate::perfis::ler_lista_de(id, "favoritos.txt"))
+    }
+
+    pub(crate) fn pacote_de_dados(&self) -> Value {
+        // Os campos de sempre levam o perfil principal: apps sem perfis seguem funcionando.
+        let (lista, fav_titulos, fav_canais) = self.campos_de(crate::perfis::PRINCIPAL);
+        let perfis: Vec<Value> = crate::perfis::para_pacote()
+            .into_iter()
+            .map(|mut p| {
+                let id = p["id"].as_str().unwrap_or_default().to_string();
+                let (pr, ft, fc) = self.campos_de(&id);
+                p["progresso"] = json!(pr);
+                p["favTitulos"] = json!(ft);
+                p["favCanais"] = json!(fc);
+                p
+            })
+            .collect();
         let minhas: Vec<Value> = minhas_listas::listar()
             .into_iter()
             .filter_map(|l| l.link.map(|link| json!({"nome": l.nome, "link": link})))
             .collect();
-        montar_pacote(
+        let mut pacote = montar_pacote(
             lista,
             fav_titulos,
-            self.favoritos.clone(),
+            fav_canais,
             minhas,
             crate::addons::para_connect(),
             &crate::debrid::config(),
-        )
+        );
+        pacote["perfis"] = json!(perfis);
+        pacote["perfisRemovidos"] = json!(crate::perfis::remocoes_para_pacote());
+        pacote
     }
 
     /// Manda a sincronia ao celular conectado.
@@ -99,8 +122,8 @@ impl App {
         }
     }
 
-    /// Junta o que veio do celular ao que o Windows tem.
-    pub(crate) fn aplicar_dados(&mut self, msg: &Value) {
+    /// Onde parou e favoritos do perfil aberto, vindos do celular.
+    fn aplicar_campos(&mut self, msg: &Value) {
         let num = |v: &Value, campo: &str| v.get(campo).and_then(Value::as_f64).unwrap_or(0.0);
         let texto = |v: &Value, campo: &str| v.get(campo).and_then(Value::as_str).unwrap_or("").to_string();
 
@@ -151,6 +174,107 @@ impl App {
         if mudou_canais {
             crate::gravar_lista("favoritos.txt", &self.favoritos);
             self.reordenar();
+        }
+
+    }
+
+    /// A chave do progresso aqui ("Série (2020) · T1 E2" ou o título do filme).
+    fn chave_de_progresso(&self, p: &Value) -> Option<String> {
+        let num = |campo: &str| p.get(campo).and_then(Value::as_f64).unwrap_or(0.0);
+        let texto = |campo: &str| p.get(campo).and_then(Value::as_str).unwrap_or("").to_string();
+        let titulo = texto("titulo");
+        if titulo.is_empty() {
+            return None;
+        }
+        if texto("tipo") != "s" {
+            return Some(titulo);
+        }
+        let (t, e) = (num("temporada") as u32, num("episodio") as u32);
+        if t == 0 || e == 0 {
+            return None;
+        }
+        let ano = texto("ano");
+        let com_ano = format!("{titulo} ({ano})");
+        let serie = if !ano.is_empty() && self.acervo.iter().any(|a| a.serie && a.titulo == com_ano) { com_ano } else { titulo };
+        Some(format!("{serie} · T{t} E{e}"))
+    }
+
+    /// Onde parou e favoritos de um perfil que não está aberto: direto na pasta dele.
+    fn aplicar_campos_em(&self, id: &str, msg: &Value) {
+        let num = |v: &Value, campo: &str| v.get(campo).and_then(Value::as_f64).unwrap_or(0.0);
+        for p in msg.get("progresso").and_then(Value::as_array).into_iter().flatten() {
+            if let Some(chave) = self.chave_de_progresso(p) {
+                crate::perfis::importar_progresso_de(id, &chave, num(p, "pos") / 1000.0, num(p, "dur") / 1000.0, num(p, "em") as i64);
+            }
+        }
+        let mut vod = crate::perfis::ler_lista_de(id, "favoritos-vod.txt");
+        let antes = vod.len();
+        for f in msg.get("favTitulos").and_then(Value::as_array).into_iter().flatten() {
+            let t = f.get("titulo").and_then(Value::as_str).unwrap_or("");
+            if !t.is_empty() && !vod.iter().any(|x| x == t) {
+                vod.push(t.to_string());
+            }
+        }
+        if vod.len() != antes {
+            crate::perfis::gravar_lista_de(id, "favoritos-vod.txt", &vod);
+        }
+        let mut canais = crate::perfis::ler_lista_de(id, "favoritos.txt");
+        let antes = canais.len();
+        for nome in msg.get("favCanais").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            if !nome.is_empty() && !canais.iter().any(|f| f == nome) {
+                canais.push(nome.to_string());
+            }
+        }
+        if canais.len() != antes {
+            crate::perfis::gravar_lista_de(id, "favoritos.txt", &canais);
+        }
+    }
+
+    /// Junta o que veio do celular ao que o Windows tem.
+    pub(crate) fn aplicar_dados(&mut self, msg: &Value) {
+        let ativo = crate::perfis::id_ativo();
+        if let Some(lista) = msg.get("perfis").and_then(Value::as_array) {
+            let remotos: Vec<(crate::perfis::Perfil, &Value)> = lista
+                .iter()
+                .filter_map(|o| {
+                    let id = o.get("id")?.as_str()?.to_string();
+                    let kids = o.get("kids").and_then(Value::as_bool).unwrap_or(false);
+                    Some((
+                        crate::perfis::Perfil {
+                            id,
+                            nome: o.get("nome").and_then(Value::as_str).unwrap_or("").to_string(),
+                            avatar: o.get("avatar").and_then(Value::as_str).unwrap_or("").to_string(),
+                            em: o.get("em").and_then(Value::as_f64).unwrap_or(0.0),
+                            kids,
+                            codigo: if kids { o.get("codigo").and_then(Value::as_str).unwrap_or("").to_string() } else { String::new() },
+                        },
+                        o,
+                    ))
+                })
+                .collect();
+            let remocoes: Vec<crate::perfis::Remocao> = msg
+                .get("perfisRemovidos")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|r| Some(crate::perfis::Remocao { id: r.get("id")?.as_str()?.to_string(), em: r.get("em").and_then(Value::as_f64).unwrap_or(0.0) }))
+                .collect();
+            let existem = crate::perfis::mesclar(&remotos.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>(), &remocoes);
+            for (p, o) in &remotos {
+                if !existem.contains(&p.id) {
+                    continue;
+                }
+                if p.id == ativo {
+                    self.aplicar_campos(o);
+                } else {
+                    self.aplicar_campos_em(&p.id, o);
+                }
+            }
+        } else if ativo == crate::perfis::PRINCIPAL {
+            // Celular sem perfis: os campos de sempre são do perfil principal.
+            self.aplicar_campos(msg);
+        } else {
+            self.aplicar_campos_em(crate::perfis::PRINCIPAL, msg);
         }
 
         if let Some(l) = msg.get("listas") {

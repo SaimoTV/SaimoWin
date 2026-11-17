@@ -54,7 +54,22 @@ fn arquivo() -> std::path::PathBuf {
 }
 
 /// Busca as fileiras. Chamada de uma thread: fala com a rede.
+/// As fileiras; no perfil Kids, só os títulos liberados (vod::liberado_no_kids).
 pub fn filas() -> Vec<Fila> {
+    let todas = filas_brutas();
+    if !crate::perfis::kids_ativo() {
+        return todas;
+    }
+    todas
+        .into_iter()
+        .filter_map(|mut f| {
+            f.itens.retain(|i| crate::vod::liberado_no_kids(&i.titulo, if i.da_colecao() { None } else { Some(i.serie()) }));
+            (!f.itens.is_empty()).then_some(f)
+        })
+        .collect()
+}
+
+fn filas_brutas() -> Vec<Fila> {
     let Some(texto) = texto() else { return Vec::new() };
     ler(&texto)
 }

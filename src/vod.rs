@@ -164,12 +164,12 @@ fn arquivo(nome: &str) -> Option<String> {
     Some(texto)
 }
 
-pub fn filmes(letra: &str) -> Vec<Filme> {
+fn filmes_bruto(letra: &str) -> Vec<Filme> {
     ler_filmes(letra, "filmes")
 }
 
 /// Os títulos que só aparecem depois do código, no mesmo formato dos filmes.
-pub fn reservados(letra: &str) -> Vec<Filme> {
+fn reservados_bruto(letra: &str) -> Vec<Filme> {
     ler_filmes(letra, "reservado")
 }
 
@@ -206,7 +206,7 @@ fn ler_filmes(letra: &str, prefixo: &str) -> Vec<Filme> {
         .collect()
 }
 
-pub fn series(letra: &str) -> Vec<Serie> {
+fn series_bruto(letra: &str) -> Vec<Serie> {
     let Some(texto) = arquivo(&format!("series-{}.txt", gaveta_do_arquivo(letra))) else {
         return Vec::new();
     };
@@ -228,7 +228,7 @@ pub fn series(letra: &str) -> Vec<Serie> {
 }
 
 /// Animes e doramas já vêm com todos os episódios no mesmo arquivo.
-pub fn colecao(tipo: &str) -> Vec<(Serie, Vec<Episodio>)> {
+fn colecao_bruto(tipo: &str) -> Vec<(Serie, Vec<Episodio>)> {
     if tipo != "animes" && tipo != "doramas" {
         return Vec::new();
     }
@@ -325,7 +325,7 @@ pub struct Achado {
 
 /// O acervo inteiro só com nome, tipo e letra (uns 800 KB para trinta mil
 /// títulos): dá para procurar em tudo sem baixar tudo.
-pub fn busca() -> Vec<Achado> {
+fn busca_bruto() -> Vec<Achado> {
     let Some(texto) = arquivo("busca.txt") else { return Vec::new() };
     texto
         .lines()
@@ -373,4 +373,46 @@ mod testes {
         println!("acervo: {} títulos", tudo.len());
         assert!(tudo.len() > 10_000);
     }
+}
+
+// ---------- Perfil Kids: o filtro mora aqui, na leitura (contrato em SaimoPlayer/docs/perfis.md) ----------
+// Só títulos com classificação conhecida de Livre a 12 anos (detalhes.txt); sem classificação, escondido.
+
+const IDADE_MAXIMA_KIDS: i8 = 12;
+static CLASSIFICACOES: std::sync::OnceLock<crate::info_titulos::InfoDosTitulos> = std::sync::OnceLock::new();
+
+/// Liberado para o perfil ativo? Fora do Kids, sempre.
+pub fn liberado_no_kids(titulo: &str, serie: Option<bool>) -> bool {
+    if !crate::perfis::kids_ativo() {
+        return true;
+    }
+    let info = CLASSIFICACOES.get_or_init(crate::info_titulos::baixar);
+    let ok = |s: bool| info.de(titulo, s).is_some_and(|i| (0..=IDADE_MAXIMA_KIDS).contains(&i.idade));
+    match serie {
+        Some(s) => ok(s),
+        None => ok(true) || ok(false),
+    }
+}
+
+pub fn filmes(letra: &str) -> Vec<Filme> {
+    filmes_bruto(letra).into_iter().filter(|f| liberado_no_kids(&f.titulo, Some(false))).collect()
+}
+
+pub fn reservados(letra: &str) -> Vec<Filme> {
+    if crate::perfis::kids_ativo() {
+        return Vec::new();
+    }
+    reservados_bruto(letra)
+}
+
+pub fn series(letra: &str) -> Vec<Serie> {
+    series_bruto(letra).into_iter().filter(|s| liberado_no_kids(&s.titulo, Some(true))).collect()
+}
+
+pub fn colecao(tipo: &str) -> Vec<(Serie, Vec<Episodio>)> {
+    colecao_bruto(tipo).into_iter().filter(|(s, _)| liberado_no_kids(&s.titulo, Some(true))).collect()
+}
+
+pub fn busca() -> Vec<Achado> {
+    busca_bruto().into_iter().filter(|a| liberado_no_kids(&a.titulo, Some(a.serie))).collect()
 }

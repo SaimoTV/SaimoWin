@@ -628,12 +628,17 @@ pub fn todos() -> Vec<AddonInstalado> {
     store().read().map(|g| g.clone()).unwrap_or_default()
 }
 
+/// Perfil Kids: addons não têm classificação indicativa, então ficam desligados lá.
 pub fn ativos() -> Vec<AddonInstalado> {
+    if crate::perfis::kids_ativo() {
+        return Vec::new();
+    }
     todos().into_iter().filter(|a| a.enabled).collect()
 }
 
 pub fn tem_ativo() -> bool {
-    store()
+    !crate::perfis::kids_ativo()
+        && store()
         .read()
         .map(|g| g.iter().any(|a| a.enabled))
         .unwrap_or(false)

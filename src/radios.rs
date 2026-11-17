@@ -80,7 +80,7 @@ pub fn baixar() -> Option<Vec<Radio>> {
 
 /// As ouvidas por último, da mais recente para a mais antiga.
 pub fn recentes() -> Vec<String> {
-    std::fs::read_to_string(crate::catalogo::pasta().join(RECENTES))
+    std::fs::read_to_string(crate::perfis::caminho(RECENTES))
         .map(|t| t.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect())
         .unwrap_or_default()
 }
@@ -90,7 +90,7 @@ pub fn ouviu(nome: &str) {
     lista.retain(|n| n != nome);
     lista.insert(0, nome.to_string());
     lista.truncate(12);
-    let _ = std::fs::write(crate::catalogo::pasta().join(RECENTES), lista.join("\n"));
+    let _ = std::fs::write(crate::perfis::caminho(RECENTES), lista.join("\n"));
 }
 
 /// A letra da fileira de A a Z: números e símbolos juntos, antes do A.

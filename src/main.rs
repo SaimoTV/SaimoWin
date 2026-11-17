@@ -42,6 +42,7 @@ mod qr;
 mod xtream;
 mod seletor;
 mod sincronia;
+mod perfis;
 mod telemetria;
 
 use catalogo::Canal;
@@ -54,7 +55,6 @@ pub const VERSAO: &str = env!("CARGO_PKG_VERSION");
 pub const AGENTE: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 /// Código que revela os canais restritos, o mesmo dos outros aplicativos.
-const CODIGO: &str = "1010";
 /// Uma fonte que não abre neste tempo está fora: vai para a próxima.
 const ESPERA_DA_FONTE: Duration = Duration::from_secs(14);
 const SUMIR_LETREIRO: Duration = Duration::from_secs(6);
@@ -583,6 +583,12 @@ struct App {
     pub pedir_foco_na_busca: bool,
     /// A abertura animada, enquanto está na tela.
     abertura: Option<abertura::Abertura>,
+    /// A tela de perfis ("Quem está assistindo?"), quando aberta.
+    pub perfis_tela: Option<tela::perfis::Estado>,
+    /// No perfil Kids os Ajustes pedem o código; já digitado nesta visita aos Ajustes.
+    pub ajustes_liberados: bool,
+    /// Última mudança na lista de perfis já mandada ao celular.
+    perfis_mandados: u64,
     /// Os pedidos do Saimo Connect (o celular como controle remoto).
     connect: Receiver<connect::Pedido>,
     /// Celulares esperando o "Permitir": o cliente, o nome e desde quando.
@@ -863,6 +869,9 @@ impl App {
             series_da_letra: None,
             midia: if diagnostico::nivel() >= 2 { midia::Midia::desligada() } else { midia::Midia::nova(cc) },
             abertura: abertura::Abertura::nova(&caminho_do_mpv()),
+            perfis_tela: None,
+            ajustes_liberados: false,
+            perfis_mandados: perfis::MUDOU.load(std::sync::atomic::Ordering::Relaxed),
             explorar: false,
             ordem_az: false,
             ordem_extra: None,
@@ -3115,17 +3124,9 @@ impl App {
         }
         if !self.digitado.is_empty() && self.digitado_em.elapsed() > Duration::from_millis(1200) {
             let digitado = std::mem::take(&mut self.digitado);
-            if digitado == CODIGO {
-                self.liberado = !self.liberado;
-                let aviso = if self.liberado { "lista completa liberada" } else { "lista restrita escondida" };
-                self.aviso = Some((aviso.into(), Instant::now()));
-                self.reordenar();
-                let letra = self.letra.clone();
-                self.letra.clear();
-                self.abrir_letra(letra);
-                if !self.liberado && self.aba == Aba::Extras {
-                    self.abrir_secao(Aba::Filmes);
-                }
+            // A senha do controle parental (padrão 0000, trocável nos Ajustes); no Kids nunca libera.
+            if digitado.len() == 4 && perfis::conferir_senha(&digitado) {
+                self.definir_liberado(!self.liberado);
             } else if let Ok(numero) = digitado.parse::<usize>() {
                 if numero >= 1 && numero <= self.canais.len() {
                     self.tocar(numero - 1, 0, true);
@@ -4256,7 +4257,29 @@ vec4 hook() {{
         }
     }
 
+    /// Conteúdo adulto (controle parental): liberar ou esconder.
+    pub fn definir_liberado(&mut self, liberar: bool) {
+        self.liberado = liberar && !perfis::kids_ativo();
+        let aviso = if self.liberado { "conteúdo adulto liberado" } else { "conteúdo adulto bloqueado" };
+        self.aviso = Some((aviso.into(), Instant::now()));
+        self.reordenar();
+        let letra = self.letra.clone();
+        self.letra.clear();
+        self.abrir_letra(letra);
+        if !self.liberado && self.aba == Aba::Extras {
+            self.abrir_secao(Aba::Filmes);
+        }
+    }
+
+    pub fn adulto_liberado(&self) -> bool {
+        self.liberado
+    }
+
     pub fn abrir_secao(&mut self, aba: Aba) {
+        // Saiu dos Ajustes: no Kids eles voltam a pedir o código.
+        if aba != Aba::Ajustes {
+            self.ajustes_liberados = false;
+        }
         if self.aba == aba {
             return;
         }
@@ -4809,6 +4832,8 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
         }
         match std::env::var("SAIMO_FOTO_TELA").unwrap_or_default().as_str() {
             "inicio" => app.abrir_secao(Aba::Inicio),
+            "perfis" => app.perfis_tela = Some(tela::perfis::Estado::novo(false, false)),
+            "perfis-gerenciar" => app.perfis_tela = Some(tela::perfis::Estado::novo(false, true)),
             "ondemand" => app.abrir_secao(Aba::OnDemand),
             "filmes" => app.abrir_secao(Aba::Filmes),
             "series" => app.abrir_secao(Aba::Series),
@@ -4913,14 +4938,15 @@ fn gravar_favoritos(favoritos: &[String]) {
     gravar_lista("favoritos.txt", favoritos);
 }
 
+/// Lista de texto do programa; as de perfil (favoritos, último canal...) vêm da pasta do perfil ativo.
 pub fn ler_lista(nome: &str) -> Vec<String> {
-    std::fs::read_to_string(catalogo::pasta().join(nome))
+    std::fs::read_to_string(perfis::caminho(nome))
         .map(|t| t.lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
         .unwrap_or_default()
 }
 
 fn gravar_lista(nome: &str, itens: &[String]) {
-    let _ = std::fs::write(catalogo::pasta().join(nome), itens.join("\n"));
+    let _ = std::fs::write(perfis::caminho(nome), itens.join("\n"));
 }
 
 impl eframe::App for App {
@@ -4964,7 +4990,20 @@ impl eframe::App for App {
             self.baixar_logos_pendentes();
             return;
         }
-        self.teclado(ctx);
+        // Com 2 ou mais perfis, a partida pergunta quem está assistindo.
+        if perfis::deve_escolher_ao_abrir() {
+            perfis::marcar_escolhido();
+            self.perfis_tela = Some(tela::perfis::Estado::novo(true, false));
+        }
+        // Perfil criado, editado ou apagado: o celular conectado fica com os mesmos perfis.
+        let mudou = perfis::MUDOU.load(std::sync::atomic::Ordering::Relaxed);
+        if mudou != self.perfis_mandados {
+            self.perfis_mandados = mudou;
+            self.mandar_dados();
+        }
+        if self.perfis_tela.is_none() {
+            self.teclado(ctx);
+        }
         self.baixar_logos_pendentes();
 
         foto_de_teste(self, ctx);
