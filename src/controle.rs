@@ -201,6 +201,11 @@ impl App {
                 "source": {"url": url, "referer": null, "userAgent": null, "keyId": null, "key": null},
                 "liveOffset": 0,
             }]);
+            // Saimo Connect 2: as fontes do filme numa lista.
+            estado["versaoConnect"] = json!(2);
+            estado["recursos"] = json!(["fontes"]);
+            estado["fontes"] = json!((0..t.urls.len()).map(|i| json!({"rotulo": format!("Fonte {}", i + 1), "detalhe": ""})).collect::<Vec<_>>());
+            estado["fonteAtual"] = json!(t.fonte);
             return estado;
         }
 
@@ -250,6 +255,19 @@ impl App {
         estado["mode"] = json!(if telas.is_empty() { "idle" } else { "live" });
         estado["playing"] = json!(tocando);
         estado["screens"] = Value::Array(telas);
+        // Saimo Connect 2: a lista de fontes do canal da tela principal e o favorito.
+        if let Some(t) = self.tocando.as_ref() {
+            if let Some(canal) = self.canais.get(t.canal) {
+                estado["versaoConnect"] = json!(2);
+                estado["recursos"] = json!(["fontes", "favorito"]);
+                estado["fontes"] = json!(canal.fontes.iter().enumerate().map(|(i, f)| json!({
+                    "rotulo": f.nome.clone().unwrap_or_else(|| format!("Fonte {}", i + 1)),
+                    "detalhe": f.qualidade.clone().unwrap_or_default(),
+                })).collect::<Vec<_>>());
+                estado["fonteAtual"] = json!(t.fonte);
+                estado["favorito"] = json!(self.favoritos.iter().any(|f| *f == canal.nome));
+            }
+        }
         estado
     }
 
@@ -344,6 +362,28 @@ impl App {
                     let alvo = ms / 1000.0;
                     self.ir_para(if duracao > 1.0 { alvo.min(duracao - 1.0) } else { alvo });
                     self.mostrar_controles();
+                }
+            }
+            "fonte" if numero("indice").is_some() => {
+                // Connect 2: a fonte escolhida na lista do celular.
+                let indice = numero("indice").unwrap_or(0.0).max(0.0) as usize;
+                let total = match (self.tocando_vod.as_ref(), self.tocando.as_ref()) {
+                    (Some(v), _) => v.urls.len(),
+                    (None, Some(t)) => self.canais.get(t.canal).map(|c| c.fontes.len()).unwrap_or(0),
+                    _ => 0,
+                };
+                if indice < total {
+                    if let Some(v) = self.tocando_vod.as_ref() {
+                        let (titulo, urls) = (v.titulo.clone(), v.urls.clone());
+                        self.tocar_vod(titulo, urls, indice, false);
+                    } else if let Some(canal) = self.tocando.as_ref().map(|t| t.canal) {
+                        self.tocar(canal, indice, false);
+                    }
+                }
+            }
+            "favorito" => {
+                if let Some(nome) = self.tocando.as_ref().and_then(|t| self.canais.get(t.canal)).map(|c| c.nome.clone()) {
+                    self.favoritar(nome);
                 }
             }
             "fonte" => {
