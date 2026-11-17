@@ -1,11 +1,12 @@
-//! Apoie o Saimo TV: por que doar, o QR code para doar pelo celular, o link
-//! escrito e o botão que abre a página de doação no navegador.
+//! Apoie o Saimo TV: por que doar, o Pix direto (QR code para doar pelo
+//! celular e o botão que copia o código "copia e cola").
 
 use super::{botao, forte, normal, ACENTO, SECUNDARIO, TEXTO};
-use crate::atualizacao;
 use eframe::egui::{self, Color32};
+use std::time::{Duration, Instant};
 
-const LINK: &str = "https://deflow.exchange/pt/qr/saimo-tv";
+/// Pix "copia e cola" (BR Code estático): o valor vai direto para o desenvolvedor.
+const CODIGO_PIX: &str = "00020126580014br.gov.bcb.pix0136950460d4-51c5-49ba-bf71-b720b60cde435204000053039865802BR5925GABRIEL SAIMO FERREIRA ES60085500019962070503***6304F442";
 
 /// O QR code, carregado uma vez.
 fn qr(ctx: &egui::Context) -> Option<egui::TextureHandle> {
@@ -52,6 +53,8 @@ pub fn tela(ui: &mut egui::Ui) {
                 ui.label(egui::RichText::new("Sem anúncios, sem mensalidade e livre para todo mundo.").font(normal(18.0)).color(TEXTO));
                 ui.add_space(8.0);
                 ui.label(egui::RichText::new("Manter servidores rápidos, a transmissão e as atualizações de todo dia custa dinheiro todo mês. Quem puder ajudar com qualquer valor faz uma diferença enorme para o Saimo TV continuar no ar para todos.").font(normal(15.0)).color(SECUNDARIO));
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("Agora o Pix é direto: o valor vai direto para o desenvolvedor, Gabriel Saimo Ferreira, sem intermediário. Aponte a câmera do celular para o QR code ou copie o código Pix e cole no app do seu banco.").font(normal(15.0)).color(TEXTO));
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
                     vantagem(ui, "Zero anúncios", "Nada interrompendo o que você assiste");
@@ -59,14 +62,17 @@ pub fn tela(ui: &mut egui::Ui) {
                     vantagem(ui, "Sem mensalidade", "Canais, filmes e séries para todo mundo");
                 });
                 ui.add_space(18.0);
-                ui.horizontal(|ui| {
-                    if botao(ui, Some(super::Icone::Coracao), "Fazer doação (Pix ou cripto)", true).clicked() {
-                        atualizacao::abrir_no_navegador(LINK);
-                    }
-                    if botao(ui, None, "Copiar link", false).clicked() {
-                        ui.ctx().copy_text(LINK.to_string());
-                    }
-                });
+                let id_copia = egui::Id::new("pix-copiado");
+                let copiado = ctx.data(|d| d.get_temp::<Instant>(id_copia))
+                    .is_some_and(|t| t.elapsed() < Duration::from_secs(2));
+                let rotulo = if copiado { "Código copiado" } else { "Copiar Pix copia e cola" };
+                if botao(ui, None, rotulo, true).clicked() {
+                    ui.ctx().copy_text(CODIGO_PIX.to_string());
+                    ctx.data_mut(|d| d.insert_temp(id_copia, Instant::now()));
+                }
+                if copiado {
+                    ctx.request_repaint_after(Duration::from_millis(250));
+                }
             });
             ui.add_space(50.0);
             egui::Frame::NONE
@@ -81,8 +87,8 @@ pub fn tela(ui: &mut egui::Ui) {
                             ui.image((t.id(), egui::vec2(240.0, 240.0)));
                         }
                         ui.add_space(10.0);
-                        ui.label(egui::RichText::new("deflow.exchange/pt/qr/saimo-tv").font(forte(15.0)).color(Color32::from_rgb(14, 116, 144)));
-                        ui.label(egui::RichText::new("Pagamento seguro pela Deflow").font(normal(12.0)).color(Color32::from_rgb(91, 100, 117)));
+                        ui.label(egui::RichText::new("Pix direto").font(forte(15.0)).color(Color32::from_rgb(14, 116, 144)));
+                        ui.label(egui::RichText::new("Gabriel Saimo Ferreira").font(normal(12.0)).color(Color32::from_rgb(91, 100, 117)));
                     });
                 });
         });

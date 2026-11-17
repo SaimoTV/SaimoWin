@@ -123,8 +123,6 @@ fn link_oficial(link: &str) -> bool {
                 && !partes[4].is_empty()
         }
         "objects.githubusercontent.com" | "release-assets.githubusercontent.com" => caminho.len() > 1,
-        // A página de doação da tela Apoie, e só ela.
-        "deflow.exchange" => caminho == "/pt/qr/saimo-tv",
         _ => false,
     }
 }
@@ -242,6 +240,7 @@ mod testes_links {
                     "https://github.com/dono/repo/releases/latest",
                     "https://github.com/dono/repo/raw/main/a.zip",
                     "https://github.com/dono/releases/download/v1/a.zip",
+                    "https://deflow.exchange/pt/qr/saimo-tv",
                     "https://github.com/", ""] {
             assert!(!link_oficial(url), "{url}");
         }

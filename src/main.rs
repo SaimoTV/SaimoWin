@@ -251,7 +251,7 @@ pub enum Aba {
     OnDemand,
     Radios,
     Buscar,
-    /// Apoie o Saimo TV: doação por QR code ou pelo navegador.
+    /// Apoie o Saimo TV: doação por Pix direto (QR code ou copia e cola).
     Apoie,
     Ajustes,
 }
@@ -926,6 +926,7 @@ impl App {
                 "radios" => app.abrir_secao(Aba::Radios),
                 "buscar" => app.abrir_secao(Aba::Buscar),
                 "ajustes" => app.abrir_secao(Aba::Ajustes),
+                "apoie" => app.abrir_secao(Aba::Apoie),
                 "eventos" => app.abrir_secao(Aba::Eventos),
                 _ => {}
             }
