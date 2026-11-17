@@ -64,6 +64,8 @@ pub enum Acao {
     Explorar(Aba, String),
     /// Título vindo da descoberta TMDB ou catálogo de addon Stremio.
     ObraAddon(crate::addons_tela::ObraAddon),
+    /// Uma novelinha (id): toca do primeiro episódio ao último.
+    Novelinha(String),
 }
 
 #[derive(Clone, Debug)]
@@ -125,6 +127,7 @@ pub struct Fila {
 pub fn em_fileiras(app: &App) -> bool {
     match app.aba {
         Aba::Inicio | Aba::OnDemand | Aba::Eventos | Aba::Radios | Aba::Buscar => true,
+        Aba::Novelas | Aba::Kids | Aba::Novelinhas => true,
         aba if aba.de_tipo() => !app.explorar,
         _ => false,
     }
@@ -149,6 +152,7 @@ fn chave(app: &App) -> u64 {
     (app.filas.len(), app.acervo.len(), app.canais.len(), app.radios.len(), app.eventos.len()).hash(&mut h);
     (app.descoberta_addons.len(), app.busca_addons_resultados.len(), crate::addons::tem_ativo()).hash(&mut h);
     app.colecoes_carregadas().hash(&mut h);
+    (app.categorias.vazio(), app.novelinhas.lista.len()).hash(&mut h);
     // O que passa agora no canal e o grupo do jogo mudam com o relógio.
     if matches!(app.aba, Aba::Inicio | Aba::Eventos | Aba::Buscar) {
         (crate::epg::agora() / 60).hash(&mut h);
@@ -167,6 +171,8 @@ pub fn filas_da_pagina(app: &App) -> Rc<Vec<Fila>> {
         Aba::Eventos => jogos(app),
         Aba::Radios => filas_de_radios(app),
         Aba::Buscar => busca(app),
+        Aba::Novelinhas => novelinhas(app),
+        Aba::Novelas | Aba::Kids => do_tipo(app, app.aba),
         aba if aba.de_tipo() => do_tipo(app, aba),
         _ => Vec::new(),
     }
@@ -235,6 +241,7 @@ pub(super) fn executar(app: &mut App, acao: Acao) {
             }
         }
         Acao::Pagina(aba) => app.abrir_secao(aba),
+        Acao::Novelinha(id) => app.tocar_novelinha(&id, 1),
         Acao::Explorar(aba, genero) => {
             app.abrir_secao(aba);
             app.explorar = true;
@@ -493,6 +500,12 @@ pub(super) fn categoria(aba: Aba) -> (&'static str, char, Color32, Icone, &'stat
             "Os animes do momento e os que marcaram época."),
         Aba::Doramas => ("Doramas", 'd', Color32::from_rgb(255, 126, 182), Icone::Coracao,
             "Romance, drama e suspense da Coreia, do Japão e da China."),
+        Aba::Novelas => ("Novelas", 'n', Color32::from_rgb(199, 146, 234), Icone::Episodios,
+            "Novelas brasileiras, mexicanas e turcas, do primeiro ao último capítulo."),
+        Aba::Kids => ("Kids", 'k', Color32::from_rgb(126, 231, 135), Icone::Estrela,
+            "Desenhos, animações e filmes para a família, com classificação livre."),
+        Aba::Novelinhas => ("Novelinhas", 'v', Color32::from_rgb(255, 126, 182), Icone::Tocar,
+            "Minisséries em pé, de um minuto por episódio, para maratonar."),
         _ => ("Filmes", 'f', ACENTO, Icone::Filmes, "Lançamentos, clássicos e tudo entre eles, dublados e legendados."),
     }
 }
@@ -513,14 +526,30 @@ fn numero(n: usize) -> String {
 /// Os quatro cartões de categoria do On Demand (ou do "Explorar" no fim).
 fn categorias(app: &App, explorar: bool) -> Fila {
     let mut cartoes = Vec::new();
-    for aba in [Aba::Filmes, Aba::Series, Aba::Animes, Aba::Doramas] {
+    for aba in [Aba::Filmes, Aba::Series, Aba::Animes, Aba::Doramas, Aba::Novelas, Aba::Novelinhas, Aba::Kids] {
         let (nome, letra, cor, icone, sobre) = categoria(aba);
-        let em_alta: Vec<&destaques::Item> =
-            app.filas.iter().flat_map(|f| &f.itens).filter(|i| i.tipo == letra && !i.capa.is_empty()).collect();
+        let em_alta: Vec<&destaques::Item> = app
+            .filas
+            .iter()
+            .flat_map(|f| &f.itens)
+            .filter(|i| {
+                !i.capa.is_empty()
+                    && match aba {
+                        Aba::Novelas | Aba::Kids => app.categorias.tem(&i.titulo, i.serie(), aba.categoria_vod().unwrap_or("")),
+                        Aba::Novelinhas => false,
+                        _ => i.tipo == letra,
+                    }
+            })
+            .collect();
         let mut colagem: Vec<String> = Vec::new();
-        for item in &em_alta {
-            if !colagem.contains(&item.capa) {
-                colagem.push(item.capa.clone());
+        let extras: Vec<String> = match aba {
+            Aba::Novelinhas => app.novelinhas.lista.iter().take(8).map(|n| n.capa.clone()).collect(),
+            Aba::Novelas | Aba::Kids => candidatos(app, aba).into_iter().take(8).map(|c| c.capa).collect(),
+            _ => Vec::new(),
+        };
+        for capa in em_alta.iter().map(|i| i.capa.clone()).chain(extras) {
+            if !colagem.contains(&capa) {
+                colagem.push(capa);
             }
             if colagem.len() == 4 {
                 break;
@@ -529,13 +558,19 @@ fn categorias(app: &App, explorar: bool) -> Fila {
         let quantos = match aba {
             Aba::Filmes => app.acervo.iter().filter(|a| !a.serie).count(),
             Aba::Series => app.acervo.iter().filter(|a| a.serie).count(),
-            _ => app.colecao(aba).map(|l| l.len()).unwrap_or(0),
+            Aba::Novelinhas => app.novelinhas.lista.len(),
+            Aba::Novelas | Aba::Kids => candidatos(app, aba).len(),
+            _ => candidatos(app, aba).len().max(app.colecao(aba).map(|l| l.len()).unwrap_or(0)),
         };
+        // Categoria vazia (lista sem o arquivo dela) não ganha cartão.
+        if quantos == 0 && matches!(aba, Aba::Novelas | Aba::Kids | Aba::Novelinhas) {
+            continue;
+        }
         let sub = if quantos > 0 { format!("{} títulos", numero(quantos)) } else { String::new() };
         let titulo = if explorar { format!("{nome} de A a Z") } else { nome.to_string() };
         let fundo_de = em_alta.first().map(|i| (i.titulo.clone(), i.serie()));
         let heroi = Heroi::Texto { titulo: titulo.clone(), meta: sub.clone(), sinopse: sobre.into(), fundo_de };
-        let acao = if explorar { Acao::Explorar(aba, String::new()) } else { Acao::Pagina(aba) };
+        let acao = if explorar && aba.de_tipo() { Acao::Explorar(aba, String::new()) } else { Acao::Pagina(aba) };
         let mut c = Cartao::novo(titulo, Imagem::Nenhuma, acao, heroi);
         c.sub = sub;
         c.colagem = colagem;
@@ -567,7 +602,62 @@ fn ano_de(titulo: &str, ano: &str) -> u32 {
 
 /// Só títulos com capa: fileira cheia de quadrados vazios não convida ninguém.
 fn candidatos(app: &App, aba: Aba) -> Vec<Candidato> {
+    // Do acervo, os títulos (filmes e séries) marcados com a categoria.
+    let do_acervo = |cat: &str| -> Vec<Candidato> {
+        app.acervo
+            .iter()
+            .filter(|a| crate::tem_nome(&a.titulo) && app.categorias.tem(&a.titulo, a.serie, cat))
+            .filter_map(|a| {
+                let capa = app.generos.capa(&a.titulo, a.serie)?.to_string();
+                Some(Candidato {
+                    ano: ano_de(&a.titulo, &a.ano),
+                    item: ItemNaTela { titulo: a.titulo.clone(), detalhe: a.ano.clone(), serie: a.serie, letra: a.letra.clone() },
+                    capa,
+                })
+            })
+            .collect()
+    };
+    if matches!(aba, Aba::Novelas | Aba::Kids) {
+        let mut lista = do_acervo(aba.categoria_vod().unwrap_or(""));
+        lista.sort_by_key(|c| std::cmp::Reverse(app.info.de(&c.item.titulo, c.item.serie).map(|i| i.popularidade).unwrap_or(0)));
+        return lista;
+    }
     if matches!(aba, Aba::Animes | Aba::Doramas) {
+        let colecao = candidatos_da_colecao(app, aba);
+        let nomes: std::collections::HashSet<String> = colecao.iter().map(|c| nome_chave(&c.item.titulo)).collect();
+        let mut tudo = colecao;
+        tudo.extend(do_acervo(aba.categoria_vod().unwrap_or("")).into_iter().filter(|c| !nomes.contains(&nome_chave(&c.item.titulo))));
+        return tudo;
+    }
+    candidatos_do_tipo(app, aba)
+}
+
+/// Nome sem ano, acento e pontuação: junta "Naruto" da coleção com o do acervo.
+fn nome_chave(titulo: &str) -> String {
+    let t = titulo.trim_end();
+    let t = match t.rfind(" (") {
+        Some(i) if t.ends_with(')') && t.len() - i == 7 => &t[..i],
+        _ => t,
+    };
+    t.chars()
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ã' | 'Á' | 'À' | 'Â' | 'Ã' => 'a',
+            'é' | 'ê' | 'É' | 'Ê' => 'e',
+            'í' | 'Í' => 'i',
+            'ó' | 'ô' | 'õ' | 'Ó' | 'Ô' | 'Õ' => 'o',
+            'ú' | 'Ú' => 'u',
+            'ç' | 'Ç' => 'c',
+            c if c.is_alphanumeric() => c.to_ascii_lowercase(),
+            _ => ' ',
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn candidatos_da_colecao(app: &App, aba: Aba) -> Vec<Candidato> {
+    {
         return app
             .colecao(aba)
             .map(|lista| {
@@ -585,6 +675,9 @@ fn candidatos(app: &App, aba: Aba) -> Vec<Candidato> {
             })
             .unwrap_or_default();
     }
+}
+
+fn candidatos_do_tipo(app: &App, aba: Aba) -> Vec<Candidato> {
     let serie = aba == Aba::Series;
     app.acervo
         .iter()
@@ -665,7 +758,11 @@ fn do_tipo(app: &App, aba: Aba) -> Vec<Fila> {
             .itens
             .iter()
             .enumerate()
-            .filter(|(_, item)| item.tipo == letra)
+            .filter(|(_, item)| match aba.categoria_vod() {
+                Some(cat) if !matches!(aba, Aba::Animes | Aba::Doramas) => app.categorias.tem(&item.titulo, item.serie(), cat),
+                Some(cat) => item.tipo == letra || (item.tipo == 's' && app.categorias.tem(&item.titulo, true, cat)),
+                None => item.tipo == letra,
+            })
             .map(|(i, item)| cartao_de_destaque(app, f, i, item))
             .collect();
         if do_tipo.len() >= 4 {
@@ -673,6 +770,11 @@ fn do_tipo(app: &App, aba: Aba) -> Vec<Fila> {
         }
     }
     let candidatos = candidatos(app, aba);
+    if matches!(aba, Aba::Novelas | Aba::Kids) && candidatos.len() >= 4 {
+        // Já vêm dos mais populares para os menos.
+        let cartoes = candidatos.iter().take(30).map(|c| cartao_de_titulo(app, c.item.clone(), Some(c.capa.clone()))).collect();
+        filas.push(Fila { titulo: "Mais populares".into(), tipo: Tipo::Capa, cartoes });
+    }
     let este_ano = chrono::Datelike::year(&chrono::Local::now()) as u32;
     let mut novos: Vec<&Candidato> = candidatos.iter().filter(|c| c.ano + 1 >= este_ano).collect();
     novos.sort_by_key(|c| std::cmp::Reverse(c.ano));
@@ -694,7 +796,7 @@ fn do_tipo(app: &App, aba: Aba) -> Vec<Fila> {
     };
     filas.extend(filas_addons(app, tipo_addon));
     // O fim da página: o acervo inteiro do tipo, de A a Z (quando há lista VOD).
-    if !candidatos.is_empty() || crate::listas::filmes().is_some() {
+    if aba.de_tipo() && (!candidatos.is_empty() || crate::listas::filmes().is_some()) {
         let (nome, _, cor, icone, sobre) = categoria(aba);
         let colagem: Vec<String> = candidatos.iter().take(4).map(|c| c.capa.clone()).collect();
         let heroi = Heroi::Texto { titulo: format!("{nome} de A a Z"), meta: format!("{} títulos", numero(candidatos.len().max(1))), sinopse: sobre.into(), fundo_de: None };
@@ -704,6 +806,41 @@ fn do_tipo(app: &App, aba: Aba) -> Vec<Fila> {
         todos.icone = Some(icone);
         filas.push(Fila { titulo: "Explorar".into(), tipo: Tipo::Secao, cartoes: vec![todos] });
     }
+    filas
+}
+
+/// As novelinhas em fileiras: dubladas, uma fileira por tema e legendadas.
+fn novelinhas(app: &App) -> Vec<Fila> {
+    let lista = &app.novelinhas.lista;
+    let cartao = |n: &crate::novelinhas::Novelinha| {
+        let audio = if n.dublada { "Dublado" } else { "Legendado" };
+        let heroi = Heroi::Texto {
+            titulo: n.titulo.clone(),
+            meta: format!("{} episódios · {audio}", n.episodios),
+            sinopse: n.sinopse.clone(),
+            fundo_de: None,
+        };
+        let mut c = Cartao::novo(n.titulo.clone(), Imagem::Url(n.capa.clone()), Acao::Novelinha(n.id.clone()), heroi);
+        c.sub = format!("{} episódios · {}", n.episodios, if n.dublada { "DUB" } else { "LEG" });
+        c
+    };
+    let mut filas = Vec::new();
+    let dubladas: Vec<Cartao> = lista.iter().filter(|n| n.dublada).take(40).map(cartao).collect();
+    filas.push(Fila { titulo: "Dubladas".into(), tipo: Tipo::Capa, cartoes: dubladas });
+    let mut temas: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for n in lista {
+        for g in &n.generos {
+            *temas.entry(g.as_str()).or_default() += 1;
+        }
+    }
+    let mut temas: Vec<(&str, usize)> = temas.into_iter().filter(|(_, q)| *q >= 6).collect();
+    temas.sort_by_key(|(_, q)| std::cmp::Reverse(*q));
+    for (tema, _) in temas.into_iter().take(12) {
+        let cartoes = lista.iter().filter(|n| n.generos.iter().any(|g| g == tema)).take(40).map(cartao).collect();
+        filas.push(Fila { titulo: tema.to_string(), tipo: Tipo::Capa, cartoes });
+    }
+    let legendadas: Vec<Cartao> = lista.iter().filter(|n| !n.dublada).take(60).map(cartao).collect();
+    filas.push(Fila { titulo: "Legendadas".into(), tipo: Tipo::Capa, cartoes: legendadas });
     filas
 }
 
@@ -1339,6 +1476,7 @@ pub(super) fn desenhar_cartao(app: &mut App, ui: &mut egui::Ui, rect: Rect, cart
         Acao::Canal(_) => "Clique ou Enter assiste ao vivo",
         Acao::Radio(_) => "Clique ou Enter para ouvir",
         Acao::Pagina(_) | Acao::Explorar(..) => "Clique ou Enter abre",
+        Acao::Novelinha(_) => "Clique ou Enter assiste · N passa ao próximo episódio",
         _ if cartao.favorito => "Clique abre a ficha · botão direito ou S tira dos favoritos",
         _ => "Clique abre a ficha · botão direito ou S favorita",
     };

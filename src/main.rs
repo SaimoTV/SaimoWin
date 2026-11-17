@@ -17,6 +17,8 @@ mod fonte_preferida;
 mod destaques;
 mod generos;
 mod info_titulos;
+mod categorias_vod;
+mod novelinhas;
 mod ficha;
 mod catalogo;
 mod mpv;
@@ -162,6 +164,8 @@ enum Recado {
     Colecao(Aba, Vec<(vod::Serie, Vec<vod::Episodio>)>),
     Destaques(Vec<destaques::Fila>),
     Generos(generos::Generos),
+    Categorias(categorias_vod::CategoriasVod),
+    Novelinhas(novelinhas::Novelinhas),
     Info(info_titulos::InfoDosTitulos),
     Episodios(String, Vec<vod::Episodio>),
     Acervo(Vec<vod::Achado>),
@@ -235,6 +239,11 @@ pub enum Aba {
     Series,
     Animes,
     Doramas,
+    /// Do categorias.txt: misturam filmes e séries, em fileiras.
+    Novelas,
+    Kids,
+    /// As minisséries em pé da RedeFlix.
+    Novelinhas,
     Favoritos,
     Extras,
     Eventos,
@@ -252,6 +261,17 @@ impl Aba {
     /// de A a Z por dentro.
     pub fn de_tipo(self) -> bool {
         matches!(self, Aba::Filmes | Aba::Series | Aba::Animes | Aba::Doramas)
+    }
+
+    /// A categoria do categorias.txt de cada seção que vem dele.
+    pub fn categoria_vod(self) -> Option<&'static str> {
+        match self {
+            Aba::Animes => Some("anime"),
+            Aba::Doramas => Some("dorama"),
+            Aba::Novelas => Some("novela"),
+            Aba::Kids => Some("kids"),
+            _ => None,
+        }
     }
 
     /// As seções que mostram filmes (e não séries).
@@ -539,6 +559,12 @@ struct App {
     pub filtro_idade: Option<i8>,
     pub filtro_nota: u8,
     pub info: info_titulos::InfoDosTitulos,
+    /// Animes, doramas, novelas e kids do acervo (categorias.txt).
+    pub categorias: categorias_vod::CategoriasVod,
+    /// As minisséries em pé da RedeFlix (novelinhas.txt).
+    pub novelinhas: novelinhas::Novelinhas,
+    /// A novelinha tocando agora: (id, episódio em que começou).
+    pub novelinha_tocando: Option<(String, u32)>,
     /// O que o destaque do topo das páginas mostra: o cartão em foco.
     pub heroi: Option<tela::Heroi>,
     /// Fichas já pedidas para o destaque, para não pedir duas vezes.
@@ -658,6 +684,15 @@ fn buscar_filmes(emissor: &std::sync::mpsc::Sender<Recado>) {
         let info = info_titulos::baixar();
         if !info.vazio() {
             let _ = emissor.send(Recado::Info(info));
+        }
+        // Animes, doramas, novelas e kids do acervo, e as novelinhas.
+        let categorias = categorias_vod::baixar();
+        if !categorias.vazio() {
+            let _ = emissor.send(Recado::Categorias(categorias));
+        }
+        let novelinhas = novelinhas::baixar();
+        if !novelinhas.lista.is_empty() {
+            let _ = emissor.send(Recado::Novelinhas(novelinhas));
         }
     });
 }
@@ -836,6 +871,9 @@ impl App {
             filtro_idade: None,
             filtro_nota: 0,
             info: info_titulos::InfoDosTitulos::default(),
+            categorias: categorias_vod::CategoriasVod::default(),
+            novelinhas: novelinhas::Novelinhas::default(),
+            novelinha_tocando: None,
             heroi: None,
             fichas_pedidas: std::collections::HashSet::new(),
             temporadas_pedidas: std::collections::HashSet::new(),
@@ -1407,6 +1445,7 @@ impl App {
                 )
             })
             .unwrap_or((None, None, Vec::new(), None, None, None, None, None, None));
+        self.novelinha_tocando = None;
         self.tocando_vod = Some(TocandoVod {
             titulo,
             urls,
@@ -1634,6 +1673,12 @@ impl App {
     }
 
     pub fn tocar_proximo(&mut self) -> bool {
+        if self.novelinha_tocando.is_some() {
+            if let Some(mpv) = self.mpv.as_ref() {
+                mpv.playlist_proximo(true);
+                return true;
+            }
+        }
         let Some(t) = self.tocando_vod.as_ref() else { return false };
         let Some(ep) = t.episodio.clone() else { return false };
         let Some(seguinte) = ep.seguinte() else { return false };
@@ -2402,6 +2447,7 @@ impl App {
     }
 
     pub fn tocar(&mut self, canal: usize, fonte: usize, nova: bool) {
+        self.novelinha_tocando = None;
         self.radio = None;
         self.fonte_preferida = None;
         let Some(mpv) = self.mpv.as_ref() else { return };
@@ -2778,6 +2824,14 @@ impl App {
                 }
                 Recado::Generos(lidos) => {
                     self.generos = lidos;
+                }
+                Recado::Categorias(lidas) => {
+                    self.categorias = lidas;
+                    self.versao_dados = self.versao_dados.wrapping_add(1);
+                }
+                Recado::Novelinhas(lidas) => {
+                    self.novelinhas = lidas;
+                    self.versao_dados = self.versao_dados.wrapping_add(1);
                 }
                 Recado::Destaques(lista) => {
                     self.filas = lista;
@@ -4228,7 +4282,7 @@ vec4 hook() {{
         self.heroi = None;
         self.episodios_no_player = false;
         // As fileiras de destaque abrem as páginas do acervo e a busca.
-        let com_destaques = matches!(aba, Aba::Inicio | Aba::OnDemand | Aba::Buscar) || aba.de_tipo();
+        let com_destaques = matches!(aba, Aba::Inicio | Aba::OnDemand | Aba::Buscar | Aba::Novelas | Aba::Kids) || aba.de_tipo();
         if com_destaques && self.filas.is_empty() && !self.carregando_filas {
             self.carregando_filas = true;
             let emissor = self.emissor.clone();
@@ -4254,7 +4308,7 @@ vec4 hook() {{
             self.buscar_radios();
             return;
         }
-        if matches!(aba, Aba::Buscar | Aba::Ajustes) {
+        if matches!(aba, Aba::Buscar | Aba::Ajustes | Aba::Novelas | Aba::Kids | Aba::Novelinhas) {
             return;
         }
         if matches!(aba, Aba::Animes | Aba::Doramas) {
@@ -4349,7 +4403,38 @@ vec4 hook() {{
     }
 
     /// Toca a rádio no mpv do vídeo, só com o som. O que tocava para.
+    /// Uma novelinha: os episódios numa playlist do mpv, do primeiro (ou do
+    /// que se pede) até o fim. O vídeo em pé fica centralizado, com faixas
+    /// pretas dos lados; no fim de um episódio o seguinte entra sozinho.
+    pub fn tocar_novelinha(&mut self, id: &str, ep: u32) {
+        let Some(n) = self.novelinhas.por_id(id).cloned() else { return };
+        let Some(lista) = self.novelinhas.playlist(&n, ep) else {
+            self.aviso = Some(("Não consegui montar a lista de episódios".into(), Instant::now()));
+            return;
+        };
+        self.sair_da_multi_tela();
+        if self.tocando_vod.is_some() {
+            self.guardar_progresso(true);
+            self.tocando_vod = None;
+        }
+        self.parar_radio();
+        self.tocando = None;
+        self.canal_parado = None;
+        let Some(mpv) = self.mpv.as_ref() else {
+            self.aviso = Some(("O player não abriu".into(), Instant::now()));
+            return;
+        };
+        mpv.tocar(&lista.to_string_lossy(), None, None);
+        mpv.pausa(false);
+        self.pausado = false;
+        self.novelinha_tocando = Some((n.id.clone(), ep.max(1)));
+        self.aviso = Some((format!("{} · episódio {} de {} · N passa ao próximo", n.titulo, ep.max(1), n.episodios), Instant::now()));
+        self.versao_dados = self.versao_dados.wrapping_add(1);
+        self.abrir_secao(Aba::Canais);
+    }
+
     pub fn tocar_radio(&mut self, radio: radios::Radio) {
+        self.novelinha_tocando = None;
         self.sair_da_multi_tela();
         if self.tocando_vod.is_some() {
             self.guardar_progresso(true);

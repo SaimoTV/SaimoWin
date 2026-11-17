@@ -673,6 +673,11 @@ impl Mpv {
         Some((posicao, duracao))
     }
 
+    /// Próximo (ou anterior) item da playlist carregada (as novelinhas).
+    pub fn playlist_proximo(&self, frente: bool) {
+        self.comando(&[if frente { "playlist-next" } else { "playlist-prev" }]);
+    }
+
     pub fn parar(&self) {
         self.comando(&["stop"]);
     }
