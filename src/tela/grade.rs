@@ -450,7 +450,7 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
                     if linha(ui, "Conteúdo adulto", estado, Icone::Mais).clicked() {
                         acao = Some(22);
                     }
-                    let senha = if crate::perfis::senha_padrao() { "A senha inicial é 0000" } else { "Senha própria" };
+                    let senha = if crate::perfis::senha_padrao() { "Ainda com a senha de fábrica" } else { "Senha própria" };
                     if linha(ui, "Trocar a senha", senha, Icone::Mais).clicked() {
                         acao = Some(23);
                     }
