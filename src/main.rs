@@ -33,6 +33,7 @@ mod controle;
 mod rede;
 mod listas;
 mod minhas_listas;
+mod brilho;
 mod classificar;
 mod acervo_lista;
 mod minhas_listas_tela;
@@ -4984,6 +4985,7 @@ impl eframe::App for App {
                 diagnostico::etapa("primeiro quadro desenhado");
             }
         }
+        brilho::antes_do_quadro(ctx);
         self.cuidar_dos_recados(ctx);
         self.cuidar_dos_addons();
         self.cuidar_dos_eventos(ctx);
@@ -5017,6 +5019,7 @@ impl eframe::App for App {
         // sem aviso. Aqui o quadro é descartado, a queda vai para falhas.txt e o
         // app volta para a tela principal; só se ela também cair é que o erro sobe.
         let desenho = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tela::desenhar(self, ui)));
+        brilho::desenhar(ctx);
         match desenho {
             Ok(()) => self.quadros_com_falha = 0,
             Err(erro) => {

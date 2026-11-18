@@ -439,6 +439,11 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             if linha(ui, "Tela cheia", "F ou F11 · Esc sai", Icone::TelaCheia).clicked() {
                 acao = Some(6);
             }
+            let b = crate::brilho::valor();
+            let desc = if b >= 100 { "100% (normal) · clique diminui 25%".to_string() } else { format!("{b}% · clique muda · em 0% qualquer tecla volta") };
+            if linha(ui, "Brilho do app", &desc, Icone::TelaCheia).clicked() {
+                acao = Some(24);
+            }
             // Controle parental: no fim, separado e discreto. No Kids não aparece.
             if !crate::perfis::kids_ativo() {
                 ui.add_space(30.0);
@@ -482,6 +487,11 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         Some(4) => app.procurar_atualizacao_agora(),
         Some(5) => app.ajuda_aberta = true,
         Some(6) => app.alternar_tela_cheia(ui.ctx()),
+        // 100 -> 75 -> 50 -> 25 -> 0 -> 100.
+        Some(24) => {
+            let b = crate::brilho::valor() as i64;
+            crate::brilho::definir(if b <= 0 { 100 } else { (b - 25).max(0) });
+        }
         Some(20) => {
             app.perfis_tela = Some(super::perfis::Estado::novo(false, false));
         }

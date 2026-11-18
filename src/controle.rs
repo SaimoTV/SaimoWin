@@ -173,6 +173,7 @@ impl App {
             "active": if self.outra_tela.is_some() && self.foco_a_direita { 1 } else { 0 },
             "volume": (self.volume as f64 / 100.0).clamp(0.0, 1.0),
             "muted": self.mudo,
+            "brilho": crate::brilho::valor(),
         });
 
         if let Some(t) = self.tocando_vod.as_ref() {
@@ -203,7 +204,7 @@ impl App {
             }]);
             // Saimo Connect 2: as fontes do filme numa lista.
             estado["versaoConnect"] = json!(2);
-            estado["recursos"] = json!(["fontes"]);
+            estado["recursos"] = json!(["fontes", "brilho"]);
             estado["fontes"] = json!((0..t.urls.len()).map(|i| json!({"rotulo": format!("Fonte {}", i + 1), "detalhe": ""})).collect::<Vec<_>>());
             estado["fonteAtual"] = json!(t.fonte);
             return estado;
@@ -259,7 +260,7 @@ impl App {
         if let Some(t) = self.tocando.as_ref() {
             if let Some(canal) = self.canais.get(t.canal) {
                 estado["versaoConnect"] = json!(2);
-                estado["recursos"] = json!(["fontes", "favorito"]);
+                estado["recursos"] = json!(["fontes", "favorito", "brilho"]);
                 estado["fontes"] = json!(canal.fontes.iter().enumerate().map(|(i, f)| json!({
                     "rotulo": f.nome.clone().unwrap_or_else(|| format!("Fonte {}", i + 1)),
                     "detalhe": f.qualidade.clone().unwrap_or_default(),
@@ -379,6 +380,11 @@ impl App {
                     } else if let Some(canal) = self.tocando.as_ref().map(|t| t.canal) {
                         self.tocar(canal, indice, false);
                     }
+                }
+            }
+            "brilho" => {
+                if let Some(v) = numero("valor") {
+                    crate::brilho::definir(v as i64);
                 }
             }
             "favorito" => {
