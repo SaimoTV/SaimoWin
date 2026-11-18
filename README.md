@@ -492,3 +492,9 @@ gerenciar perfis e abrir os Ajustes pedem um código de 4 dígitos (guardado com
 parental visível no fim dos Ajustes, discreto: senha padrão 0000, trocável; no Kids nunca libera.
 
 Aqui: `src/perfis.rs` (pasta `perfis/<id>/`, SHA-256 próprio, sincronia direto nos arquivos de cada perfil), `src/tela/perfis.rs` (tela por cima de tudo); trocar de perfil reabre o programa. `SAIMO_FOTO_TELA=perfis` e `perfis-gerenciar` fotografam a tela.
+
+## Brilho do app
+
+`src/brilho.rs` (Ajustes > Aplicativo > Brilho do app e Saimo Connect): véu preto desenhado por
+cima de tudo, 0 a 100, guardado em `brilho.txt`. Em até 5% qualquer tecla ou clique só acende a
+tela, devagar.
