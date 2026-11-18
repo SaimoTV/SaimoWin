@@ -4870,7 +4870,7 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
                 app.conta.email_form = std::env::var("SAIMO_FOTO_EMAIL").unwrap_or_default();
                 app.conta.senha_form = std::env::var("SAIMO_FOTO_SENHA").unwrap_or_default();
                 if !app.conta.senha_form.is_empty() {
-                    app.conta.entrar_com_senha();
+                    app.conta.entrar_com_senha(std::env::var("SAIMO_FOTO_CRIAR").is_ok());
                 }
             }
             "minhas-listas" => {

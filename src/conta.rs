@@ -240,7 +240,8 @@ impl Conta {
         self.senha_form.clear();
     }
 
-    pub fn entrar_com_senha(&mut self) {
+    /// Entrar (`criar` = false) ou criar a conta (o e-mail não é verificado: é só o login).
+    pub fn entrar_com_senha(&mut self, criar: bool) {
         if self.entrando {
             return;
         }
@@ -250,11 +251,16 @@ impl Conta {
             self.aviso_form = "Digite o e-mail e a senha".into();
             return;
         }
+        if criar && senha.chars().count() < 8 {
+            self.aviso_form = "A senha precisa ter 8 ou mais caracteres".into();
+            return;
+        }
         self.entrando = true;
-        self.aviso_form = "Entrando…".into();
+        self.aviso_form = if criar { "Criando a conta…".into() } else { "Entrando…".into() };
+        let rota = if criar { "/v1/senha/cadastrar" } else { "/v1/senha/entrar" };
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let r = chamar("POST", "/v1/senha/entrar", Some(json!({"email": email, "senha": senha, "aparelho": nome_do_aparelho()})), None)
+            let r = chamar("POST", rota, Some(json!({"email": email, "senha": senha, "aparelho": nome_do_aparelho()})), None)
                 .map_err(|f| f.mensagem)
                 .and_then(|j| token_e_email(&j).ok_or_else(|| "Resposta inesperada da conta".to_string()));
             let _ = tx.send(Evento::Entrou(r));

@@ -366,7 +366,7 @@ pub fn conta(app: &mut App, ctx: &egui::Context) {
                     ui.label(egui::RichText::new("Entrar com e-mail e senha").font(forte(24.0)).color(TEXTO));
                     ui.add_space(6.0);
                     ui.label(
-                        egui::RichText::new("Esqueceu ou ainda não tem senha? Crie no celular (Ajustes > Conta Saimo) ou no site.")
+                        egui::RichText::new("Entre com o e-mail e a senha da sua conta, ou crie uma conta agora (senha com 8 ou mais).")
                             .font(normal(14.0))
                             .color(SECUNDARIO),
                     );
@@ -381,8 +381,12 @@ pub fn conta(app: &mut App, ctx: &egui::Context) {
                     }
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
-                        if botao(ui, None, if c.entrando { "Entrando…" } else { "Entrar" }, true).clicked() || enter {
-                            c.entrar_com_senha();
+                        if botao(ui, None, if c.entrando { "Um momento…" } else { "Entrar" }, true).clicked() || enter {
+                            c.entrar_com_senha(false);
+                        }
+                        ui.add_space(8.0);
+                        if botao(ui, None, "Criar conta", false).clicked() {
+                            c.entrar_com_senha(true);
                         }
                         ui.add_space(8.0);
                         if botao(ui, None, "Voltar ao QR", false).clicked() {
