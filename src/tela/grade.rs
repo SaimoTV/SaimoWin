@@ -320,6 +320,14 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(direita.width().min(760.0));
             ui.add_space(34.0);
+            if !crate::perfis::kids_ativo() {
+                rotulo_de_secao(ui, "Conta Saimo");
+                ui.add_space(4.0);
+                if linha(ui, "Conta Saimo", &app.conta.resumo(), Icone::Mais).clicked() {
+                    acao = Some(40);
+                }
+                ui.add_space(18.0);
+            }
             rotulo_de_secao(ui, "Perfis");
             ui.add_space(4.0);
             let ativo = crate::perfis::ativo();
@@ -508,6 +516,7 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         Some(23) => {
             ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("parental"), (2u8, String::new(), String::new(), String::new())));
         }
+        Some(40) => app.conta.abrir(),
         Some(8) => {
             crate::connect::esquecer_todos();
             app.aviso = Some(("Celulares esquecidos. Na próxima conexão o computador vai perguntar de novo.".into(), std::time::Instant::now()));

@@ -242,6 +242,7 @@ pub fn desenhar(app: &mut App, ui: &mut egui::Ui) {
     }
     janelas::atualizacao(app, ctx);
     janelas::aprovacao(app, ctx);
+    janelas::conta(app, ctx);
     if app.dialogo_listas.is_some() {
         janelas::listas(app, ctx);
     }
