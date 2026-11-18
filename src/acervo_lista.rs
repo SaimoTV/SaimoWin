@@ -243,8 +243,8 @@ mod testes {
         let (canais, vod) = crate::minhas_listas::ler_tudo(&texto);
         let pasta = std::env::temp_dir().join(format!("saimo-acervo-teste-{}", std::process::id()));
         let r = gravar(&pasta, &vod);
-        assert_eq!(canais.len(), 8);
-        assert_eq!(r, Resumo { filmes: 6, series: 11 });
+        assert_eq!(canais.len(), 7);
+        assert_eq!(r, Resumo { filmes: 7, series: 11 });
         let indice = std::fs::read_to_string(pasta.join("indice.txt")).unwrap();
         assert!(indice.contains("V\t1\t0\t0"), "{indice}");
         let filmes_v = std::fs::read_to_string(pasta.join("filmes-V.txt")).unwrap();

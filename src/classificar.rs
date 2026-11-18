@@ -252,12 +252,21 @@ fn ano_do_fim(nome: &str) -> String {
 /// O tipo de um item da lista.
 pub fn tipo(url: &str, nome: &str, grupo: &str, declarado: &str) -> Tipo {
     let m = marca(nome);
+    let segs = caminho(url);
+    // Arquivo de vídeo (.mp4, .mkv, .avi...) nunca é canal, nem declarado "live".
+    if let Some((_, ext)) = segs.last().and_then(|u| u.rsplit_once('.')) {
+        if VIDEO.contains(&ext) {
+            return match m {
+                Some(m) => Tipo::Episodio(m),
+                None => Tipo::Filme,
+            };
+        }
+    }
     let d = declarado.trim().to_lowercase();
     if TIPO_CANAL.contains(&d.as_str()) {
         return Tipo::Canal;
     }
     let mut acervo = TIPO_FILME.contains(&d.as_str()) || TIPO_SERIE.contains(&d.as_str());
-    let segs = caminho(url);
     if !acervo {
         for s in segs.iter().take(segs.len().saturating_sub(1)) {
             if SEG_FILME.contains(&s.as_str()) || SEG_SERIE.contains(&s.as_str()) {
