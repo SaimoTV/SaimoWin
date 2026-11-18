@@ -316,3 +316,131 @@ pub fn listas(app: &mut App, ctx: &egui::Context) {
         }
     }
 }
+
+/// Ajustes > Conta Saimo. Sem conta: o QR (e o código curto) para entrar pelo
+/// celular, ou e-mail e senha. Com conta: e-mail, sincronizar agora e sair.
+/// Criar ou trocar a senha fica no celular ou no site (lá chega o código do e-mail).
+pub fn conta(app: &mut App, ctx: &egui::Context) {
+    if !app.conta.aberta {
+        return;
+    }
+    veu(ctx);
+    ctx.request_repaint_after(Duration::from_millis(500));
+    let mut fechar = false;
+    let mut sincronizar = false;
+    egui::Area::new(egui::Id::new("conta-saimo"))
+        .order(egui::Order::Foreground)
+        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .show(ctx, |ui| {
+            modal().show(ui, |ui| {
+                ui.set_max_width(760.0);
+                super::rotulo_de_secao(ui, "Conta Saimo");
+                ui.add_space(6.0);
+                let c = &mut app.conta;
+                if c.logado() {
+                    ui.label(egui::RichText::new(c.email().unwrap_or("Conta Saimo").to_string()).font(forte(24.0)).color(TEXTO));
+                    ui.add_space(4.0);
+                    let estado = if c.sincronizando { "sincronizando…".to_string() } else { c.erro.clone().unwrap_or_else(|| c.ha_quanto()) };
+                    ui.label(egui::RichText::new(estado).font(normal(15.0)).color(SECUNDARIO));
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new("Perfis, onde parou, favoritos, listas e addons. Sair mantém os dados neste computador.")
+                            .font(normal(14.0))
+                            .color(SECUNDARIO),
+                    );
+                    ui.add_space(16.0);
+                    ui.horizontal(|ui| {
+                        if botao(ui, None, "Sincronizar agora", true).clicked() {
+                            sincronizar = true;
+                        }
+                        ui.add_space(8.0);
+                        if botao(ui, None, "Sair da conta", false).clicked() {
+                            c.sair();
+                        }
+                        ui.add_space(8.0);
+                        if botao(ui, Some(super::Icone::Fechar), "Fechar", false).clicked() {
+                            fechar = true;
+                        }
+                    });
+                } else if c.com_senha {
+                    ui.label(egui::RichText::new("Entrar com e-mail e senha").font(forte(24.0)).color(TEXTO));
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new("Esqueceu ou ainda não tem senha? Crie no celular (Ajustes > Conta Saimo) ou no site.")
+                            .font(normal(14.0))
+                            .color(SECUNDARIO),
+                    );
+                    ui.add_space(12.0);
+                    ui.add(egui::TextEdit::singleline(&mut c.email_form).hint_text("Seu e-mail").desired_width(420.0));
+                    ui.add_space(8.0);
+                    let senha = ui.add(egui::TextEdit::singleline(&mut c.senha_form).password(true).hint_text("Senha").desired_width(420.0));
+                    let enter = senha.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if !c.aviso_form.is_empty() {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(c.aviso_form.clone()).font(normal(14.0)).color(egui::Color32::from_rgb(248, 113, 113)));
+                    }
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        if botao(ui, None, if c.entrando { "Entrando…" } else { "Entrar" }, true).clicked() || enter {
+                            c.entrar_com_senha();
+                        }
+                        ui.add_space(8.0);
+                        if botao(ui, None, "Voltar ao QR", false).clicked() {
+                            c.com_senha = false;
+                            c.aviso_form.clear();
+                        }
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        let url = c.pedido.as_ref().map(|p| p.url.clone()).unwrap_or_default();
+                        if !url.is_empty() && c.qr_url != url {
+                            c.qr_textura = crate::qr::gerar(&url).ok().map(|m| ctx.load_texture("qr-conta", m.para_imagem(6), egui::TextureOptions::NEAREST));
+                            c.qr_url = url.clone();
+                        }
+                        let (lugar, _) = ui.allocate_exact_size(Vec2::splat(240.0), egui::Sense::hover());
+                        ui.painter().rect_filled(lugar, 14.0, egui::Color32::WHITE);
+                        if let (Some(t), false) = (&c.qr_textura, url.is_empty()) {
+                            ui.painter().image(t.id(), lugar.shrink(12.0), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                        }
+                        ui.add_space(24.0);
+                        ui.vertical(|ui| {
+                            ui.set_max_width(440.0);
+                            ui.label(egui::RichText::new("Entrar na Conta Saimo").font(forte(24.0)).color(TEXTO));
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new("No celular com o Saimo e a sua conta, leia o QR com a câmera. Ou abra Ajustes > Conta Saimo > Entrar numa TV e digite o código:")
+                                    .font(normal(14.0))
+                                    .color(SECUNDARIO),
+                            );
+                            ui.add_space(10.0);
+                            let codigo = c.pedido.as_ref().map(|p| p.codigo.clone()).unwrap_or_else(|| "…".into());
+                            ui.label(egui::RichText::new(codigo).font(forte(40.0)).color(ACENTO));
+                            ui.add_space(6.0);
+                            ui.label(egui::RichText::new(c.situacao.clone()).font(normal(14.0)).color(SECUNDARIO));
+                            ui.add_space(14.0);
+                            ui.horizontal(|ui| {
+                                if botao(ui, None, "Entrar com e-mail e senha", true).clicked() {
+                                    c.com_senha = true;
+                                }
+                                ui.add_space(8.0);
+                                if botao(ui, Some(super::Icone::Fechar), "Fechar", false).clicked() {
+                                    fechar = true;
+                                }
+                            });
+                            ui.add_space(10.0);
+                            ui.label(egui::RichText::new("Sem conta, tudo continua só neste computador.").font(normal(13.0)).color(super::APAGADO));
+                        });
+                    });
+                }
+            });
+        });
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        fechar = true;
+    }
+    if sincronizar {
+        app.sincronizar_conta_agora();
+    }
+    if fechar {
+        app.conta.fechar();
+    }
+}

@@ -46,6 +46,7 @@ mod xtream;
 mod seletor;
 mod sincronia;
 mod perfis;
+mod conta;
 mod telemetria;
 
 use catalogo::Canal;
@@ -596,6 +597,8 @@ struct App {
     connect: Receiver<connect::Pedido>,
     /// Celulares esperando o "Permitir": o cliente, o nome e desde quando.
     pub aprovacoes: std::collections::VecDeque<(u64, String, Instant)>,
+    /// Conta Saimo (opcional): sessão, QR e sincronia pela internet.
+    pub conta: conta::Conta,
     /// A janela "Endereço das listas", quando aberta.
     pub dialogo_listas: Option<listas::Dialogo>,
     /// "Minhas listas": a janela, os dados das listas, os canais delas e o que está baixando.
@@ -897,6 +900,7 @@ impl App {
                 connect::iniciar(cc.egui_ctx.clone())
             },
             aprovacoes: std::collections::VecDeque::new(),
+            conta: conta::Conta::carregar(),
             dialogo_listas: None,
             minhas_dialogo: None,
             minhas_meta: minhas_listas::listar(),
@@ -2705,6 +2709,7 @@ impl App {
     }
 
     fn cuidar_dos_recados(&mut self, ctx: &egui::Context) {
+        self.passo_da_conta();
         let mut chegou_algo = false;
         while let Ok(recado) = self.recados.try_recv() {
             chegou_algo = true;
@@ -4854,6 +4859,20 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
                 app.busca_vod = std::env::var("SAIMO_FOTO_BUSCA").unwrap_or_else(|_| "amor".into());
             }
             "ajustes" => app.abrir_secao(Aba::Ajustes),
+            "conta" => {
+                app.abrir_secao(Aba::Ajustes);
+                app.conta.abrir();
+            }
+            "conta-senha" => {
+                app.abrir_secao(Aba::Ajustes);
+                app.conta.abrir();
+                app.conta.com_senha = true;
+                app.conta.email_form = std::env::var("SAIMO_FOTO_EMAIL").unwrap_or_default();
+                app.conta.senha_form = std::env::var("SAIMO_FOTO_SENHA").unwrap_or_default();
+                if !app.conta.senha_form.is_empty() {
+                    app.conta.entrar_com_senha();
+                }
+            }
             "minhas-listas" => {
                 app.abrir_secao(Aba::Ajustes);
                 app.abrir_minhas_listas();
