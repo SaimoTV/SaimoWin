@@ -244,7 +244,7 @@ mod testes {
         let pasta = std::env::temp_dir().join(format!("saimo-acervo-teste-{}", std::process::id()));
         let r = gravar(&pasta, &vod);
         assert_eq!(canais.len(), 8);
-        assert_eq!(r, Resumo { filmes: 5, series: 10 });
+        assert_eq!(r, Resumo { filmes: 6, series: 11 });
         let indice = std::fs::read_to_string(pasta.join("indice.txt")).unwrap();
         assert!(indice.contains("V\t1\t0\t0"), "{indice}");
         let filmes_v = std::fs::read_to_string(pasta.join("filmes-V.txt")).unwrap();

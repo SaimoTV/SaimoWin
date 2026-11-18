@@ -132,60 +132,67 @@ fn ler_digitos_ate(n: &[char], j: usize, maximo: usize, seguinte: char) -> Optio
     Some((s.parse().ok()?, k))
 }
 
-/// A marca de episódio do nome (S01E02, 1x02, Temporada 2 Episódio 5, Ep 12…).
+/// A marca de episódio do nome, em três passadas: S01E02/T01E02 no nome
+/// inteiro; "Temporada N ... Episódio M"; 1x02 (nunca no começo do nome:
+/// "4x4 Sob Medida" e "4x100" são títulos). A fraca (Ep 12) só sem forte.
 pub fn marca(nome: &str) -> Option<Marca> {
     let n = dobrar(nome);
-    let mut fraca = None;
+    for i in 0..n.len() {
+        let c = n[i];
+        if (c != 's' && c != 't') || !inicio_de_palavra(&n, i) {
+            continue;
+        }
+        let Some((t, j)) = ler_digitos(&n, i + 1, 3) else { continue };
+        let mut j = pular(&n, j, &[' ', '.', '_', '-']);
+        if j < n.len() && (n[j] == 'e' || (c == 's' && n[j] == 'x')) {
+            j += 1;
+            if j < n.len() && n[j] == 'p' {
+                j += 1;
+            }
+            j = pular(&n, j, &[' ', '.']);
+            if let Some((e, _)) = ler_digitos(&n, j, 4) {
+                return Some(Marca { temporada: t, episodio: e, inicio: i, forte: true });
+            }
+        }
+    }
     for i in 0..n.len() {
         if !inicio_de_palavra(&n, i) {
             continue;
         }
-        let c = n[i];
-        if c == 's' || c == 't' {
-            if let Some((t, j)) = ler_digitos(&n, i + 1, 3) {
-                let mut j = pular(&n, j, &[' ', '.', '_', '-']);
-                if j < n.len() && (n[j] == 'e' || (c == 's' && n[j] == 'x')) {
-                    j += 1;
-                    if j < n.len() && n[j] == 'p' {
-                        j += 1;
-                    }
-                    j = pular(&n, j, &[' ', '.']);
-                    if let Some((e, _)) = ler_digitos(&n, j, 4) {
-                        return Some(Marca { temporada: t, episodio: e, inicio: i, forte: true });
-                    }
-                }
-            }
-        }
-        if c.is_ascii_digit() {
-            if let Some((t, j)) = ler_digitos_ate(&n, i, 2, 'x') {
-                if let Some((e, k)) = ler_digitos(&n, j + 1, 3) {
-                    if k == n.len() || !alnum(n[k]) {
-                        return Some(Marca { temporada: t, episodio: e, inicio: i, forte: true });
-                    }
-                }
-            }
-        }
         for p in ["temporada", "season"] {
-            if comeca(&n, i, p) {
-                let j = pular(&n, i + p.chars().count(), &[' ']);
-                if let Some((t, j)) = ler_digitos(&n, j, 3) {
-                    for k in j..(j + 13).min(n.len()) {
-                        if inicio_de_palavra(&n, k) {
-                            if let Some(e) = palavra_de_episodio(&n, k) {
-                                return Some(Marca { temporada: t, episodio: e, inicio: i, forte: true });
-                            }
-                        }
+            if !comeca(&n, i, p) {
+                continue;
+            }
+            let j = pular(&n, i + p.chars().count(), &[' ']);
+            let Some((t, j)) = ler_digitos(&n, j, 3) else { continue };
+            for k in j..(j + 13).min(n.len()) {
+                if inicio_de_palavra(&n, k) {
+                    if let Some(e) = palavra_de_episodio(&n, k) {
+                        return Some(Marca { temporada: t, episodio: e, inicio: i, forte: true });
                     }
                 }
-            }
-        }
-        if fraca.is_none() {
-            if let Some(e) = palavra_de_episodio(&n, i) {
-                fraca = Some(Marca { temporada: 1, episodio: e, inicio: i, forte: false });
             }
         }
     }
-    fraca
+    for i in 1..n.len() {
+        if !n[i].is_ascii_digit() || !inicio_de_palavra(&n, i) {
+            continue;
+        }
+        let Some((t, j)) = ler_digitos_ate(&n, i, 2, 'x') else { continue };
+        if let Some((e, k)) = ler_digitos(&n, j + 1, 3) {
+            if k == n.len() || !alnum(n[k]) {
+                return Some(Marca { temporada: t, episodio: e, inicio: i, forte: true });
+            }
+        }
+    }
+    for i in 0..n.len() {
+        if inicio_de_palavra(&n, i) {
+            if let Some(e) = palavra_de_episodio(&n, i) {
+                return Some(Marca { temporada: 1, episodio: e, inicio: i, forte: false });
+            }
+        }
+    }
+    None
 }
 
 /// Segmentos do caminho do endereço, em minúsculas.
