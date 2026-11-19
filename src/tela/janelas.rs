@@ -321,7 +321,7 @@ pub fn listas(app: &mut App, ctx: &egui::Context) {
 /// celular, ou e-mail e senha. Com conta: e-mail, sincronizar agora e sair.
 /// Criar ou trocar a senha fica no celular ou no site (lá chega o código do e-mail).
 pub fn conta(app: &mut App, ctx: &egui::Context) {
-    if !app.conta.aberta {
+    if !app.conta.aberta || app.boas_vindas {
         return;
     }
     veu(ctx);
@@ -466,11 +466,16 @@ pub fn boas_vindas(app: &mut App, ctx: &egui::Context) {
     }
     if app.conta.logado() {
         app.boas_vindas = false;
+        app.conta.fechar();
         return;
     }
     veu(ctx);
-    let mut entrar = false;
     let mut sem_login = false;
+    // O QR já aparece aqui: a conta pede o código enquanto a tela estiver aberta.
+    if !app.conta.aberta {
+        app.conta.abrir();
+    }
+    ctx.request_repaint_after(Duration::from_millis(500));
     egui::Area::new(egui::Id::new("boas-vindas"))
         .order(egui::Order::Foreground)
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
@@ -489,10 +494,8 @@ pub fn boas_vindas(app: &mut App, ctx: &egui::Context) {
                     ] {
                         ui.label(egui::RichText::new(t).font(normal(15.0)).color(SECUNDARIO));
                     }
-                    ui.add_space(16.0);
-                    if botao(ui, None, "Entrar ou criar conta", true).clicked() {
-                        entrar = true;
-                    }
+                    ui.add_space(14.0);
+                    entrar_embutido(&mut app.conta, ctx, ui);
                 });
                 ui.add_space(20.0);
                 modal().show(ui, |ui| {
@@ -513,11 +516,66 @@ pub fn boas_vindas(app: &mut App, ctx: &egui::Context) {
                 });
             });
         });
-    if entrar {
-        app.conta.abrir();
-    }
     if sem_login {
         let _ = std::fs::write(arquivo_boas_vindas(), "1");
         app.boas_vindas = false;
+        app.conta.fechar();
+    }
+}
+
+/// O QR (e o código) para entrar pelo celular, ou o e-mail e a senha, dentro das
+/// boas-vindas. "Entrar com e-mail e senha" troca o QR pelo formulário e
+/// "Voltar ao QR" volta.
+fn entrar_embutido(c: &mut crate::conta::Conta, ctx: &egui::Context, ui: &mut egui::Ui) {
+    if c.com_senha {
+        ui.add(egui::TextEdit::singleline(&mut c.email_form).hint_text("Seu e-mail").desired_width(400.0));
+        ui.add_space(8.0);
+        let senha = ui.add(egui::TextEdit::singleline(&mut c.senha_form).password(true).hint_text("Senha").desired_width(400.0));
+        let enter = senha.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if !c.aviso_form.is_empty() {
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new(c.aviso_form.clone()).font(normal(14.0)).color(egui::Color32::from_rgb(248, 113, 113)));
+        }
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if botao(ui, None, if c.entrando { "Um momento…" } else { "Entrar" }, true).clicked() || enter {
+                c.entrar_com_senha(false);
+            }
+            ui.add_space(8.0);
+            if botao(ui, None, "Criar conta", false).clicked() {
+                c.entrar_com_senha(true);
+            }
+        });
+        ui.add_space(8.0);
+        if botao(ui, None, "Voltar ao QR code", false).clicked() {
+            c.com_senha = false;
+            c.aviso_form.clear();
+        }
+        return;
+    }
+    ui.horizontal(|ui| {
+        let url = c.pedido.as_ref().map(|p| p.url.clone()).unwrap_or_default();
+        if !url.is_empty() && c.qr_url != url {
+            c.qr_textura = crate::qr::gerar(&url).ok().map(|m| ctx.load_texture("qr-conta", m.para_imagem(6), egui::TextureOptions::NEAREST));
+            c.qr_url = url.clone();
+        }
+        let (lugar, _) = ui.allocate_exact_size(Vec2::splat(190.0), egui::Sense::hover());
+        ui.painter().rect_filled(lugar, 14.0, egui::Color32::WHITE);
+        if let (Some(t), false) = (&c.qr_textura, url.is_empty()) {
+            ui.painter().image(t.id(), lugar.shrink(10.0), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+        }
+        ui.add_space(16.0);
+        ui.vertical(|ui| {
+            ui.set_max_width(200.0);
+            ui.label(egui::RichText::new("Leia o QR no celular com o Saimo, ou digite o código em Ajustes > Conta Saimo > Entrar numa TV:").font(normal(13.0)).color(SECUNDARIO));
+            ui.add_space(6.0);
+            let codigo = c.pedido.as_ref().map(|p| p.codigo.clone()).unwrap_or_else(|| "…".into());
+            ui.label(egui::RichText::new(codigo).font(forte(30.0)).color(acento()));
+            ui.label(egui::RichText::new(c.situacao.clone()).font(normal(13.0)).color(SECUNDARIO));
+        });
+    });
+    ui.add_space(12.0);
+    if botao(ui, None, "Entrar com e-mail e senha", true).clicked() {
+        c.com_senha = true;
     }
 }
