@@ -1,7 +1,7 @@
 //! O que abre por cima de tudo: o aviso curto (o "Toast" da TV), a lista de
 //! atalhos e a oferta de versão nova, no modal escuro da TV Box (`bg_modal`).
 
-use super::{botao, branco, forte, normal, ACENTO, FUNDO, SECUNDARIO, TEXTO, VIDRO};
+use super::{botao, branco, forte, normal, acento, FUNDO, SECUNDARIO, TEXTO, VIDRO};
 use crate::{atualizacao, listas, App};
 use eframe::egui::{self, Align2, Stroke, Vec2};
 use std::time::Duration;
@@ -93,7 +93,7 @@ pub fn atalhos(app: &mut App, ctx: &egui::Context) {
                 egui::Grid::new("atalhos").num_columns(4).spacing([18.0, 10.0]).show(ui, |ui| {
                     for (k, (tecla, acao)) in linhas.iter().enumerate() {
                         egui::Frame::NONE.fill(branco(26)).corner_radius(8.0).inner_margin(egui::Margin::symmetric(10, 4)).show(ui, |ui| {
-                            ui.label(egui::RichText::new(*tecla).font(forte(14.0)).color(ACENTO));
+                            ui.label(egui::RichText::new(*tecla).font(forte(14.0)).color(acento()));
                         });
                         ui.label(egui::RichText::new(*acao).font(normal(14.5)).color(SECUNDARIO));
                         if k % 2 == 1 {
@@ -167,7 +167,7 @@ pub fn aprovacao(app: &mut App, ctx: &egui::Context) {
                 ui.set_max_width(520.0);
                 ui.horizontal(|ui| {
                     let (lugar, _) = ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
-                    super::icones::pintar(ui.painter(), super::Icone::Cast, lugar.center(), 26.0, ACENTO);
+                    super::icones::pintar(ui.painter(), super::Icone::Cast, lugar.center(), 26.0, acento());
                     super::rotulo_de_secao(ui, "Saimo Connect");
                 });
                 ui.add_space(6.0);
@@ -215,7 +215,7 @@ pub fn listas(app: &mut App, ctx: &egui::Context) {
                 ui.set_width(560.0);
                 ui.horizontal(|ui| {
                     let (lugar, _) = ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
-                    super::icones::pintar(ui.painter(), super::Icone::Link, lugar.center(), 26.0, ACENTO);
+                    super::icones::pintar(ui.painter(), super::Icone::Link, lugar.center(), 26.0, acento());
                     super::rotulo_de_secao(ui, "Listas");
                 });
                 ui.add_space(6.0);
@@ -264,7 +264,7 @@ pub fn listas(app: &mut App, ctx: &egui::Context) {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     if testando {
-                        ui.add(egui::Spinner::new().color(ACENTO));
+                        ui.add(egui::Spinner::new().color(acento()));
                         ui.add_space(8.0);
                         ui.label(egui::RichText::new("Conferindo os endereços…").font(normal(14.0)).color(SECUNDARIO));
                     } else if d.fase == listas::Fase::Falhou {
@@ -418,7 +418,7 @@ pub fn conta(app: &mut App, ctx: &egui::Context) {
                             );
                             ui.add_space(10.0);
                             let codigo = c.pedido.as_ref().map(|p| p.codigo.clone()).unwrap_or_else(|| "…".into());
-                            ui.label(egui::RichText::new(codigo).font(forte(40.0)).color(ACENTO));
+                            ui.label(egui::RichText::new(codigo).font(forte(40.0)).color(acento()));
                             ui.add_space(6.0);
                             ui.label(egui::RichText::new(c.situacao.clone()).font(normal(14.0)).color(SECUNDARIO));
                             ui.add_space(14.0);

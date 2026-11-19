@@ -5,7 +5,7 @@
 //! a engrenagem dos Ajustes e o relógio. Sobre o vídeo, o menu ganha a sombra
 //! de cima da TV (`bg_top_scrim`) no lugar do fundo.
 
-use super::{aceso, branco, forte, icones, Icone, ACENTO, FUNDO, TEXTO};
+use super::{aceso, branco, forte, icones, Icone, acento, FUNDO, TEXTO};
 use crate::{epg, Aba, App};
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Sense, Vec2};
 use std::time::Duration;
@@ -79,7 +79,7 @@ fn marca(pintor: &egui::Painter, centro: Pos2) {
         return;
     }
     let rect = Rect::from_center_size(centro, Vec2::splat(32.0));
-    pintor.rect_filled(rect, 9.0, ACENTO);
+    pintor.rect_filled(rect, 9.0, acento());
     pintor.text(rect.center(), Align2::CENTER_CENTER, "S", forte(20.0), FUNDO);
 }
 
@@ -226,7 +226,7 @@ fn radio_no_ar(app: &mut App, ui: &mut egui::Ui, nome: &str, direita: f32, meio:
     let resposta = ui.interact(rect, egui::Id::new("radio-no-ar"), Sense::click());
     let t = aceso(ui, resposta.id, resposta.hovered());
     ui.painter().rect_filled(rect, 18.0, branco(31 + (30.0 * t) as u8));
-    ui.painter().rect_stroke(rect, 18.0, egui::Stroke::new(1.0, ACENTO.gamma_multiply(0.5)), egui::StrokeKind::Inside);
+    ui.painter().rect_stroke(rect, 18.0, egui::Stroke::new(1.0, acento().gamma_multiply(0.5)), egui::StrokeKind::Inside);
     equalizador(ui, Rect::from_center_size(Pos2::new(rect.left() + 18.0, meio), egui::vec2(16.0, 16.0)), 4);
     ui.painter().galley(Pos2::new(rect.left() + 32.0, meio - galeria.size().y / 2.0), galeria, TEXTO);
     let parar = Pos2::new(rect.right() - 18.0, meio);
@@ -247,7 +247,7 @@ pub fn equalizador(ui: &egui::Ui, area: Rect, barras: usize) {
         let altura = 0.3 + 0.7 * (0.5 + 0.5 * (tempo * (3.1 + k as f32 * 0.9) + fase).sin()).abs();
         let x = area.left() + k as f32 * largura * 1.6;
         let barra = Rect::from_min_max(Pos2::new(x, area.bottom() - area.height() * altura), Pos2::new(x + largura, area.bottom()));
-        ui.painter().rect_filled(barra, largura / 2.0, ACENTO);
+        ui.painter().rect_filled(barra, largura / 2.0, acento());
     }
     ui.ctx().request_repaint_after(Duration::from_millis(50));
 }

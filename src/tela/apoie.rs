@@ -1,7 +1,7 @@
 //! Apoie o Saimo TV: por que doar, o Pix direto (QR code para doar pelo
 //! celular e o botão que copia o código "copia e cola").
 
-use super::{botao, forte, normal, ACENTO, SECUNDARIO, TEXTO};
+use super::{botao, forte, normal, acento, SECUNDARIO, TEXTO};
 use eframe::egui::{self, Color32};
 use std::time::{Duration, Instant};
 
@@ -42,12 +42,12 @@ pub fn tela(ui: &mut egui::Ui) {
             ui.add_space(60.0);
             ui.vertical(|ui| {
                 ui.set_max_width(680.0);
-                ui.label(egui::RichText::new("Comunidade Saimo TV").font(forte(14.0)).color(ACENTO));
+                ui.label(egui::RichText::new("Comunidade Saimo TV").font(forte(14.0)).color(acento()));
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     ui.label(egui::RichText::new("Ajude a manter o Saimo TV ").font(forte(38.0)).color(TEXTO));
-                    ui.label(egui::RichText::new("100% gratuito").font(forte(38.0)).color(ACENTO));
+                    ui.label(egui::RichText::new("100% gratuito").font(forte(38.0)).color(acento()));
                 });
                 ui.add_space(6.0);
                 ui.label(egui::RichText::new("Sem anúncios e sem mensalidade.").font(normal(18.0)).color(TEXTO));

@@ -12,7 +12,7 @@
 
 use super::{
     aceso, andamento, botao, botao_redondo, branco, degrade3, forte, fundo_com, icones, inicial, moldura_de_foco, normal,
-    pilula, pintar_contido, pintar_cobrindo, selo_vivo, texto, texto_numa_linha, topo, Icone, ACENTO, APAGADO, FUNDO, PAINEL,
+    pilula, pintar_contido, pintar_cobrindo, selo_vivo, texto, texto_numa_linha, topo, Icone, acento, APAGADO, FUNDO, PAINEL,
     SECUNDARIO, TEXTO, VIDRO, VIVO,
 };
 use crate::{epg, progresso, Aba, App};
@@ -92,7 +92,7 @@ fn lista(app: &mut App, ui_pai: &mut egui::Ui) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(egui::RichText::new(total.to_string()).font(normal(18.0)).color(SECUNDARIO));
                     if let Some(t) = app.tocando.as_ref() {
-                        ui.label(egui::RichText::new((t.canal + 1).to_string()).font(forte(18.0)).color(ACENTO));
+                        ui.label(egui::RichText::new((t.canal + 1).to_string()).font(forte(18.0)).color(acento()));
                     }
                 });
             });
@@ -180,7 +180,7 @@ fn lista(app: &mut App, ui_pai: &mut egui::Ui) {
                                 Align2::LEFT_BOTTOM,
                                 nome.to_uppercase(),
                                 forte(13.0),
-                                ACENTO,
+                                acento(),
                             );
                         }
                         Item::Canal(indice) => {
@@ -240,7 +240,7 @@ fn linha_do_canal(app: &mut App, ui: &mut egui::Ui, indice: usize, tocando: bool
     let pintor = ui.painter().clone();
     if tocando {
         pintor.rect_filled(caixa, 14.0, branco(20));
-        pintor.rect_stroke(caixa, 14.0, Stroke::new(2.0, ACENTO.gamma_multiply(0.35)), egui::StrokeKind::Inside);
+        pintor.rect_stroke(caixa, 14.0, Stroke::new(2.0, acento().gamma_multiply(0.35)), egui::StrokeKind::Inside);
     }
     let t = aceso(ui, resposta.id, focado || resposta.hovered());
     moldura_de_foco(&pintor, caixa, t, 14.0);
@@ -251,7 +251,7 @@ fn linha_do_canal(app: &mut App, ui: &mut egui::Ui, indice: usize, tocando: bool
         Align2::RIGHT_CENTER,
         (indice + 1).to_string(),
         normal(15.0),
-        if tocando { ACENTO } else { APAGADO },
+        if tocando { acento() } else { APAGADO },
     );
     let lado = 48.0;
     let ladrilho = Rect::from_min_size(Pos2::new(caixa.left() + 40.0, caixa.center().y - lado / 2.0), Vec2::splat(lado));
@@ -259,7 +259,7 @@ fn linha_do_canal(app: &mut App, ui: &mut egui::Ui, indice: usize, tocando: bool
     match textura {
         Some(t) => pintar_contido(ui, &t, ladrilho.shrink(5.0)),
         None => {
-            pintor.text(ladrilho.center(), Align2::CENTER_CENTER, inicial(&nome), forte(18.0), ACENTO);
+            pintor.text(ladrilho.center(), Align2::CENTER_CENTER, inicial(&nome), forte(18.0), acento());
         }
     }
     let x = ladrilho.right() + 14.0;
@@ -307,7 +307,7 @@ fn guia(app: &mut App, ui_pai: &mut egui::Ui) {
         let galeria = pintor.layout_no_wrap(resumo, normal(16.0), SECUNDARIO);
         let x = fim.left() - 20.0 - galeria.size().x;
         pintor.galley(Pos2::new(x, fim.center().y - galeria.size().y / 2.0), galeria, SECUNDARIO);
-        pintor.text(Pos2::new(x - 18.0, fim.center().y), Align2::RIGHT_CENTER, epg::hora_local(epg::agora()), forte(22.0), ACENTO);
+        pintor.text(Pos2::new(x - 18.0, fim.center().y), Align2::RIGHT_CENTER, epg::hora_local(epg::agora()), forte(22.0), acento());
 
         let corpo = Rect::from_min_max(Pos2::new(area.left() + margem - 6.0, area.top() + 80.0), Pos2::new(area.right() - margem, area.bottom() - 10.0));
         let divisa = corpo.left() + (corpo.width() * 0.42).clamp(320.0, 520.0);
@@ -378,7 +378,7 @@ fn guia(app: &mut App, ui_pai: &mut egui::Ui) {
                     }
                     moldura_de_foco(ui.painter(), rect, t, 14.0);
                     let p = ui.painter();
-                    p.text(Pos2::new(rect.left() + 16.0, rect.top() + 20.0), Align2::LEFT_CENTER, epg::hora_local(programa.inicio), forte(19.0), if vivo { ACENTO } else { TEXTO });
+                    p.text(Pos2::new(rect.left() + 16.0, rect.top() + 20.0), Align2::LEFT_CENTER, epg::hora_local(programa.inicio), forte(19.0), if vivo { acento() } else { TEXTO });
                     let x = rect.left() + 100.0;
                     let mut fim_titulo = rect.right() - 16.0;
                     if vivo {
@@ -519,7 +519,7 @@ fn sem_mpv(app: &App, ui: &mut egui::Ui, area: Rect) {
         app.erro_do_mpv.clone().unwrap_or_default()
     };
     if !detalhe.is_empty() {
-        texto(pintor, &format!("Detalhe técnico: {detalhe}"), normal(12.0), ACENTO, area.center() + egui::vec2(-320.0, 90.0), 640.0, 3, true);
+        texto(pintor, &format!("Detalhe técnico: {detalhe}"), normal(12.0), acento(), area.center() + egui::vec2(-320.0, 90.0), 640.0, 3, true);
     }
 }
 
@@ -574,7 +574,7 @@ fn radio(app: &mut App, ui: &mut egui::Ui, area: Rect) {
     match textura {
         Some(t) => pintar_contido(ui, &t, quadro.shrink(28.0)),
         None => {
-            pintor.text(quadro.center(), Align2::CENTER_CENTER, inicial(&nome), forte(90.0), ACENTO);
+            pintor.text(quadro.center(), Align2::CENTER_CENTER, inicial(&nome), forte(90.0), acento());
         }
     }
     let pulso = (0.625 + 0.375 * (ui.input(|i| i.time) as f32 * std::f32::consts::TAU / 1.8).cos()).clamp(0.0, 1.0);
@@ -606,7 +606,7 @@ fn multi_tela(app: &mut App, ui: &mut egui::Ui) {
     let nome_em_foco = nome_de(app.tocando.as_ref()).unwrap_or_else(|| "Escolha um canal na lista".into());
     let nome_fora = nome_de(app.outra_tela.as_ref().and_then(|o| o.tocando.as_ref())).unwrap_or_default();
     let pintor = ui.painter().clone();
-    pintor.rect_stroke(em_foco.shrink(1.5), 0.0, Stroke::new(3.0, ACENTO), egui::StrokeKind::Inside);
+    pintor.rect_stroke(em_foco.shrink(1.5), 0.0, Stroke::new(3.0, acento()), egui::StrokeKind::Inside);
     let etiqueta = |parte: Rect, conteudo: &str, em_foco: bool| {
         if conteudo.is_empty() {
             return;
@@ -620,7 +620,7 @@ fn multi_tela(app: &mut App, ui: &mut egui::Ui) {
         pintor.rect_filled(caixa, caixa.height() / 2.0, VIDRO);
         let mut x = caixa.left() + 14.0;
         if em_foco {
-            icones::pintar(&pintor, Icone::Som, Pos2::new(x + 9.0, caixa.center().y), 18.0, ACENTO);
+            icones::pintar(&pintor, Icone::Som, Pos2::new(x + 9.0, caixa.center().y), 18.0, acento());
             x += extra;
         }
         pintor.galley(Pos2::new(x, caixa.top() + 8.0), galeria, TEXTO);
@@ -671,7 +671,7 @@ fn pulos_na_tela(app: &mut App, ui: &mut egui::Ui, janela: Rect) {
     }
     let x = imagem.right() + 16.0;
     let largura = caixa.right() - 18.0 - x;
-    pintor.text(Pos2::new(x, caixa.top() + 18.0), Align2::LEFT_TOP, format!("Próximo episódio em {resta} s"), normal(14.0), ACENTO);
+    pintor.text(Pos2::new(x, caixa.top() + 18.0), Align2::LEFT_TOP, format!("Próximo episódio em {resta} s"), normal(14.0), acento());
     let nome = info.as_ref().map(|e| e.nome.clone()).filter(|n| !n.is_empty());
     let titulo = match nome {
         Some(n) => format!("T{} E{} · {n}", seguinte.temporada, seguinte.numero),
@@ -709,7 +709,7 @@ fn barra_do_ao_vivo(app: &mut App, ui: &mut egui::Ui, area: Rect) {
     match logo.and_then(|u| app.imagem(&u, 128)) {
         Some(t) => pintar_contido(ui, &t, ladrilho.shrink(8.0)),
         None => {
-            pintor.text(ladrilho.center(), Align2::CENTER_CENTER, inicial(&nome), forte(28.0), ACENTO);
+            pintor.text(ladrilho.center(), Align2::CENTER_CENTER, inicial(&nome), forte(28.0), acento());
         }
     }
     let x = ladrilho.right() + 18.0;
@@ -726,7 +726,7 @@ fn barra_do_ao_vivo(app: &mut App, ui: &mut egui::Ui, area: Rect) {
         pintor.galley(caixa.center() - galeria.size() / 2.0, galeria, TEXTO);
         fim = caixa.left() - 8.0;
     }
-    pintor.text(Pos2::new(x, topo_bloco + 14.0), Align2::LEFT_CENTER, (indice + 1).to_string(), forte(24.0), ACENTO);
+    pintor.text(Pos2::new(x, topo_bloco + 14.0), Align2::LEFT_CENTER, (indice + 1).to_string(), forte(24.0), acento());
     let x_nome = x + 14.0 + 16.0 * (indice + 1).to_string().len() as f32;
     texto_numa_linha(&pintor, &nome, forte(26.0), TEXTO, Pos2::new(x_nome, topo_bloco + 14.0), fim - x_nome - 10.0);
     let instante = epg::agora();
@@ -976,7 +976,7 @@ fn linha_do_tempo(app: &mut App, ui: &mut egui::Ui, rect: Rect, posicao: f64, du
             fracao = ((p.x - trilho.left()) / trilho.width()).clamp(0.0, 1.0);
         }
     }
-    pintor.rect_filled(Rect::from_min_size(trilho.min, egui::vec2(trilho.width() * fracao, espessura)), espessura / 2.0, ACENTO);
+    pintor.rect_filled(Rect::from_min_size(trilho.min, egui::vec2(trilho.width() * fracao, espessura)), espessura / 2.0, acento());
     pintor.circle_filled(Pos2::new(trilho.left() + trilho.width() * fracao, trilho.center().y), 7.0 + 3.0 * t, TEXTO);
     if let Some(p) = resposta.hover_pos() {
         let alvo = ((p.x - trilho.left()) / trilho.width()).clamp(0.0, 1.0) as f64 * duracao;
@@ -1118,7 +1118,7 @@ fn menu_de_faixas(app: &mut App, ui: &mut egui::Ui) {
         .show(|ui| {
             ui.set_min_width(270.0);
             let titulo = |ui: &mut egui::Ui, t: &str| {
-                ui.label(egui::RichText::new(t.to_uppercase()).font(forte(12.0)).color(ACENTO).extra_letter_spacing(1.0));
+                ui.label(egui::RichText::new(t.to_uppercase()).font(forte(12.0)).color(acento()).extra_letter_spacing(1.0));
             };
             titulo(ui, "Qualidade");
             let auto_rotulo = match resolucao_atual.as_deref() {
@@ -1230,7 +1230,7 @@ fn menu_de_fontes(app: &mut App, ui: &mut egui::Ui) {
         .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
         .show(|ui| {
             ui.set_min_width(220.0);
-            ui.label(egui::RichText::new("FONTES").font(forte(12.0)).color(ACENTO).extra_letter_spacing(1.0));
+            ui.label(egui::RichText::new("FONTES").font(forte(12.0)).color(acento()).extra_letter_spacing(1.0));
             for i in 0..total {
                 // Como na TV Box: o nome da fonte (a temporada, nos canais 24h)
                 // ou o número e a qualidade quando informada. Nunca o servidor.

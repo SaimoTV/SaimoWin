@@ -37,7 +37,9 @@ pub use video::{abertura, telas_da_multi_tela, veu_da_abertura};
 /// `surface`: o fundo de tudo.
 pub const FUNDO: Color32 = Color32::from_rgb(11, 14, 20);
 /// `accent`: o único destaque — foco, andamento, a aba escolhida.
-pub const ACENTO: Color32 = Color32::from_rgb(79, 227, 208);
+pub fn acento() -> Color32 {
+    crate::tema::acento()
+}
 pub const TEXTO: Color32 = Color32::WHITE;
 /// `text_secondary`.
 pub const SECUNDARIO: Color32 = Color32::from_rgb(168, 180, 192);
@@ -116,9 +118,9 @@ pub fn aplicar_estilo(ctx: &egui::Context) {
     visual.menu_corner_radius = 16.0.into();
     visual.extreme_bg_color = branco(31);
     visual.faint_bg_color = branco(20);
-    visual.selection.bg_fill = ACENTO.gamma_multiply(0.45);
+    visual.selection.bg_fill = acento().gamma_multiply(0.45);
     visual.selection.stroke = Stroke::new(1.0, TEXTO);
-    visual.hyperlink_color = ACENTO;
+    visual.hyperlink_color = acento();
     visual.override_text_color = Some(TEXTO);
     visual.popup_shadow = egui::epaint::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(140) };
     for w in [
@@ -137,11 +139,11 @@ pub fn aplicar_estilo(ctx: &egui::Context) {
     visual.widgets.hovered.weak_bg_fill = branco(64);
     visual.widgets.hovered.bg_fill = branco(64);
     visual.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXTO);
-    visual.widgets.active.weak_bg_fill = ACENTO.gamma_multiply(0.5);
+    visual.widgets.active.weak_bg_fill = acento().gamma_multiply(0.5);
     visual.widgets.active.fg_stroke = Stroke::new(1.0, TEXTO);
     visual.widgets.open.fg_stroke = Stroke::new(1.0, TEXTO);
-    visual.widgets.hovered.bg_stroke = Stroke::new(1.0, ACENTO.gamma_multiply(0.6));
-    visual.text_cursor.stroke = Stroke::new(2.0, ACENTO);
+    visual.widgets.hovered.bg_stroke = Stroke::new(1.0, acento().gamma_multiply(0.6));
+    visual.text_cursor.stroke = Stroke::new(2.0, acento());
     visual.slider_trailing_fill = true;
     estilo.visuals = visual;
     estilo.spacing.item_spacing = egui::vec2(8.0, 6.0);
@@ -398,7 +400,7 @@ pub fn moldura_de_foco(pintor: &egui::Painter, rect: Rect, t: f32, cantos: f32) 
         return;
     }
     pintor.rect_filled(rect, cantos, branco((38.0 * t) as u8));
-    pintor.rect_stroke(rect, cantos, Stroke::new(3.0, ACENTO.gamma_multiply(t)), egui::StrokeKind::Inside);
+    pintor.rect_stroke(rect, cantos, Stroke::new(3.0, acento().gamma_multiply(t)), egui::StrokeKind::Inside);
 }
 
 /// O fundo do botão da TV Box: branco a 15%, branco cheio no foco.
@@ -436,7 +438,7 @@ pub fn botao_redondo(ui: &mut egui::Ui, icone: Icone, lado: f32, dica: &str, ati
     let (fundo, tinta) = cor_de_botao(t, false);
     ui.painter().circle_filled(rect.center(), lado / 2.0, fundo);
     if ativo && t < 0.5 {
-        ui.painter().circle_stroke(rect.center(), lado / 2.0 - 1.0, Stroke::new(2.0, ACENTO));
+        ui.painter().circle_stroke(rect.center(), lado / 2.0 - 1.0, Stroke::new(2.0, acento()));
     }
     icones::pintar(ui.painter(), icone, rect.center(), lado * 0.5, tinta);
     resposta.on_hover_text(dica).on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -453,7 +455,7 @@ pub fn pilula(ui: &mut egui::Ui, icone: Option<Icone>, rotulo: &str, ativa: bool
     let (fundo, tinta) = cor_de_botao(t, false);
     ui.painter().rect_filled(rect, altura / 2.0, fundo);
     if ativa && t < 0.5 {
-        ui.painter().rect_stroke(rect, altura / 2.0, Stroke::new(2.0, ACENTO), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(rect, altura / 2.0, Stroke::new(2.0, acento()), egui::StrokeKind::Inside);
     }
     let mut x = rect.left() + 16.0;
     if let Some(icone) = icone {
@@ -475,7 +477,7 @@ pub fn campo_de_busca(ui: &mut egui::Ui, conteudo: &mut String, dica: &str, id: 
     let t = aceso(ui, id_campo.with("foco"), focado);
     ui.painter().rect_filled(rect, 12.0, branco(31 + (7.0 * t) as u8));
     if t > 0.01 {
-        ui.painter().rect_stroke(rect, 12.0, Stroke::new(2.0, ACENTO.gamma_multiply(t)), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(rect, 12.0, Stroke::new(2.0, acento().gamma_multiply(t)), egui::StrokeKind::Inside);
     }
     icones::pintar(ui.painter(), Icone::Buscar, Pos2::new(rect.left() + 20.0, rect.center().y), 20.0, SECUNDARIO);
     let tamanho_letra = (altura * 0.36).clamp(13.0, 20.0);
@@ -522,7 +524,7 @@ pub fn selo_vivo(pintor: &egui::Painter, canto: Pos2, rotulo: &str, vivo: bool, 
         pintor.rect_filled(rect, rect.height() / 2.0, VIVO);
     } else {
         pintor.rect_filled(rect, rect.height() / 2.0, fundo_com(204));
-        pintor.rect_stroke(rect, rect.height() / 2.0, Stroke::new(1.0, ACENTO.gamma_multiply(0.4)), egui::StrokeKind::Inside);
+        pintor.rect_stroke(rect, rect.height() / 2.0, Stroke::new(1.0, acento().gamma_multiply(0.4)), egui::StrokeKind::Inside);
     }
     pintor.galley(rect.center() - galeria.size() / 2.0, galeria, TEXTO);
     rect
@@ -534,13 +536,13 @@ pub fn andamento(pintor: &egui::Painter, trilho: Rect, fracao: f32) {
     pintor.rect_filled(trilho, raio, branco(51));
     let feito = Rect::from_min_size(trilho.min, egui::vec2(trilho.width() * fracao.clamp(0.0, 1.0), trilho.height()));
     if feito.width() > 0.5 {
-        pintor.rect_filled(feito, raio, ACENTO);
+        pintor.rect_filled(feito, raio, acento());
     }
 }
 
 /// O rótulo de seção em maiúsculas e ciano ("REPRODUÇÃO", "TV ABERTA").
 pub fn rotulo_de_secao(ui: &mut egui::Ui, rotulo: &str) {
-    ui.label(egui::RichText::new(rotulo.to_uppercase()).font(forte(13.0)).color(ACENTO).extra_letter_spacing(1.5));
+    ui.label(egui::RichText::new(rotulo.to_uppercase()).font(forte(13.0)).color(acento()).extra_letter_spacing(1.5));
 }
 
 /// A inicial do título, no lugar da capa que ainda não chegou.

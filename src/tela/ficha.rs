@@ -7,7 +7,7 @@
 
 use super::{
     aceso, andamento, botao, botao_redondo, branco, degrade3, forte, fundo_com, icones, inicial, moldura_de_foco, normal,
-    pilula, pintar_cobrindo, selo, texto, Icone, ACENTO, AMARELO, ELEVADO, SECUNDARIO, TEXTO,
+    pilula, pintar_cobrindo, selo, texto, Icone, acento, AMARELO, ELEVADO, SECUNDARIO, TEXTO,
 };
 use crate::{ficha, progresso, vod, App, Destino, ItemNaTela};
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke};
@@ -47,7 +47,7 @@ fn capa(app: &mut App, ui: &mut egui::Ui, titulo: &str, serie: bool, ficha: Opti
     match endereco.and_then(|u| app.imagem(&u, 342)) {
         Some(textura) => pintar_cobrindo(ui, &textura, quadro, 14.0, 0.5, 1.0),
         None => {
-            ui.painter().text(quadro.center(), Align2::CENTER_CENTER, inicial(titulo), forte(64.0), ACENTO);
+            ui.painter().text(quadro.center(), Align2::CENTER_CENTER, inicial(titulo), forte(64.0), acento());
         }
     }
 }
@@ -113,7 +113,7 @@ pub fn ficha_tela(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(34.0);
                 ui.vertical(|ui| {
                     ui.set_max_width(ui.available_width().min(780.0));
-                    ui.label(egui::RichText::new(if serie { "SÉRIE" } else { "FILME" }).font(forte(14.0)).color(ACENTO).extra_letter_spacing(1.5));
+                    ui.label(egui::RichText::new(if serie { "SÉRIE" } else { "FILME" }).font(forte(14.0)).color(acento()).extra_letter_spacing(1.5));
                     ui.label(egui::RichText::new(crate::generos::sem_ano(&titulo)).font(forte(40.0)).color(TEXTO));
                     let Some(f) = ficha.as_ref() else {
                         ui.add_space(10.0);
@@ -251,7 +251,7 @@ fn cartao_de_trabalho(ui: &mut egui::Ui, nome: &str, papel: &str, capa: Option<e
     match capa {
         Some(textura) => pintar_cobrindo(ui, &textura, quadro, 12.0, 0.5, 1.0),
         None => {
-            ui.painter().text(quadro.center(), Align2::CENTER_CENTER, inicial(nome), forte(34.0), ACENTO);
+            ui.painter().text(quadro.center(), Align2::CENTER_CENTER, inicial(nome), forte(34.0), acento());
         }
     }
     texto(ui.painter(), nome, normal(14.0), TEXTO, Pos2::new(quadro.left(), quadro.bottom() + 6.0), largura, 1, false);
@@ -282,7 +282,7 @@ fn ator_tela(app: &mut App, ui: &mut egui::Ui, area: Rect) {
                     .or_else(|| app.ficha_ator_foto.clone().and_then(|u| app.imagem(&u, 185)));
                 let (circulo, _) = ui.allocate_exact_size(egui::vec2(150.0, 150.0), Sense::hover());
                 pintar_redondo(ui, circulo, foto, &nome);
-                ui.painter().circle_stroke(circulo.center(), 76.0, Stroke::new(3.0, ACENTO));
+                ui.painter().circle_stroke(circulo.center(), 76.0, Stroke::new(3.0, acento()));
                 ui.add_space(26.0);
                 ui.vertical(|ui| {
                     ui.set_max_width(ui.available_width().min(860.0));
@@ -290,7 +290,7 @@ fn ator_tela(app: &mut App, ui: &mut egui::Ui, area: Rect) {
                     ui.label(egui::RichText::new(exibido).font(forte(36.0)).color(TEXTO));
                     if let Some(p) = perfil.as_ref() {
                         if !p.dados.is_empty() {
-                            ui.label(egui::RichText::new(&p.dados).font(normal(16.0)).color(ACENTO));
+                            ui.label(egui::RichText::new(&p.dados).font(normal(16.0)).color(acento()));
                         }
                         if !p.biografia.is_empty() {
                             ui.add_space(6.0);
@@ -439,7 +439,7 @@ pub fn serie(app: &mut App, ui: &mut egui::Ui, serie: &vod::Serie) {
                 ui.add_space(32.0);
                 ui.vertical(|ui| {
                     ui.set_max_width(ui.available_width().min(820.0));
-                    ui.label(egui::RichText::new("SÉRIE").font(forte(14.0)).color(ACENTO).extra_letter_spacing(1.5));
+                    ui.label(egui::RichText::new("SÉRIE").font(forte(14.0)).color(acento()).extra_letter_spacing(1.5));
                     ui.label(egui::RichText::new(crate::generos::sem_ano(&serie.titulo)).font(forte(40.0)).color(TEXTO));
                     ui.add_space(6.0);
                     match dados.as_ref() {
@@ -583,7 +583,7 @@ fn cartao_de_episodio(
     }
     if visto {
         let centro = quadro.right_top() + egui::vec2(-20.0, 20.0);
-        pintor.circle_filled(centro, 14.0, ACENTO);
+        pintor.circle_filled(centro, 14.0, acento());
         icones::pintar(&pintor, Icone::Certo, centro, 18.0, super::FUNDO);
     }
     if let Some(m) = marca.as_ref() {

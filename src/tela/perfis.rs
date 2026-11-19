@@ -3,7 +3,7 @@
 //! perfis, pelo avatar do topo e pelos Ajustes. Perfil Kids: sair dele,
 //! gerenciar estando nele e editar um Kids pedem o código de 4 dígitos.
 
-use super::{botao, forte, normal, ACENTO, SECUNDARIO, TEXTO};
+use super::{botao, forte, normal, acento, SECUNDARIO, TEXTO};
 use crate::perfis::{self, Perfil};
 use crate::App;
 use eframe::egui::{self, Color32, Sense, Vec2};
@@ -198,7 +198,7 @@ fn grade(ui: &mut egui::Ui, e: &mut Estado, acao: &mut Option<Depois>, fechar: &
             ui.spacing_mut().item_spacing = Vec2::new(26.0, 22.0);
             for p in &lista {
                 ui.allocate_ui_with_layout(Vec2::new(124.0, 160.0), egui::Layout::top_down(egui::Align::Center), |ui| {
-                    let destaque = (p.id == atual.id && !gerenciar).then_some(ACENTO);
+                    let destaque = (p.id == atual.id && !gerenciar).then_some(acento());
                     let r = avatar(ui, &p.nome, &p.avatar, 120.0, destaque);
                     if p.kids {
                         let pos = r.rect.right_bottom() + Vec2::new(-24.0, -8.0);
@@ -324,7 +324,7 @@ fn editar(ui: &mut egui::Ui, e: &mut Estado, perfil: Option<Perfil>) {
             ui.spacing_mut().item_spacing = Vec2::new(10.0, 10.0);
             for a in perfis::AVATARES {
                 let escolhido = e.avatar == a;
-                if avatar(ui, a, a, 62.0, escolhido.then_some(ACENTO)).clicked() {
+                if avatar(ui, a, a, 62.0, escolhido.then_some(acento())).clicked() {
                     e.avatar = a.into();
                 }
             }

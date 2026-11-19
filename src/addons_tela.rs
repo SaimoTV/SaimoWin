@@ -3,7 +3,7 @@
 
 use crate::addons::AddonStream;
 use crate::debrid::{ConfigDebrid, AVISO_SEM_CHAVE};
-use crate::tela::{aceso, botao, botao_redondo, forte, moldura_de_foco, normal, Icone, ACENTO, ELEVADO, SECUNDARIO, TEXTO};
+use crate::tela::{aceso, botao, botao_redondo, forte, moldura_de_foco, normal, Icone, acento, ELEVADO, SECUNDARIO, TEXTO};
 use crate::{addons, connect, debrid, qr, App};
 use eframe::egui::{self, Align2, Color32, Pos2, Sense, Stroke};
 
@@ -315,7 +315,7 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                                 ui.add(egui::Image::new(&t).fit_to_exact_size(egui::vec2(148.0, 148.0)));
                             }
                             ui.add_space(4.0);
-                            ui.label(egui::RichText::new("Escaneie no celular").font(forte(12.5)).color(ACENTO));
+                            ui.label(egui::RichText::new("Escaneie no celular").font(forte(12.5)).color(acento()));
                             ui.label(egui::RichText::new(&url_lan).font(normal(11.5)).color(SECUNDARIO));
                         });
                         ui.add_space(14.0);
@@ -510,7 +510,7 @@ pub fn seletor_streams(app: &mut App, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new("Fontes disponíveis (Addons)").font(forte(22.0)).color(TEXTO));
-                        ui.label(egui::RichText::new(&sel.titulo_exibicao).font(normal(14.0)).color(ACENTO));
+                        ui.label(egui::RichText::new(&sel.titulo_exibicao).font(normal(14.0)).color(acento()));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if botao_redondo(ui, Icone::Fechar, 36.0, "Fechar (Esc)", false).clicked() {
@@ -544,7 +544,7 @@ pub fn seletor_streams(app: &mut App, ctx: &egui::Context) {
                 }
                 if sel.resolvendo {
                     ui.add_space(10.0);
-                    ui.label(egui::RichText::new("Resolvendo link no Debrid…").font(forte(15.0)).color(ACENTO));
+                    ui.label(egui::RichText::new("Resolvendo link no Debrid…").font(forte(15.0)).color(acento()));
                     ui.add_space(8.0);
                 }
                 if sel.streams.is_empty() {
@@ -569,7 +569,7 @@ pub fn seletor_streams(app: &mut App, ctx: &egui::Context) {
                         pintor.rect_stroke(
                             rect,
                             10.0,
-                            Stroke::new(1.5, if t > 0.1 { ACENTO } else { Color32::from_white_alpha(24) }),
+                            Stroke::new(1.5, if t > 0.1 { acento() } else { Color32::from_white_alpha(24) }),
                             egui::StrokeKind::Inside,
                         );
                         moldura_de_foco(pintor, rect, t, 10.0);

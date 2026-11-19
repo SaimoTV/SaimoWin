@@ -5,7 +5,7 @@
 //! pílulas. Favoritos e o +18 usam a mesma grade.
 
 use super::paginas::{self, cartao_de_titulo, desenhar_cartao, medidas, Tipo, ESPACO, MARGEM};
-use super::{aceso, botao_redondo, forte, normal, pilula, rotulo_de_secao, Icone, ACENTO, FUNDO, SECUNDARIO, TEXTO};
+use super::{aceso, botao_redondo, forte, normal, pilula, rotulo_de_secao, Icone, acento, FUNDO, SECUNDARIO, TEXTO};
 use crate::{legendas, Aba, App, Destino, OrdemExtra};
 use eframe::egui::{self, Align2, Pos2, Rect, Sense};
 
@@ -278,7 +278,7 @@ fn linha(ui: &mut egui::Ui, nome: &str, valor: &str, icone: Icone) -> egui::Resp
     }
     let tinta = TEXTO.lerp_to_gamma(FUNDO, t);
     let sub = SECUNDARIO.lerp_to_gamma(FUNDO.gamma_multiply(0.75), t);
-    super::icones::pintar(pintor, icone, Pos2::new(rect.left() + 30.0, rect.center().y), 24.0, if t > 0.5 { FUNDO } else { ACENTO });
+    super::icones::pintar(pintor, icone, Pos2::new(rect.left() + 30.0, rect.center().y), 24.0, if t > 0.5 { FUNDO } else { acento() });
     pintor.text(Pos2::new(rect.left() + 60.0, rect.top() + 14.0), Align2::LEFT_TOP, nome, forte(18.0), tinta);
     pintor.text(Pos2::new(rect.left() + 60.0, rect.top() + 40.0), Align2::LEFT_TOP, valor, normal(15.0), sub);
     resposta.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -460,7 +460,11 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
                 acao = Some(24);
             }
             ui.add_space(18.0);
-            rotulo_de_secao(ui, "Legenda");
+            rotulo_de_secao(ui, "Aparência e legenda");
+            ui.add_space(4.0);
+            if linha(ui, "Cor do app", crate::tema::CORES[crate::tema::indice()].0, Icone::Estrela).clicked() {
+                crate::tema::proximo();
+            }
             ui.add_space(4.0);
             let est = crate::estilo_legenda::estilo();
             if linha(ui, "Tamanho da legenda", crate::estilo_legenda::TAMANHOS[est.tamanho].0, Icone::Teclado).clicked() {

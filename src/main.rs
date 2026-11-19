@@ -49,6 +49,7 @@ mod perfis;
 mod estatisticas;
 mod estilo_legenda;
 mod novos_episodios;
+mod tema;
 mod conta;
 mod telemetria;
 
@@ -3869,7 +3870,7 @@ impl App {
         // Botão Play/Pause
         if hover_play {
             pintor.circle_filled(ret_play.center(), 22.0, egui::Color32::from_black_alpha(180));
-            pintor.circle_stroke(ret_play.center(), 22.0, egui::Stroke::new(1.5, tela::ACENTO));
+            pintor.circle_stroke(ret_play.center(), 22.0, egui::Stroke::new(1.5, tela::acento()));
         } else {
             pintor.circle_filled(ret_play.center(), 20.0, egui::Color32::from_black_alpha(130));
         }
@@ -3879,7 +3880,7 @@ impl App {
             egui::Align2::CENTER_CENTER,
             icone_play,
             tela::forte(16.0),
-            if hover_play { tela::ACENTO } else { egui::Color32::from_white_alpha(200) },
+            if hover_play { tela::acento() } else { egui::Color32::from_white_alpha(200) },
         );
 
         // 2. Interações diretas com os botões (tem prioridade absoluta sobre bordas de resize)

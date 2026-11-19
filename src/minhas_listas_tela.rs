@@ -3,7 +3,7 @@
 //! volta; cada lista aparece pelo nome.
 
 use crate::minhas_listas::{self as ml, Erro};
-use crate::tela::{botao, branco, forte, normal, rotulo_de_secao, Icone, ACENTO, APAGADO, FUNDO, SECUNDARIO, TEXTO, VIVO};
+use crate::tela::{botao, branco, forte, normal, rotulo_de_secao, Icone, acento, APAGADO, FUNDO, SECUNDARIO, TEXTO, VIVO};
 use crate::App;
 use eframe::egui::{self, Align2, Stroke};
 use std::time::Duration;
@@ -96,7 +96,7 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                                         ui.label(egui::RichText::new(sub).font(normal(13.0)).color(SECUNDARIO));
                                     });
                                     if app.minhas_ocupadas.contains(&l.id) {
-                                        ui.add(egui::Spinner::new().color(ACENTO));
+                                        ui.add(egui::Spinner::new().color(acento()));
                                     } else if d.confirmar.as_deref() == Some(l.id.as_str()) {
                                         if botao(ui, Some(Icone::Fechar), "Sim, remover", true).clicked() {
                                             acao = Some(Acao::Remover(l.id.clone()));
@@ -157,7 +157,7 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
                         if ocupado && !app.minhas_ocupadas.is_empty() && app.minhas_adicionando {
-                            ui.add(egui::Spinner::new().color(ACENTO));
+                            ui.add(egui::Spinner::new().color(acento()));
                             ui.add_space(8.0);
                             ui.label(egui::RichText::new("Lendo a lista…").font(normal(14.0)).color(SECUNDARIO));
                         } else if botao(ui, Some(Icone::Certo), "Adicionar lista", true).clicked() {

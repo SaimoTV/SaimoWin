@@ -13,7 +13,7 @@
 
 use super::{
     aceso, andamento, branco, degrade3, forte, fundo_com, icones, inicial, moldura_de_foco, normal, pintar_contido,
-    pintar_cobrindo, selo_vivo, texto, Icone, ACENTO, APAGADO, ELEVADO, FUNDO, SECUNDARIO, TEXTO,
+    pintar_cobrindo, selo_vivo, texto, Icone, acento, APAGADO, ELEVADO, FUNDO, SECUNDARIO, TEXTO,
 };
 use crate::{catalogo, destaques, eventos, ficha, progresso, radios, Aba, App, Destino, ItemNaTela};
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke};
@@ -101,7 +101,7 @@ impl Cartao {
             heroi,
             selo: None,
             colagem: Vec::new(),
-            cor: ACENTO,
+            cor: acento(),
             icone: None,
             escudos: Default::default(),
         }
@@ -506,7 +506,7 @@ pub(super) fn categoria(aba: Aba) -> (&'static str, char, Color32, Icone, &'stat
             "Desenhos, animações e filmes para a família, com classificação livre."),
         Aba::Novelinhas => ("Novelinhas", 'v', Color32::from_rgb(255, 126, 182), Icone::Tocar,
             "Minisséries em pé, de um minuto por episódio, para maratonar."),
-        _ => ("Filmes", 'f', ACENTO, Icone::Filmes, "Lançamentos, clássicos e tudo entre eles, dublados e legendados."),
+        _ => ("Filmes", 'f', acento(), Icone::Filmes, "Lançamentos, clássicos e tudo entre eles, dublados e legendados."),
     }
 }
 
@@ -1131,10 +1131,10 @@ fn destaque(app: &mut App, ui: &mut egui::Ui, area: Rect, altura: f32) {
     if !meta.is_empty() {
         let mut mx = x;
         if estrela {
-            icones::pintar(&pintor, Icone::Estrela, Pos2::new(mx + 10.0, y + 11.0), 20.0, ACENTO);
+            icones::pintar(&pintor, Icone::Estrela, Pos2::new(mx + 10.0, y + 11.0), 20.0, acento());
             mx += 24.0;
         }
-        y += texto(&pintor, &meta, normal(17.0), ACENTO, Pos2::new(mx, y), largura, 1, false) + 8.0;
+        y += texto(&pintor, &meta, normal(17.0), acento(), Pos2::new(mx, y), largura, 1, false) + 8.0;
     }
     if !sinopse.is_empty() {
         texto(&pintor, &sinopse, normal(16.0), branco(217), Pos2::new(x, y), largura, 2, false);
@@ -1161,12 +1161,12 @@ fn tocando_agora(app: &mut App, ui: &mut egui::Ui, area: Rect, (nome, logo, conf
     match logo.and_then(|u| app.imagem(&u, 256)) {
         Some(t) => pintar_contido(ui, &t, quadro.shrink(10.0)),
         None => {
-            pintor.text(quadro.center(), Align2::CENTER_CENTER, inicial(&nome), forte(lado * 0.4), ACENTO);
+            pintor.text(quadro.center(), Align2::CENTER_CENTER, inicial(&nome), forte(lado * 0.4), acento());
         }
     }
     let x = quadro.right() + 16.0;
     let largura = area.right() - x - 16.0;
-    pintor.text(Pos2::new(x, quadro.top() + 4.0), Align2::LEFT_TOP, if confirmado { "TOCANDO AGORA" } else { "SINTONIZANDO…" }, forte(12.0), ACENTO);
+    pintor.text(Pos2::new(x, quadro.top() + 4.0), Align2::LEFT_TOP, if confirmado { "TOCANDO AGORA" } else { "SINTONIZANDO…" }, forte(12.0), acento());
     texto(&pintor, &nome, forte(19.0), TEXTO, Pos2::new(x, quadro.top() + 24.0), largura, 2, false);
     super::topo::equalizador(ui, Rect::from_min_size(Pos2::new(x, quadro.bottom() - 34.0), egui::vec2(28.0, 22.0)), 5);
     let botao = Rect::from_min_size(Pos2::new(area.right() - 60.0, quadro.bottom() - 44.0), egui::vec2(44.0, 44.0));
@@ -1498,12 +1498,12 @@ fn imagem_do_cartao(app: &mut App, ui: &egui::Ui, quadro: Rect, cartao: &Cartao,
         (None, _) => {
             let marca = match cartao.icone {
                 Some(icone) => {
-                    icones::pintar(pintor, icone, quadro.center(), 44.0, ACENTO);
+                    icones::pintar(pintor, icone, quadro.center(), 44.0, acento());
                     return;
                 }
                 None => inicial(&cartao.titulo),
             };
-            pintor.text(quadro.center(), Align2::CENTER_CENTER, marca, forte(40.0), ACENTO);
+            pintor.text(quadro.center(), Align2::CENTER_CENTER, marca, forte(40.0), acento());
         }
     }
     if let Some((selo, vivo)) = cartao.selo.as_ref() {
