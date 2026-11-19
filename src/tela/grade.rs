@@ -439,6 +439,9 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             rotulo_de_secao(ui, "Estatísticas");
             ui.add_space(4.0);
             linha(ui, "Seu tempo no Saimo", &crate::estatisticas::resumo(), Icone::Estrela);
+            if linha(ui, "Séries favoritas com episódio novo", &crate::novos_episodios::resumo(), Icone::Estrela).clicked() {
+                crate::novos_episodios::dispensar_todos();
+            }
             ui.add_space(18.0);
             rotulo_de_secao(ui, "Aplicativo");
             ui.add_space(4.0);

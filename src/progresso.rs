@@ -170,6 +170,20 @@ pub fn salvar(titulo: &str, posicao: f64, duracao: f64) {
     gravar();
 }
 
+/// Marca como visto à mão: some do "Continue assistindo" e entra nas estatísticas.
+pub fn marcar_visto(titulo: &str) {
+    if titulo.is_empty() {
+        return;
+    }
+    let tinha = marcas().as_mut().unwrap().remove(titulo).is_some();
+    crate::estatisticas::marcar_visto(titulo);
+    if tinha {
+        quando().as_mut().unwrap().insert(titulo.to_string(), agora_ms());
+        gravar_quando();
+        gravar();
+    }
+}
+
 /// Onde parou o último episódio visto de uma série.
 ///
 /// A chave do episódio é "Série · T1 E2"; a do cartão é só o nome da série.

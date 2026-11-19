@@ -24,8 +24,8 @@ pub const AVATARES: [&str; 21] = [
 ];
 
 /// Os arquivos que são de cada perfil.
-pub const ARQUIVOS_DO_PERFIL: [&str; 7] =
-    ["favoritos.txt", "favoritos-vod.txt", "ultimo-canal.txt", "radios-recentes.txt", "progresso.json", "progresso-quando.json", "estatisticas.json"];
+pub const ARQUIVOS_DO_PERFIL: [&str; 8] =
+    ["favoritos.txt", "favoritos-vod.txt", "ultimo-canal.txt", "radios-recentes.txt", "progresso.json", "progresso-quando.json", "estatisticas.json", "novos-episodios.json"];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Perfil {

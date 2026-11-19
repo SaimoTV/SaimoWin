@@ -932,6 +932,11 @@ fn player(app: &mut App, ui: &mut egui::Ui, janela: Rect) {
         menu_de_faixas(app, ui);
         menu_de_fontes(app, ui);
         menu_de_velocidade(app, ui);
+        if let Some(titulo) = app.tocando_vod.as_ref().map(|f| f.titulo.clone()) {
+            if pilula(ui, Some(Icone::Certo), "Visto", false, 46.0).on_hover_text("Marcar como visto").clicked() {
+                crate::progresso::marcar_visto(&titulo);
+            }
+        }
         comuns(app, ui);
     });
     if voltar {

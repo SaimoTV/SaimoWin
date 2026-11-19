@@ -48,6 +48,7 @@ mod sincronia;
 mod perfis;
 mod estatisticas;
 mod estilo_legenda;
+mod novos_episodios;
 mod conta;
 mod telemetria;
 
@@ -104,6 +105,7 @@ fn detectar_gpu(cc: &eframe::CreationContext<'_>) -> &'static str {
 
 fn main() -> eframe::Result<()> {
     diagnostico::iniciar();
+    novos_episodios::iniciar();
     // Se o app cair, a causa fica em falhas.txt (pasta de dados do app, com
     // as últimas ocorrências): sem console no Windows, sem isto um "fechou
     // sozinho" chegava sem pista nenhuma.
