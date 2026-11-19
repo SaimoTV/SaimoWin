@@ -579,6 +579,9 @@ impl Mpv {
         self.propriedade("http-header-fields", &campo_headers);
         // O atraso da legenda é do arquivo: o próximo recomeça no original.
         self.propriedade("sub-delay", "0");
+        for (nome, valor) in crate::estilo_legenda::propriedades() {
+            self.propriedade(nome, &valor);
+        }
         let mut opcoes: Vec<String> = extras.iter().map(|o| o.to_string()).collect();
         // Alguns masters HLS são servidos como text/plain e terminam em .txt.
         // Sem a opção por arquivo o FFmpeg os detecta como terminal ANSI e o

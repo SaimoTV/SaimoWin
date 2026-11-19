@@ -47,6 +47,7 @@ mod seletor;
 mod sincronia;
 mod perfis;
 mod estatisticas;
+mod estilo_legenda;
 mod conta;
 mod telemetria;
 

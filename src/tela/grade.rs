@@ -456,6 +456,22 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             if linha(ui, "Brilho do app", &desc, Icone::TelaCheia).clicked() {
                 acao = Some(24);
             }
+            ui.add_space(18.0);
+            rotulo_de_secao(ui, "Legenda");
+            ui.add_space(4.0);
+            let est = crate::estilo_legenda::estilo();
+            if linha(ui, "Tamanho da legenda", crate::estilo_legenda::TAMANHOS[est.tamanho].0, Icone::Teclado).clicked() {
+                crate::estilo_legenda::proximo_tamanho();
+            }
+            if linha(ui, "Cor da legenda", crate::estilo_legenda::CORES[est.cor].0, Icone::Estrela).clicked() {
+                crate::estilo_legenda::proxima_cor();
+            }
+            if linha(ui, "Posição da legenda", crate::estilo_legenda::POSICOES[est.posicao].0, Icone::Ajustes).clicked() {
+                crate::estilo_legenda::proxima_posicao();
+            }
+            if linha(ui, "Fundo da legenda", if est.fundo { "Com fundo" } else { "Sem fundo" }, Icone::Tocar).clicked() {
+                crate::estilo_legenda::alternar_fundo();
+            }
             // Controle parental: no fim, separado e discreto. No Kids não aparece.
             if !crate::perfis::kids_ativo() {
                 ui.add_space(30.0);
