@@ -604,6 +604,8 @@ struct App {
     pub aprovacoes: std::collections::VecDeque<(u64, String, Instant)>,
     /// Conta Saimo (opcional): sessão, QR e sincronia pela internet.
     pub conta: conta::Conta,
+    /// Boas-vindas (conta ou sem login) por cima de tudo, na primeira abertura sem conta.
+    pub boas_vindas: bool,
     /// A janela "Endereço das listas", quando aberta.
     pub dialogo_listas: Option<listas::Dialogo>,
     /// "Minhas listas": a janela, os dados das listas, os canais delas e o que está baixando.
@@ -906,6 +908,7 @@ impl App {
             },
             aprovacoes: std::collections::VecDeque::new(),
             conta: conta::Conta::carregar(),
+            boas_vindas: tela::janelas::precisa_boas_vindas(conta::Conta::carregar().logado()),
             dialogo_listas: None,
             minhas_dialogo: None,
             minhas_meta: minhas_listas::listar(),
@@ -5022,7 +5025,7 @@ impl eframe::App for App {
             return;
         }
         // Com 2 ou mais perfis, a partida pergunta quem está assistindo.
-        if perfis::deve_escolher_ao_abrir() {
+        if !self.boas_vindas && perfis::deve_escolher_ao_abrir() {
             perfis::marcar_escolhido();
             self.perfis_tela = Some(tela::perfis::Estado::novo(true, false));
         }

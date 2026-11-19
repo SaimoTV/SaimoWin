@@ -448,3 +448,76 @@ pub fn conta(app: &mut App, ctx: &egui::Context) {
         app.conta.fechar();
     }
 }
+
+fn arquivo_boas_vindas() -> std::path::PathBuf {
+    crate::catalogo::pasta().join("boas-vindas.txt")
+}
+
+/// Sem conta e sem ter escolhido "entrar sem login": mostra as boas-vindas.
+pub fn precisa_boas_vindas(app_conta_logada: bool) -> bool {
+    !app_conta_logada && !arquivo_boas_vindas().exists()
+}
+
+/// Primeira tela para quem ainda não entrou numa conta: à esquerda entrar ou
+/// criar a conta, à direita seguir sem login. A conta é opcional.
+pub fn boas_vindas(app: &mut App, ctx: &egui::Context) {
+    if !app.boas_vindas {
+        return;
+    }
+    if app.conta.logado() {
+        app.boas_vindas = false;
+        return;
+    }
+    veu(ctx);
+    let mut entrar = false;
+    let mut sem_login = false;
+    egui::Area::new(egui::Id::new("boas-vindas"))
+        .order(egui::Order::Foreground)
+        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.horizontal_top(|ui| {
+                modal().stroke(Stroke::new(2.0, acento())).show(ui, |ui| {
+                    ui.set_width(440.0);
+                    ui.label(egui::RichText::new("Entrar ou criar conta").font(forte(28.0)).color(TEXTO));
+                    ui.add_space(10.0);
+                    ui.label(egui::RichText::new("Por que criar uma conta?").font(forte(16.0)).color(TEXTO));
+                    ui.add_space(4.0);
+                    for t in [
+                        "• Perfis, favoritos, listas e addons guardados e em qualquer aparelho.",
+                        "• Continue de onde parou no celular, na TV e no computador.",
+                        "• Trocou de aparelho ou reinstalou? Nada se perde.",
+                    ] {
+                        ui.label(egui::RichText::new(t).font(normal(15.0)).color(SECUNDARIO));
+                    }
+                    ui.add_space(16.0);
+                    if botao(ui, None, "Entrar ou criar conta", true).clicked() {
+                        entrar = true;
+                    }
+                });
+                ui.add_space(20.0);
+                modal().show(ui, |ui| {
+                    ui.set_width(440.0);
+                    ui.label(egui::RichText::new("Entrar sem login").font(forte(28.0)).color(TEXTO));
+                    ui.add_space(10.0);
+                    ui.label(
+                        egui::RichText::new("A conta não é obrigatória. Dá para usar o Saimo TV inteiro sem entrar: tudo fica guardado só neste computador.")
+                            .font(normal(16.0))
+                            .color(SECUNDARIO),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("Crie a conta quando quiser, em Ajustes > Conta Saimo.").font(normal(16.0)).color(SECUNDARIO));
+                    ui.add_space(16.0);
+                    if botao(ui, None, "Entrar sem login", false).clicked() {
+                        sem_login = true;
+                    }
+                });
+            });
+        });
+    if entrar {
+        app.conta.abrir();
+    }
+    if sem_login {
+        let _ = std::fs::write(arquivo_boas_vindas(), "1");
+        app.boas_vindas = false;
+    }
+}

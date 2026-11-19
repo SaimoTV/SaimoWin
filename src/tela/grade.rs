@@ -323,7 +323,14 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
             if !crate::perfis::kids_ativo() {
                 rotulo_de_secao(ui, "Conta Saimo");
                 ui.add_space(4.0);
-                if linha(ui, "Conta Saimo", &app.conta.resumo(), Icone::Mais).clicked() {
+                // Sem conta: a primeira opção fica em destaque.
+                let sem_conta = !app.conta.logado();
+                let clicou = egui::Frame::NONE
+                    .stroke(if sem_conta { egui::Stroke::new(2.0, acento()) } else { egui::Stroke::NONE })
+                    .corner_radius(14.0)
+                    .show(ui, |ui| linha(ui, "Conta Saimo", &app.conta.resumo(), Icone::Mais).clicked())
+                    .inner;
+                if clicou {
                     acao = Some(40);
                 }
                 ui.add_space(18.0);
