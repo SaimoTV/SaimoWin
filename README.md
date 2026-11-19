@@ -502,3 +502,7 @@ tela, devagar.
 ## Conta Saimo (opcional)
 
 Ajustes > Conta Saimo mostra o QR e o código (o celular ou o site logado aprova) e tem "Entrar com e-mail e senha". Código em `src/conta.rs` (rede em threads, a tela aplica o pacote) e `src/tela/janelas.rs`; a sessão fica em `conta.json` na pasta de dados. Teste: `SAIMO_CONTA_API=http://127.0.0.1:8787`; `SAIMO_FOTO_TELA=conta` ou `conta-senha` fotografa a janela. Contrato: SaimoPlayer/docs/conta.md. Sem conta, nada muda.
+
+## Recursos pessoais (3.1.1)
+
+- Estatísticas em Ajustes (tempo e títulos vistos) e estilo da legenda (tamanho, cor, posição, fundo) aplicado ao mpv.
