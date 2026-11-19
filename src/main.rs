@@ -46,6 +46,7 @@ mod xtream;
 mod seletor;
 mod sincronia;
 mod perfis;
+mod estatisticas;
 mod conta;
 mod telemetria;
 
@@ -1821,6 +1822,7 @@ impl App {
         }
         if let Some((posicao, duracao)) = mpv.posicao() {
             progresso::salvar(&filme.titulo, posicao, duracao);
+            estatisticas::tocando();
             if agora {
                 self.mandar_dados();
             }

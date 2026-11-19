@@ -436,6 +436,10 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
                 acao = Some(8);
             }
             ui.add_space(18.0);
+            rotulo_de_secao(ui, "Estatísticas");
+            ui.add_space(4.0);
+            linha(ui, "Seu tempo no Saimo", &crate::estatisticas::resumo(), Icone::Estrela);
+            ui.add_space(18.0);
             rotulo_de_secao(ui, "Aplicativo");
             ui.add_space(4.0);
             if linha(ui, "Procurar atualização", &format!("Você está na versão {}", crate::VERSAO), Icone::Baixar).clicked() {

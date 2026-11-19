@@ -151,6 +151,9 @@ pub fn salvar(titulo: &str, posicao: f64, duracao: f64) {
         return;
     }
     let no_fim = duracao > 0.0 && posicao > duracao - SOBRA;
+    if no_fim && duracao > 300.0 {
+        crate::estatisticas::marcar_visto(titulo);
+    }
     {
         let mut guarda = marcas();
         let mapa = guarda.as_mut().unwrap();
