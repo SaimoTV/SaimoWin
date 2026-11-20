@@ -104,7 +104,7 @@ cd dist && zip -r SaimoTV-Windows.zip SaimoTV && cd ..
 if [ -n "${SAIMO_ASSINAR:-}" ]; then
   echo 'AVISO: O zip em si não é assinado, os arquivos dentro dele foram.'
 fi
-shasum -a 256 dist/SaimoTV/* dist/SaimoTV-Windows.zip > dist/SHA256SUMS.txt
+( find dist/SaimoTV -type f | sort; echo dist/SaimoTV-Windows.zip ) | tr '\n' '\0' | xargs -0 shasum -a 256 > dist/SHA256SUMS.txt
 
 [ -f dist/SaimoTV-Windows.zip ] || { echo "o zip não foi gerado"; exit 1; }
 echo "pronto: dist/SaimoTV-Windows.zip ($(du -h dist/SaimoTV-Windows.zip | cut -f1))"
