@@ -1432,7 +1432,7 @@ pub(super) fn desenhar_cartao(app: &mut App, ui: &mut egui::Ui, rect: Rect, cart
         let bot_rect = Rect::from_center_size(bot_centro, egui::vec2(28.0, 28.0));
         let bot_resp = ui.interact(bot_rect, id.with("remover"), Sense::click());
         if bot_resp.clicked() {
-            crate::progresso::esquecer(chave_rem);
+            crate::progresso::tirar_do_continuar(chave_rem);
             removeu = true;
             ui.ctx().request_repaint();
         }

@@ -24,8 +24,10 @@ pub const AVATARES: [&str; 21] = [
 ];
 
 /// Os arquivos que são de cada perfil.
-pub const ARQUIVOS_DO_PERFIL: [&str; 8] =
-    ["favoritos.txt", "favoritos-vod.txt", "ultimo-canal.txt", "radios-recentes.txt", "progresso.json", "progresso-quando.json", "estatisticas.json", "novos-episodios.json"];
+pub const ARQUIVOS_DO_PERFIL: [&str; 9] = [
+    "favoritos.txt", "favoritos-vod.txt", "ultimo-canal.txt", "radios-recentes.txt", "progresso.json", "progresso-quando.json", "estatisticas.json",
+    "novos-episodios.json", "remocoes.json",
+];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Perfil {
@@ -455,6 +457,33 @@ pub fn progresso_de(id: &str) -> Vec<(String, f64, f64, i64)> {
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default();
     marcas.into_iter().map(|(k, (p, d))| (k.clone(), p, d, quando.get(&k).copied().unwrap_or(0))).collect()
+}
+
+/// Tira do progresso de um perfil que não está aberto as marcas que `tirar(chave, quando)` aponta.
+pub fn esquecer_progresso_de(id: &str, tirar: impl Fn(&str, i64) -> bool) {
+    let pasta = pasta_de(id);
+    let mut marcas: HashMap<String, (f64, f64)> = std::fs::read_to_string(pasta.join("progresso.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    let mut quando: HashMap<String, i64> = std::fs::read_to_string(pasta.join("progresso-quando.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    let fora: Vec<String> = marcas.keys().filter(|k| tirar(k, quando.get(*k).copied().unwrap_or(0))).cloned().collect();
+    if fora.is_empty() {
+        return;
+    }
+    for k in &fora {
+        marcas.remove(k);
+        quando.remove(k);
+    }
+    if let Ok(t) = serde_json::to_string(&marcas) {
+        let _ = std::fs::write(pasta.join("progresso.json"), t);
+    }
+    if let Ok(t) = serde_json::to_string(&quando) {
+        let _ = std::fs::write(pasta.join("progresso-quando.json"), t);
+    }
 }
 
 /// Junta uma marca vinda do celular ao progresso de um perfil que não está aberto.

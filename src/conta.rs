@@ -56,7 +56,8 @@ enum Evento {
     Vencido,
     Entrou(Result<(String, Option<String>), String>),
     Remoto(Result<Option<Value>, String>),
-    Enviado(Result<String, String>),
+    /// Enviou: o texto mandado e o que o servidor devolveu já juntado.
+    Enviado(Result<Option<Value>, String>),
 }
 
 struct Falha {
@@ -122,6 +123,8 @@ pub struct Conta {
     /// A janela da conta está aberta (Ajustes > Conta Saimo).
     pub aberta: bool,
     pub pedido: Option<PedidoTv>,
+    /// O código venceu (ou não deu para pedir): para de perguntar até "Gerar novo QR".
+    pub venceu: bool,
     pedindo: bool,
     consultando: bool,
     pub situacao: String,
@@ -151,6 +154,7 @@ impl Conta {
             sincronizando: false,
             aberta: false,
             pedido: None,
+            venceu: false,
             pedindo: false,
             consultando: false,
             situacao: String::new(),
@@ -344,13 +348,15 @@ impl Conta {
         });
     }
 
-    fn enviar(&mut self, pacote: Value, texto: String) {
+    /// Manda o pacote (PUT); o servidor devolve tudo já juntado, que é aplicado aqui.
+    fn enviar(&mut self, pacote: Value) {
         let Some(t) = self.sessao.token.clone() else { return };
+        self.sincronizando = true;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let r = chamar("PUT", "/v1/dados", Some(json!({ "dados": pacote })), Some(&t));
             let _ = tx.send(Evento::Enviado(match r {
-                Ok(_) => Ok(texto),
+                Ok(j) => Ok(j.get("dados").filter(|d| d.is_object()).cloned()),
                 Err(f) if f.status == 401 => Err("401".into()),
                 Err(f) => Err(f.mensagem),
             }));
@@ -399,7 +405,11 @@ impl App {
                             self.conta.situacao = "Esperando o celular…".into();
                             self.conta.pedido = Some(p);
                         }
-                        Err(e) => self.conta.situacao = e,
+                        Err(e) => {
+                            // Sem repetir a cada quadro: espera o "tentar de novo".
+                            self.conta.situacao = e;
+                            self.conta.venceu = true;
+                        }
                     }
                 }
                 Evento::Estado(r) => {
@@ -413,6 +423,8 @@ impl App {
                 Evento::Vencido => {
                     self.conta.consultando = false;
                     self.conta.pedido = None;
+                    self.conta.venceu = true;
+                    self.conta.situacao = "O código venceu.".into();
                 }
                 Evento::Entrou(r) => {
                     self.conta.entrando = false;
@@ -431,20 +443,26 @@ impl App {
                     }
                 }
                 Evento::Remoto(Ok(remoto)) => {
+                    // O que mudou aqui desde o último envio (antes de juntar o que veio).
+                    let mudou_aqui = self.pacote_de_dados().to_string() != self.conta.ultimo_enviado;
                     if let Some(v) = remoto {
                         self.aplicar_dados(&v);
                     }
                     let pacote = self.pacote_de_dados();
-                    let texto = pacote.to_string();
-                    if self.conta.forcar || texto != self.conta.ultimo_enviado {
-                        self.conta.enviar(pacote, texto);
+                    if self.conta.forcar || mudou_aqui {
+                        self.conta.enviar(pacote);
                     } else {
+                        // O servidor já tem tudo o que ficou aqui depois de juntar.
+                        self.conta.ultimo_enviado = pacote.to_string();
                         self.conta.terminou(None);
                     }
                 }
                 Evento::Remoto(Err(e)) => self.conta.terminou(Some(e)),
-                Evento::Enviado(Ok(texto)) => {
-                    self.conta.ultimo_enviado = texto;
+                Evento::Enviado(Ok(dados)) => {
+                    if let Some(v) = dados {
+                        self.aplicar_dados(&v);
+                    }
+                    self.conta.ultimo_enviado = self.pacote_de_dados().to_string();
                     self.conta.terminou(None);
                 }
                 Evento::Enviado(Err(e)) => self.conta.terminou(Some(e)),
@@ -453,25 +471,37 @@ impl App {
 
         // Janela aberta sem conta: mostra um código e pergunta se o celular aprovou.
         if self.conta.aberta && !self.conta.logado() && !self.conta.com_senha {
+            // Um código por vez: venceu, para de perguntar até o "Gerar novo QR"
+            // (cada pergunta ao servidor é cobrada).
             match &self.conta.pedido {
-                Some(p) if Instant::now() >= p.expira => self.conta.pedido = None,
+                Some(p) if Instant::now() >= p.expira => {
+                    self.conta.pedido = None;
+                    self.conta.venceu = true;
+                    self.conta.situacao = "O código venceu.".into();
+                }
                 Some(_) => self.conta.conferir(),
-                None => self.conta.pedir_codigo(),
+                None if !self.conta.venceu => self.conta.pedir_codigo(),
+                None => {}
             }
         }
 
         if !self.conta.logado() || self.conta.sincronizando {
             return;
         }
-        // A cada 10 minutos, logo depois de entrar, e quando algo mudou aqui
-        // (o pacote é comparado a cada 30 s com o último enviado).
+        // A cada 10 minutos (só baixa), logo depois de entrar, e quando algo mudou
+        // aqui: o pacote é comparado a cada 30 s com o último enviado e vai direto
+        // (PUT), no máximo a cada 2 min (assistindo, o ponto muda o tempo todo).
         let agora = Instant::now();
         if agora >= self.conta.proxima_sync {
             self.conta.baixar();
         } else if agora.duration_since(self.conta.ultima_olhada) > Duration::from_secs(30) {
             self.conta.ultima_olhada = agora;
-            if !self.conta.ultimo_enviado.is_empty() && self.pacote_de_dados().to_string() != self.conta.ultimo_enviado {
-                self.conta.baixar();
+            let passou = agora_ms() - self.conta.sessao.sincronizada_em;
+            if !self.conta.ultimo_enviado.is_empty() && passou >= 120_000 {
+                let pacote = self.pacote_de_dados();
+                if pacote.to_string() != self.conta.ultimo_enviado {
+                    self.conta.enviar(pacote);
+                }
             }
         }
     }

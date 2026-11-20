@@ -604,7 +604,9 @@ pub fn adicionar(link: &str, nome: &str) -> Result<(), Erro> {
         return Err(Erro::Limite);
     }
     let lido = obter(link)?;
-    guardar_nova(&lido, Some(link.to_string()), nome)
+    guardar_nova(&lido, Some(link.to_string()), nome)?;
+    crate::remocoes::anotar_lista(Some(link), false);
+    Ok(())
 }
 
 /// Adiciona uma lista a partir de um arquivo .m3u/.m3u8 (sem link guardado).
@@ -674,6 +676,13 @@ pub fn definir_ativa(id: &str, ativa: bool) {
 }
 
 pub fn remover(id: &str) {
+    let link = listar().into_iter().find(|l| l.id == id).and_then(|l| l.link);
+    crate::remocoes::anotar_lista(link.as_deref(), true);
+    remover_sem_anotar(id);
+}
+
+/// Quem tira é a sincronia (a remoção já veio de outro aparelho).
+pub fn remover_sem_anotar(id: &str) {
     let _g = TRAVA.lock();
     let mut listas = ler_indice();
     listas.retain(|l| l.id != id);

@@ -421,6 +421,10 @@ pub fn conta(app: &mut App, ctx: &egui::Context) {
                             ui.label(egui::RichText::new(codigo).font(forte(40.0)).color(acento()));
                             ui.add_space(6.0);
                             ui.label(egui::RichText::new(c.situacao.clone()).font(normal(14.0)).color(SECUNDARIO));
+                            if c.venceu && botao(ui, None, "Gerar novo QR", false).clicked() {
+                                c.venceu = false;
+                                c.situacao = "Pedindo um código…".into();
+                            }
                             ui.add_space(14.0);
                             ui.horizontal(|ui| {
                                 if botao(ui, None, "Entrar com e-mail e senha", true).clicked() {
@@ -572,6 +576,10 @@ fn entrar_embutido(c: &mut crate::conta::Conta, ctx: &egui::Context, ui: &mut eg
             let codigo = c.pedido.as_ref().map(|p| p.codigo.clone()).unwrap_or_else(|| "…".into());
             ui.label(egui::RichText::new(codigo).font(forte(30.0)).color(acento()));
             ui.label(egui::RichText::new(c.situacao.clone()).font(normal(13.0)).color(SECUNDARIO));
+            if c.venceu && botao(ui, None, "Gerar novo QR", false).clicked() {
+                c.venceu = false;
+                c.situacao = "Pedindo um código…".into();
+            }
         });
     });
     ui.add_space(12.0);

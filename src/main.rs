@@ -23,6 +23,7 @@ mod ficha;
 mod catalogo;
 mod mpv;
 mod progresso;
+mod remocoes;
 mod pulos;
 mod radios;
 mod legendas;
@@ -2358,11 +2359,17 @@ impl App {
     }
 
     pub fn favoritar_vod(&mut self, titulo: String) {
-        if let Some(pos) = self.favoritos_vod.iter().position(|f| *f == titulo) {
+        let removido = if let Some(pos) = self.favoritos_vod.iter().position(|f| *f == titulo) {
             self.favoritos_vod.remove(pos);
+            true
         } else {
-            self.favoritos_vod.push(titulo);
-        }
+            self.favoritos_vod.push(titulo.clone());
+            false
+        };
+        let a = self.acervo.iter().find(|a| a.titulo == titulo);
+        let tipo = if a.is_some_and(|a| a.serie) { "s" } else { "f" };
+        let ano = a.map(|a| a.ano.clone()).unwrap_or_default();
+        remocoes::anotar_favorito(tipo, &titulo, &ano, removido);
         gravar_lista("favoritos-vod.txt", &self.favoritos_vod);
         self.mandar_dados();
     }
@@ -4711,11 +4718,14 @@ vec4 hook() {{
     }
 
     pub fn favoritar(&mut self, canal: String) {
-        if let Some(pos) = self.favoritos.iter().position(|f| *f == canal) {
+        let removido = if let Some(pos) = self.favoritos.iter().position(|f| *f == canal) {
             self.favoritos.remove(pos);
+            true
         } else {
-            self.favoritos.push(canal);
-        }
+            self.favoritos.push(canal.clone());
+            false
+        };
+        remocoes::anotar_canal(&canal, removido);
         gravar_favoritos(&self.favoritos);
         self.reordenar();
         self.mandar_dados();

@@ -231,6 +231,30 @@ pub fn pendentes() -> Vec<(String, Marca)> {
         .collect()
 }
 
+/// O "remover" do cartão do Continue assistindo: a série sai inteira (senão o
+/// episódio anterior aparece no lugar) e a remoção é anotada para a sincronia
+/// não trazer de volta.
+pub fn tirar_do_continuar(chave: &str) {
+    let (serie, nome) = match chave.split_once(" · T") {
+        Some((s, _)) => (true, s.to_string()),
+        None => (false, chave.to_string()),
+    };
+    let alvos: Vec<String> = if serie {
+        let prefixo = format!("{nome} · ");
+        marcas().as_ref().map(|m| m.keys().filter(|k| k.starts_with(&prefixo)).cloned().collect()).unwrap_or_default()
+    } else {
+        vec![chave.to_string()]
+    };
+    for k in alvos {
+        esquecer(&k);
+    }
+    let (titulo, ano) = match nome.strip_suffix(')').and_then(|s| s.rfind(" (").map(|i| (s, i))) {
+        Some((s, i)) if s[i + 2..].len() == 4 && s[i + 2..].chars().all(|c| c.is_ascii_digit()) => (s[..i].to_string(), s[i + 2..].to_string()),
+        _ => (nome.clone(), String::new()),
+    };
+    crate::remocoes::anotar_continuar(if serie { "s" } else { "f" }, &titulo, &ano);
+}
+
 pub fn esquecer(titulo: &str) {
     {
         let mut guarda = marcas();

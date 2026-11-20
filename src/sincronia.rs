@@ -10,7 +10,8 @@
 //!
 //! Progresso: vale o mais recente. Favoritos: união. Endereços: vale o
 //! escolhido por último; quem nunca escolheu fica com o que o outro escolheu.
-//! Listas adicionadas: união pelo link.
+//! Listas adicionadas: união pelo link. Remoções (remocoes.rs) viajam junto:
+//! o que foi tirado num aparelho não volta pela união (só se entrar de novo depois).
 
 use crate::{connect, listas, minhas_listas, progresso, App};
 use serde_json::{json, Value};
@@ -50,6 +51,7 @@ impl App {
     /// Onde parou, títulos e canais favoritos de um perfil, no formato do pacote (lidos da pasta dele).
     fn campos_de(&self, id: &str) -> (Vec<Value>, Vec<Value>, Vec<String>) {
         let achado = |titulo: &str| self.acervo.iter().find(|a| a.titulo == titulo);
+        let reg = crate::remocoes::ler(id);
         let mut lista = Vec::new();
         for (chave, pos, dur, em) in crate::perfis::progresso_de(id) {
             if pos <= 0.0 {
@@ -62,6 +64,9 @@ impl App {
                 }
                 None => ("f", chave.clone(), String::new(), 0, 0),
             };
+            if crate::remocoes::titulo_removido(&reg.prog, tipo, &titulo, &ano, em) {
+                continue;
+            }
             let letra = achado(&titulo).map(|a| a.letra.clone()).unwrap_or_else(|| letra(&titulo));
             lista.push(json!({
                 "tipo": tipo, "titulo": titulo, "ano": ano, "letra": letra,
@@ -73,12 +78,16 @@ impl App {
             .iter()
             .map(|t| {
                 let a = achado(t);
-                json!({
+                let mut o = json!({
                     "tipo": if a.is_some_and(|a| a.serie) { "s" } else { "f" },
                     "titulo": t,
                     "ano": a.map(|a| a.ano.clone()).unwrap_or_default(),
                     "letra": a.map(|a| a.letra.clone()).unwrap_or_else(|| letra(t)),
-                })
+                });
+                if let Some(em) = reg.fav_em.get(t) {
+                    o["em"] = json!(em);
+                }
+                o
             })
             .collect();
         (lista, fav_titulos, crate::perfis::ler_lista_de(id, "favoritos.txt"))
@@ -95,12 +104,22 @@ impl App {
                 p["progresso"] = json!(pr);
                 p["favTitulos"] = json!(ft);
                 p["favCanais"] = json!(fc);
+                crate::remocoes::anexar(&mut p, &crate::remocoes::ler(&id));
                 p
             })
             .collect();
+        let reg_listas = crate::remocoes::ler_listas();
         let minhas: Vec<Value> = minhas_listas::listar()
             .into_iter()
-            .filter_map(|l| l.link.map(|link| json!({"nome": l.nome, "link": link})))
+            .filter_map(|l| {
+                l.link.map(|link| {
+                    let mut o = json!({"nome": l.nome, "link": link});
+                    if let Some(em) = reg_listas.em.get(&link) {
+                        o["em"] = json!(em);
+                    }
+                    o
+                })
+            })
             .collect();
         let mut pacote = montar_pacote(
             lista,
@@ -112,6 +131,9 @@ impl App {
         );
         pacote["perfis"] = json!(perfis);
         pacote["perfisRemovidos"] = json!(crate::perfis::remocoes_para_pacote());
+        if !reg_listas.rem.is_empty() {
+            pacote["listas"]["minhasRemovidas"] = json!(reg_listas.rem);
+        }
         pacote
     }
 
@@ -126,10 +148,40 @@ impl App {
     fn aplicar_campos(&mut self, msg: &Value) {
         let num = |v: &Value, campo: &str| v.get(campo).and_then(Value::as_f64).unwrap_or(0.0);
         let texto = |v: &Value, campo: &str| v.get(campo).and_then(Value::as_str).unwrap_or("").to_string();
+        let reg = crate::remocoes::juntar(&crate::perfis::id_ativo(), msg);
+
+        // O que foi removido em outro aparelho depois de entrar aqui sai daqui também.
+        for (chave, _, _, em) in progresso::todas() {
+            let (tipo, titulo, ano) = match episodio(&chave) {
+                Some((serie, _, _)) => {
+                    let (t, a) = separar_ano(&serie);
+                    ("s", t, a)
+                }
+                None => ("f", chave.clone(), String::new()),
+            };
+            if crate::remocoes::titulo_removido(&reg.prog, tipo, &titulo, &ano, em) {
+                progresso::esquecer(&chave);
+            }
+        }
+        let fav_antes = self.favoritos_vod.len();
+        let acervo = &self.acervo;
+        self.favoritos_vod.retain(|t| {
+            let a = acervo.iter().find(|a| &a.titulo == t);
+            let tipo = if a.is_some_and(|a| a.serie) { "s" } else { "f" };
+            !crate::remocoes::fav_removido(&reg, tipo, t, &a.map(|a| a.ano.clone()).unwrap_or_default())
+        });
+        let mut mudou_vod = self.favoritos_vod.len() != fav_antes;
+        let canais_antes = self.favoritos.len();
+        self.favoritos.retain(|n| !crate::remocoes::canal_removido(&reg, n));
+        let mut mudou_canais = self.favoritos.len() != canais_antes;
 
         for p in msg.get("progresso").and_then(Value::as_array).into_iter().flatten() {
             let titulo = texto(p, "titulo");
             if titulo.is_empty() {
+                continue;
+            }
+            let tipo_p = if texto(p, "tipo") == "s" { "s" } else { "f" };
+            if crate::remocoes::titulo_removido(&reg.prog, tipo_p, &titulo, &texto(p, "ano"), num(p, "em") as i64) {
                 continue;
             }
             let chave = if texto(p, "tipo") == "s" {
@@ -152,9 +204,12 @@ impl App {
             progresso::importar(&chave, num(p, "pos") / 1000.0, num(p, "dur") / 1000.0, num(p, "em") as i64);
         }
 
-        let mut mudou_vod = false;
         for f in msg.get("favTitulos").and_then(Value::as_array).into_iter().flatten() {
             let titulo = texto(f, "titulo");
+            let tipo_f = if texto(f, "tipo") == "s" { "s" } else { "f" };
+            if crate::remocoes::titulo_removido(&reg.fav, tipo_f, &titulo, &texto(f, "ano"), num(f, "em") as i64) {
+                continue;
+            }
             if !titulo.is_empty() && !self.favoritos_vod.contains(&titulo) {
                 self.favoritos_vod.push(titulo);
                 mudou_vod = true;
@@ -164,9 +219,8 @@ impl App {
             crate::gravar_lista("favoritos-vod.txt", &self.favoritos_vod);
         }
 
-        let mut mudou_canais = false;
         for nome in msg.get("favCanais").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
-            if !nome.is_empty() && !self.favoritos.iter().any(|f| f == nome) {
+            if !nome.is_empty() && !self.favoritos.iter().any(|f| f == nome) && !crate::remocoes::canal_removido(&reg, nome) {
                 self.favoritos.push(nome.to_string());
                 mudou_canais = true;
             }
@@ -202,30 +256,60 @@ impl App {
     /// Onde parou e favoritos de um perfil que não está aberto: direto na pasta dele.
     fn aplicar_campos_em(&self, id: &str, msg: &Value) {
         let num = |v: &Value, campo: &str| v.get(campo).and_then(Value::as_f64).unwrap_or(0.0);
+        let texto = |v: &Value, campo: &str| v.get(campo).and_then(Value::as_str).unwrap_or("").to_string();
+        let reg = crate::remocoes::juntar(id, msg);
+        crate::perfis::esquecer_progresso_de(id, |chave, em| {
+            let (tipo, titulo, ano) = match episodio(chave) {
+                Some((serie, _, _)) => {
+                    let (t, a) = separar_ano(&serie);
+                    ("s", t, a)
+                }
+                None => ("f", chave.to_string(), String::new()),
+            };
+            crate::remocoes::titulo_removido(&reg.prog, tipo, &titulo, &ano, em)
+        });
         for p in msg.get("progresso").and_then(Value::as_array).into_iter().flatten() {
+            let tipo_p = if texto(p, "tipo") == "s" { "s" } else { "f" };
+            if crate::remocoes::titulo_removido(&reg.prog, tipo_p, &texto(p, "titulo"), &texto(p, "ano"), num(p, "em") as i64) {
+                continue;
+            }
             if let Some(chave) = self.chave_de_progresso(p) {
                 crate::perfis::importar_progresso_de(id, &chave, num(p, "pos") / 1000.0, num(p, "dur") / 1000.0, num(p, "em") as i64);
             }
         }
         let mut vod = crate::perfis::ler_lista_de(id, "favoritos-vod.txt");
+        let antes_de_tudo = vod.len();
+        vod.retain(|t| {
+            let a = self.acervo.iter().find(|a| &a.titulo == t);
+            let tipo = if a.is_some_and(|a| a.serie) { "s" } else { "f" };
+            !crate::remocoes::fav_removido(&reg, tipo, t, &a.map(|a| a.ano.clone()).unwrap_or_default())
+        });
+        let tirou = vod.len() != antes_de_tudo;
         let antes = vod.len();
         for f in msg.get("favTitulos").and_then(Value::as_array).into_iter().flatten() {
             let t = f.get("titulo").and_then(Value::as_str).unwrap_or("");
+            let tipo_f = if texto(f, "tipo") == "s" { "s" } else { "f" };
+            if crate::remocoes::titulo_removido(&reg.fav, tipo_f, t, &texto(f, "ano"), num(f, "em") as i64) {
+                continue;
+            }
             if !t.is_empty() && !vod.iter().any(|x| x == t) {
                 vod.push(t.to_string());
             }
         }
-        if vod.len() != antes {
+        if tirou || vod.len() != antes {
             crate::perfis::gravar_lista_de(id, "favoritos-vod.txt", &vod);
         }
         let mut canais = crate::perfis::ler_lista_de(id, "favoritos.txt");
+        let antes_de_tudo = canais.len();
+        canais.retain(|n| !crate::remocoes::canal_removido(&reg, n));
+        let tirou = canais.len() != antes_de_tudo;
         let antes = canais.len();
         for nome in msg.get("favCanais").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
-            if !nome.is_empty() && !canais.iter().any(|f| f == nome) {
+            if !nome.is_empty() && !canais.iter().any(|f| f == nome) && !crate::remocoes::canal_removido(&reg, nome) {
                 canais.push(nome.to_string());
             }
         }
-        if canais.len() != antes {
+        if tirou || canais.len() != antes {
             crate::perfis::gravar_lista_de(id, "favoritos.txt", &canais);
         }
     }
@@ -316,6 +400,12 @@ impl App {
                 listas::definir_escolhidos_em(if em > local { em } else { agora_ms() });
             }
         }
+        let reg = crate::remocoes::juntar_listas(l.get("minhasRemovidas"));
+        for x in minhas_listas::listar() {
+            if x.link.as_deref().is_some_and(|link| crate::remocoes::lista_removida(&reg, link, None)) {
+                minhas_listas::remover_sem_anotar(&x.id);
+            }
+        }
         let ja: Vec<String> = minhas_listas::listar().into_iter().filter_map(|x| x.link).collect();
         let novas: Vec<(String, String)> = l
             .get("minhas")
@@ -325,7 +415,11 @@ impl App {
             .filter_map(|m| {
                 let link = m.get("link").and_then(Value::as_str)?.trim().to_string();
                 let nome = m.get("nome").and_then(Value::as_str).unwrap_or("").to_string();
-                ((link.starts_with("http://") || link.starts_with("https://")) && !ja.contains(&link)).then_some((link, nome))
+                let em = m.get("em").and_then(Value::as_i64).unwrap_or(0);
+                ((link.starts_with("http://") || link.starts_with("https://"))
+                    && !ja.contains(&link)
+                    && !crate::remocoes::lista_removida(&reg, &link, Some(em)))
+                .then_some((link, nome))
             })
             .collect();
         if !novas.is_empty() && !self.minhas_adicionando {
