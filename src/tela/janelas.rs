@@ -16,6 +16,37 @@ pub fn modal() -> egui::Frame {
 }
 
 /// O véu que escurece o app atrás do modal.
+/// Uma janela no meio da tela que nunca corta embaixo. Ancorada no centro, o
+/// egui posiciona pela altura do quadro anterior e corta o que passa dela (era
+/// o que escondia botões nas boas-vindas e no "Adicionar lista"): aqui o topo
+/// vem da altura medida, e o resto rola quando não cabe.
+pub fn area_central(ctx: &egui::Context, id: &str, conteudo: impl FnOnce(&mut egui::Ui)) {
+    let tela = ctx.content_rect();
+    let chave = egui::Id::new(id).with("tamanho");
+    let tamanho = ctx.data(|d| d.get_temp::<Vec2>(chave)).unwrap_or(Vec2::new(tela.width() * 0.5, tela.height() * 0.6));
+    let margem = 24.0;
+    // Posição fixa (âncora no centro reservava embaixo a mesma margem de cima e cortava).
+    let x = (tela.center().x - tamanho.x / 2.0).max(tela.left() + margem);
+    let y = (tela.center().y - tamanho.y / 2.0).max(tela.top() + margem);
+    let resposta = egui::Area::new(egui::Id::new(id))
+        .order(egui::Order::Foreground)
+        .fixed_pos(egui::pos2(x, y))
+        // Sem isto o egui limita a área a 600×400 (o tamanho padrão de uma Area).
+        .default_size(Vec2::new(tela.width() - 2.0 * margem, tela.height() - 2.0 * margem))
+        .show(ctx, |ui| {
+            ui.set_max_height(tela.height() - 2.0 * margem);
+            egui::ScrollArea::vertical()
+                .max_height(tela.height() - 2.0 * margem)
+                .id_salt(egui::Id::new(id).with("rolagem"))
+                .show(ui, conteudo);
+        });
+    let medido = resposta.response.rect.size();
+    if (medido - tamanho).length() > 1.0 {
+        ctx.data_mut(|d| d.insert_temp(chave, medido));
+        ctx.request_repaint();
+    }
+}
+
 pub fn veu(ctx: &egui::Context) {
     let pintor = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("veu-do-modal")));
     pintor.rect_filled(ctx.content_rect(), 0.0, egui::Color32::from_black_alpha(140));
@@ -50,13 +81,14 @@ pub fn avisos(app: &mut App, ctx: &egui::Context) {
 
 /// Todos os comandos numa tela só.
 pub fn atalhos(app: &mut App, ctx: &egui::Context) {
-    let linhas: [(&str, &str); 22] = [
+    let linhas: [(&str, &str); 23] = [
         ("Espaço", "tocar ou pausar"),
         ("Setas", "andar pelas fileiras e pela lista"),
         ("Enter", "abrir ou assistir o escolhido"),
         ("Page Up / Page Down", "canal anterior / próximo"),
-        ("Seta direita", "trocar a fonte do canal"),
-        ("Setas no filme", "voltar / avançar 10 s"),
+        ("Ao vivo: cima / baixo", "canal anterior / próximo (lista fechada)"),
+        ("Ao vivo: esquerda / direita", "abrir a lista de canais / o guia"),
+        ("Filme: esquerda / direita", "voltar / avançar 10 s; seta para baixo vai aos botões"),
         ("0 a 9", "ir direto ao número do canal"),
         ("G", "guia de programação"),
         ("L", "mostrar ou esconder a lista de canais"),
@@ -473,53 +505,80 @@ pub fn boas_vindas(app: &mut App, ctx: &egui::Context) {
         app.conta.fechar();
         return;
     }
-    veu(ctx);
+    // Tela cheia: o fundo some quase todo (antes os Ajustes apareciam no meio dos cartões).
+    let pintor = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("veu-boas-vindas")));
+    pintor.rect_filled(ctx.content_rect(), 0.0, egui::Color32::from_black_alpha(225));
     let mut sem_login = false;
     // O QR já aparece aqui: a conta pede o código enquanto a tela estiver aberta.
     if !app.conta.aberta {
         app.conta.abrir();
     }
     ctx.request_repaint_after(Duration::from_millis(500));
-    egui::Area::new(egui::Id::new("boas-vindas"))
-        .order(egui::Order::Foreground)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.horizontal_top(|ui| {
-                modal().stroke(Stroke::new(2.0, acento())).show(ui, |ui| {
-                    ui.set_width(440.0);
-                    ui.label(egui::RichText::new("Entrar ou criar conta").font(forte(28.0)).color(TEXTO));
-                    ui.add_space(10.0);
-                    ui.label(egui::RichText::new("Por que criar uma conta?").font(forte(16.0)).color(TEXTO));
-                    ui.add_space(4.0);
-                    for t in [
-                        "• Perfis, favoritos, listas e addons guardados e em qualquer aparelho.",
-                        "• Continue de onde parou no celular, na TV e no computador.",
-                        "• Trocou de aparelho ou reinstalou? Nada se perde.",
-                    ] {
-                        ui.label(egui::RichText::new(t).font(normal(15.0)).color(SECUNDARIO));
-                    }
-                    ui.add_space(14.0);
-                    entrar_embutido(&mut app.conta, ctx, ui);
-                });
-                ui.add_space(20.0);
-                modal().show(ui, |ui| {
-                    ui.set_width(440.0);
-                    ui.label(egui::RichText::new("Entrar sem login").font(forte(28.0)).color(TEXTO));
-                    ui.add_space(10.0);
-                    ui.label(
-                        egui::RichText::new("A conta não é obrigatória. Dá para usar o Saimo TV inteiro sem entrar: tudo fica guardado só neste computador.")
-                            .font(normal(16.0))
-                            .color(SECUNDARIO),
-                    );
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new("Crie a conta quando quiser, em Ajustes > Conta Saimo.").font(normal(16.0)).color(SECUNDARIO));
-                    ui.add_space(16.0);
-                    if botao(ui, None, "Entrar sem login", false).clicked() {
-                        sem_login = true;
-                    }
-                });
+    // Responsivo: lado a lado quando cabe, um em cima do outro quando não; a
+    // largura de cada cartão acompanha a janela (e o conteúdo vai em coluna:
+    // dentro de uma linha o egui punha título, texto, QR e botão lado a lado).
+    let tela = ctx.content_rect();
+    let lado_a_lado = tela.width() >= 2.0 * 360.0 + 20.0 + 2.0 * 56.0 + 40.0;
+    let largura = if lado_a_lado {
+        ((tela.width() - 40.0 - 20.0) / 2.0 - 56.0).clamp(300.0, 440.0)
+    } else {
+        (tela.width() - 40.0 - 56.0).clamp(260.0, 520.0)
+    };
+    let cartao_conta = |ui: &mut egui::Ui, conta: &mut crate::conta::Conta| {
+        modal().stroke(Stroke::new(2.0, acento())).show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_width(largura);
+                ui.label(egui::RichText::new("Entrar ou criar conta").font(forte(28.0)).color(TEXTO));
+                ui.add_space(10.0);
+                ui.label(egui::RichText::new("Por que criar uma conta?").font(forte(16.0)).color(TEXTO));
+                ui.add_space(4.0);
+                for t in [
+                    "• Perfis, favoritos, listas e addons guardados e em qualquer aparelho.",
+                    "• Continue de onde parou no celular, na TV e no computador.",
+                    "• Trocou de aparelho ou reinstalou? Nada se perde.",
+                ] {
+                    ui.label(egui::RichText::new(t).font(normal(15.0)).color(SECUNDARIO));
+                }
+                ui.add_space(14.0);
+                entrar_embutido(conta, ctx, ui);
             });
         });
+    };
+    let cartao_sem_login = |ui: &mut egui::Ui, sem_login: &mut bool| {
+        modal().show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_width(largura);
+                ui.label(egui::RichText::new("Entrar sem login").font(forte(28.0)).color(TEXTO));
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new("A conta não é obrigatória. Dá para usar o Saimo TV inteiro sem entrar: tudo fica guardado só neste computador.")
+                        .font(normal(16.0))
+                        .color(SECUNDARIO),
+                );
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new("Crie a conta quando quiser, em Ajustes > Conta Saimo.").font(normal(16.0)).color(SECUNDARIO));
+                ui.add_space(16.0);
+                if botao(ui, None, "Entrar sem login", false).clicked() {
+                    *sem_login = true;
+                }
+            });
+        });
+    };
+    area_central(ctx, "boas-vindas", |ui| {
+        if lado_a_lado {
+            ui.horizontal_top(|ui| {
+                cartao_conta(ui, &mut app.conta);
+                ui.add_space(20.0);
+                cartao_sem_login(ui, &mut sem_login);
+            });
+        } else {
+            ui.vertical_centered(|ui| {
+                cartao_conta(ui, &mut app.conta);
+                ui.add_space(16.0);
+                cartao_sem_login(ui, &mut sem_login);
+            });
+        }
+    });
     if sem_login {
         let _ = std::fs::write(arquivo_boas_vindas(), "1");
         app.boas_vindas = false;
@@ -557,7 +616,10 @@ fn entrar_embutido(c: &mut crate::conta::Conta, ctx: &egui::Context, ui: &mut eg
         }
         return;
     }
-    ui.horizontal(|ui| {
+    // Cartão estreito: o QR em cima do texto (lado a lado não cabe).
+    let estreito = ui.available_width() < 420.0;
+    let disposicao = if estreito { egui::Layout::top_down(egui::Align::Min) } else { egui::Layout::left_to_right(egui::Align::Min) };
+    ui.with_layout(disposicao, |ui| {
         let url = c.pedido.as_ref().map(|p| p.url.clone()).unwrap_or_default();
         if !url.is_empty() && c.qr_url != url {
             c.qr_textura = crate::qr::gerar(&url).ok().map(|m| ctx.load_texture("qr-conta", m.para_imagem(6), egui::TextureOptions::NEAREST));

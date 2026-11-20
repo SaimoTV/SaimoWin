@@ -69,6 +69,24 @@ pub fn filas() -> Vec<Fila> {
         .collect()
 }
 
+/// Baixa as fileiras de novo (sem esperar a validade) e devolve as novas só se
+/// mudaram em relação ao que está em disco: a tela mostra o guardado na hora e
+/// troca quando tiver novidade.
+pub fn novidades() -> Option<Vec<Fila>> {
+    let base = crate::listas::filmes()?;
+    let baixado = crate::rede::texto(&format!("{base}{ARQUIVO}"))?;
+    if baixado.trim().is_empty() {
+        return None;
+    }
+    let local = arquivo();
+    let igual = std::fs::read_to_string(&local).map(|g| g == baixado).unwrap_or(false);
+    let _ = std::fs::write(&local, &baixado);
+    if igual {
+        return None;
+    }
+    Some(filas())
+}
+
 fn filas_brutas() -> Vec<Fila> {
     let Some(texto) = texto() else { return Vec::new() };
     ler(&texto)

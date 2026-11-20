@@ -5,7 +5,7 @@
 use crate::minhas_listas::{self as ml, Erro};
 use crate::tela::{botao, branco, forte, normal, rotulo_de_secao, Icone, acento, APAGADO, FUNDO, SECUNDARIO, TEXTO, VIVO};
 use crate::App;
-use eframe::egui::{self, Align2, Stroke};
+use eframe::egui::{self, Stroke};
 use std::time::Duration;
 
 #[derive(Clone, Debug, Default)]
@@ -60,10 +60,9 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
     let ocupado = !app.minhas_ocupadas.is_empty();
     let mut acao: Option<Acao> = None;
     let mut mudou = false;
-    egui::Area::new(egui::Id::new("minhas-listas"))
-        .order(egui::Order::Foreground)
-        .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
+    // Muitas listas ou janela baixa: a janela inteira rola (antes o "Adicionar
+    // lista" ficava para fora da tela e não dava para salvar).
+    crate::tela::janelas::area_central(ctx, "minhas-listas", |ui| {
             egui::Frame::NONE
                 .fill(FUNDO)
                 .stroke(Stroke::new(1.0, branco(20)))
@@ -173,7 +172,7 @@ pub fn dialogo(app: &mut App, ctx: &egui::Context) {
                         }
                     });
                 });
-        });
+    });
     if ocupado {
         ctx.request_repaint_after(Duration::from_millis(100));
     }

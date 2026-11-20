@@ -912,7 +912,9 @@ fn player(app: &mut App, ui: &mut egui::Ui, janela: Rect) {
     ui.scope_builder(egui::UiBuilder::new().max_rect(fila).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         let (icone, dica) = if app.pausado { (Icone::Tocar, "Tocar (Espaço)") } else { (Icone::Pausar, "Pausar (Espaço)") };
-        if botao_redondo(ui, icone, 52.0, dica, false).clicked() {
+        let tocar = botao_redondo(ui, icone, 52.0, dica, false);
+        app.primeiro_botao_player = Some(tocar.id);
+        if tocar.clicked() {
             app.alternar_pausa();
         }
         if botao_redondo(ui, Icone::Voltar10, 46.0, "Voltar 10 s (seta esquerda)", false).clicked() {

@@ -144,12 +144,89 @@ fn main() -> eframe::Result<()> {
         viewport: janela,
         ..Default::default()
     };
-    diagnostico::etapa("criando a janela e o contexto OpenGL");
+    let software = gl_software::preparar();
+    diagnostico::etapa(if software { "criando a janela e o contexto OpenGL (por software, Mesa)" } else { "criando a janela e o contexto OpenGL" });
     let resultado = eframe::run_native("Saimo TV", opcoes, Box::new(|cc| Ok(Box::new(App::novo(cc)))));
     if let Err(e) = &resultado {
+        // Placa ou driver sem OpenGL 2 (ex.: o adaptador básico da Microsoft):
+        // abre de novo com o OpenGL por software que vai junto (pasta mesa).
+        if !software && gl_software::relancar(&e.to_string()) {
+            return Ok(());
+        }
         diagnostico::erro_fatal(&e.to_string());
     }
     resultado
+}
+
+/// OpenGL por software (Mesa llvmpipe, `mesa\opengl32.dll` ao lado do .exe) para
+/// computadores sem OpenGL de verdade: lá o eframe não cria o contexto ("glutin
+/// error: extension to create ES context with wgl is not present") e o app não
+/// abria. Carregar a DLL do Mesa antes da janela faz o glutin usá-la no lugar
+/// da do Windows. Fica marcado em `gl-software.txt` por 7 dias (depois tenta a
+/// placa de novo: o driver pode ter sido atualizado).
+mod gl_software {
+    #[cfg(windows)]
+    fn dll() -> Option<std::path::PathBuf> {
+        let p = std::env::current_exe().ok()?.parent()?.join("mesa").join("opengl32.dll");
+        p.exists().then_some(p)
+    }
+
+    #[cfg(windows)]
+    fn marca() -> std::path::PathBuf {
+        crate::catalogo::pasta().join("gl-software.txt")
+    }
+
+    /// Carrega o Mesa se o computador precisa dele. Devolve se carregou.
+    pub fn preparar() -> bool {
+        #[cfg(windows)]
+        {
+            let pedido = std::env::var("SAIMO_GL_SOFTWARE").is_ok();
+            let marcado = std::fs::metadata(marca())
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t.elapsed().map(|d| d.as_secs() < 7 * 24 * 3600).unwrap_or(true));
+            if !(pedido || marcado) {
+                return false;
+            }
+            let Some(caminho) = dll() else { return false };
+            // A biblioteca fica carregada até o fim (o glutin pega a já carregada pelo nome).
+            // LOAD_WITH_ALTERED_SEARCH_PATH: as DLLs de que o Mesa depende (libgallium_wgl.dll) vêm da pasta dele.
+            match unsafe { libloading::os::windows::Library::load_with_flags(&caminho, libloading::os::windows::LOAD_WITH_ALTERED_SEARCH_PATH) } {
+                Ok(lib) => {
+                    std::mem::forget(lib);
+                    true
+                }
+                Err(e) => {
+                    crate::diagnostico::etapa(&format!("Mesa não carregou: {e}"));
+                    false
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        false
+    }
+
+    /// Falhou o OpenGL da placa: marca e abre o app de novo, já com o Mesa.
+    pub fn relancar(erro: &str) -> bool {
+        #[cfg(windows)]
+        {
+            let e = erro.to_lowercase();
+            if !(e.contains("glutin") || e.contains("opengl") || e.contains("wgl") || e.contains("context")) {
+                return false;
+            }
+            if dll().is_none() {
+                return false;
+            }
+            let _ = std::fs::write(marca(), erro);
+            crate::diagnostico::etapa("sem OpenGL na placa: abrindo de novo com o Mesa");
+            let Ok(exe) = std::env::current_exe() else { return false };
+            std::process::Command::new(exe).args(std::env::args().skip(1)).spawn().is_ok()
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = erro;
+            false
+        }
+    }
 }
 
 /// Recados que chegam das threads de fundo.
@@ -479,6 +556,10 @@ struct App {
     tocando_vod: Option<TocandoVod>,
     /// Até quando a barra de controles fica à vista; mexer o mouse renova.
     controles_ate: Instant,
+    /// Quando as fileiras do On Demand foram conferidas por novidade pela última vez.
+    filas_conferidas: Instant,
+    /// O primeiro botão da fileira do player (o seta para baixo leva o foco para ele).
+    pub(crate) primeiro_botao_player: Option<egui::Id>,
     ajuda_aberta: bool,
     velocidade: f32,
     preencher: bool,
@@ -829,6 +910,8 @@ impl App {
             fonte_preferida: None,
             tocando_vod: None,
             controles_ate: Instant::now() + Duration::from_secs(6),
+            filas_conferidas: Instant::now().checked_sub(Duration::from_secs(120)).unwrap_or_else(Instant::now),
+            primeiro_botao_player: None,
             ajuda_aberta: false,
             velocidade: 1.0,
             preencher: false,
@@ -3194,6 +3277,37 @@ impl App {
         // Enter com o botão de pular à vista faz o que o botão diz; Esc
         // dispensa o cartão do próximo episódio.
         if self.aba == Aba::Canais && self.tocando_vod.is_some() {
+            // Setas no filme/série, como na TV Box: na barra (nada com foco)
+            // esquerda/direita mexem no tempo; a seta para baixo leva o foco aos
+            // botões (Legendas, Episódios…), onde esquerda/direita só andam entre
+            // eles (o egui move o foco) e a seta para cima volta para a barra.
+            if matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight | egui::Key::ArrowUp | egui::Key::ArrowDown) {
+                let focado = ctx.memory(|m| m.focused()).is_some();
+                self.mostrar_controles();
+                if focado {
+                    if key == egui::Key::ArrowUp {
+                        if let Some(id) = ctx.memory(|m| m.focused()) {
+                            ctx.memory_mut(|m| m.surrender_focus(id));
+                        }
+                    }
+                    return;
+                }
+                match key {
+                    egui::Key::ArrowDown => {
+                        if let Some(id) = self.primeiro_botao_player {
+                            ctx.memory_mut(|m| m.request_focus(id));
+                        }
+                        return;
+                    }
+                    egui::Key::ArrowUp => return,
+                    _ => {} // esquerda/direita: o tempo, mais abaixo
+                }
+            }
+            // Botão com foco: Enter/Espaço é dele (o egui clica), não do player nem da lista.
+            if matches!(key, egui::Key::Enter | egui::Key::Space) && ctx.memory(|m| m.focused()).is_some() {
+                self.mostrar_controles();
+                return;
+            }
             if key == egui::Key::Enter && self.acao_na_tela() {
                 return;
             }
@@ -3285,6 +3399,22 @@ impl App {
                 }
             }
             _ if self.aba != Aba::Canais => self.tecla_no_acervo(key),
+            // Ao vivo com a lista fechada, o padrão da TV Box: cima/baixo trocam
+            // de canal, esquerda abre a lista (no canal no ar) e direita, o guia.
+            egui::Key::ArrowDown | egui::Key::ArrowUp if self.tocando_vod.is_none() && !self.lista_aberta && !self.guia_aberto => {
+                self.pular_canal(if key == egui::Key::ArrowDown { 1 } else { -1 });
+                self.mostrar_controles();
+            }
+            egui::Key::ArrowLeft if self.tocando_vod.is_none() && !self.lista_aberta => {
+                if let Some(i) = self.tocando.as_ref().map(|t| t.canal) {
+                    self.foco = i;
+                }
+                self.guia_aberto = false;
+                self.lista_aberta = true;
+            }
+            egui::Key::ArrowRight if self.tocando_vod.is_none() && !self.lista_aberta => {
+                self.guia_aberto = !self.guia_aberto;
+            }
             egui::Key::ArrowDown | egui::Key::ArrowUp => {
                 let visiveis = self.visiveis();
                 let atual = visiveis.iter().position(|i| *i == self.foco).unwrap_or(0);
@@ -4339,6 +4469,15 @@ vec4 hook() {{
             std::thread::spawn(move || {
                 let _ = emissor.send(Recado::Destaques(destaques::filas()));
             });
+        } else if com_destaques && !self.carregando_filas && self.filas_conferidas.elapsed() > Duration::from_secs(60) {
+            // Já tem o que mostrar: confere novidade por trás e só troca se mudou.
+            self.filas_conferidas = Instant::now();
+            let emissor = self.emissor.clone();
+            std::thread::spawn(move || {
+                if let Some(novas) = destaques::novidades() {
+                    let _ = emissor.send(Recado::Destaques(novas));
+                }
+            });
         }
         if com_destaques && addons::tem_ativo() && !self.descoberta_pedida {
             self.atualizar_descoberta_addons();
@@ -4878,6 +5017,10 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
                 app.busca_vod = std::env::var("SAIMO_FOTO_BUSCA").unwrap_or_else(|_| "amor".into());
             }
             "ajustes" => app.abrir_secao(Aba::Ajustes),
+            "boas-vindas" => {
+                app.abrir_secao(Aba::Ajustes);
+                app.boas_vindas = true;
+            }
             "conta" => {
                 app.abrir_secao(Aba::Ajustes);
                 app.conta.abrir();
@@ -4893,6 +5036,7 @@ fn foto_de_teste(app: &mut App, ctx: &egui::Context) {
                 }
             }
             "minhas-listas" => {
+                app.boas_vindas = false;
                 app.abrir_secao(Aba::Ajustes);
                 app.abrir_minhas_listas();
             }

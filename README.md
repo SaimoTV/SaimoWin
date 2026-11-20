@@ -508,3 +508,10 @@ Remoções (3.3.3): o que sai do Continue assistindo (a série sai inteira), dos
 ## Recursos pessoais (3.1.1)
 
 - Estatísticas em Ajustes (tempo e títulos vistos) e estilo da legenda (tamanho, cor, posição, fundo) aplicado ao mpv.
+
+## Ajustes da 3.3.4
+
+- **Computador sem OpenGL na placa** (ex.: adaptador básico da Microsoft, erro "extension to create ES context with wgl is not present"): o app abre de novo sozinho com o OpenGL por software (Mesa, `mesa\\opengl32.dll` ao lado do .exe; `empacotar.sh` copia de `mpv/mesa/`). Fica marcado em `gl-software.txt` por 7 dias. `SAIMO_GL_SOFTWARE=1` força.
+- **Janelas no meio da tela** (`tela::janelas::area_central`): posição fixa pela altura medida e rolagem quando não cabe. Antes, ancoradas no centro, cortavam embaixo (boas-vindas e Minhas listas com muitas listas sem o botão de salvar). `SAIMO_FOTO_TELA=boas-vindas` fotografa a de boas-vindas.
+- **Setas no player**: no filme, esquerda/direita mexem no tempo só na barra (nada em foco); seta para baixo leva aos botões, onde esquerda/direita andam entre eles; seta para cima volta. No ao vivo com a lista fechada: cima/baixo trocam de canal, esquerda abre a lista, direita o guia (o padrão da TV Box).
+- **On Demand**: as fileiras abrem do disco na hora e são conferidas a cada entrada (no máximo 1x por minuto); só trocam se o arquivo mudou (`destaques::novidades`).

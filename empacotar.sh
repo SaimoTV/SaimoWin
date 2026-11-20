@@ -40,6 +40,16 @@ cp "$DLL" dist/SaimoTV/
 if [ -f "mpv/vulkan-1.dll" ]; then
   cp "mpv/vulkan-1.dll" dist/SaimoTV/
 fi
+# OpenGL por software (Mesa llvmpipe, x64): só usado em computador sem OpenGL na
+# placa/driver, que antes não abria ("extension to create ES context with wgl").
+# Baixar de github.com/pal1000/mesa-dist-win (mesa3d-*-release-msvc, pasta x64):
+# opengl32.dll e libgallium_wgl.dll (e libglapi.dll, se houver) em mpv/mesa/.
+if [ -f "mpv/mesa/opengl32.dll" ]; then
+  mkdir -p dist/SaimoTV/mesa
+  cp mpv/mesa/*.dll dist/SaimoTV/mesa/
+else
+  echo "AVISO: sem mpv/mesa/opengl32.dll — o pacote sai sem o OpenGL por software"
+fi
 # Motor de torrent (SaimoTorrent, Rust): toca fonte de addon sem Debrid.
 MOTOR="${SAIMO_TORRENT_DIR:-../SaimoTorrent}/target/x86_64-pc-windows-gnu/release/saimo-torrent.exe"
 if [ ! -f "$MOTOR" ]; then
