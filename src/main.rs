@@ -188,6 +188,10 @@ mod gl_software {
                 return false;
             }
             let Some(caminho) = dll() else { return false };
+            // llvmpipe (CPU): o que funciona em qualquer máquina, até sem driver de vídeo.
+            if std::env::var("GALLIUM_DRIVER").is_err() {
+                std::env::set_var("GALLIUM_DRIVER", "llvmpipe");
+            }
             // A biblioteca fica carregada até o fim (o glutin pega a já carregada pelo nome).
             // LOAD_WITH_ALTERED_SEARCH_PATH: as DLLs de que o Mesa depende (libgallium_wgl.dll) vêm da pasta dele.
             match unsafe { libloading::os::windows::Library::load_with_flags(&caminho, libloading::os::windows::LOAD_WITH_ALTERED_SEARCH_PATH) } {
