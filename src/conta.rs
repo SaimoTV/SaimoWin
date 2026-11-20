@@ -13,7 +13,8 @@ use serde_json::{json, Value};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-const DEZ_MIN: Duration = Duration::from_secs(600);
+/// Conferência periódica com a janela em foco (voltar a ela já sincroniza).
+const PERIODICO: Duration = Duration::from_secs(900);
 
 pub fn api() -> String {
     std::env::var("SAIMO_CONTA_API")
@@ -125,6 +126,8 @@ pub struct Conta {
     pub pedido: Option<PedidoTv>,
     /// O código venceu (ou não deu para pedir): para de perguntar até "Gerar novo QR".
     pub venceu: bool,
+    /// A janela do app está em foco (fora dela não pergunta ao servidor).
+    pub janela_em_foco: bool,
     pedindo: bool,
     consultando: bool,
     pub situacao: String,
@@ -155,6 +158,7 @@ impl Conta {
             aberta: false,
             pedido: None,
             venceu: false,
+            janela_em_foco: true,
             pedindo: false,
             consultando: false,
             situacao: String::new(),
@@ -315,7 +319,15 @@ impl Conta {
         if self.consultando || Instant::now() < p.proxima {
             return;
         }
-        p.proxima = Instant::now() + p.intervalo;
+        // 8 s nos 2 primeiros minutos, então 15 s, e 20 s depois de 5 min (cada pergunta é cobrada).
+        let resta = p.expira.saturating_duration_since(Instant::now());
+        let passou = Duration::from_secs(600).saturating_sub(resta);
+        p.proxima = Instant::now()
+            + if passou < Duration::from_secs(120) { p.intervalo } else if passou < Duration::from_secs(300) { Duration::from_secs(15) } else { Duration::from_secs(20) };
+        // Janela atrás de outro programa: não pergunta (o código continua valendo).
+        if !self.janela_em_foco {
+            return;
+        }
         self.consultando = true;
         let codigo = p.aparelho_codigo.clone();
         let tx = self.tx.clone();
@@ -348,6 +360,19 @@ impl Conta {
         });
     }
 
+    /// Ao fechar o app: manda o que ainda não foi, esperando a resposta (o app está saindo).
+    pub fn enviar_ao_fechar(&mut self, pacote: Value) {
+        let Some(t) = self.sessao.token.clone() else { return };
+        if self.ultimo_enviado.is_empty() || pacote.to_string() == self.ultimo_enviado {
+            return;
+        }
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(chamar("PUT", "/v1/dados", Some(json!({ "dados": pacote })), Some(&t)).is_ok());
+        });
+        let _ = rx.recv_timeout(Duration::from_secs(5));
+    }
+
     /// Manda o pacote (PUT); o servidor devolve tudo já juntado, que é aplicado aqui.
     fn enviar(&mut self, pacote: Value) {
         let Some(t) = self.sessao.token.clone() else { return };
@@ -371,7 +396,7 @@ impl Conta {
                 self.sessao.sincronizada_em = agora_ms();
                 self.gravar();
                 self.erro = None;
-                self.proxima_sync = Instant::now() + DEZ_MIN;
+                self.proxima_sync = Instant::now() + PERIODICO;
             }
             Some(e) if e == "401" => {
                 // Sessão encerrada em outro lugar (sair de todos, conta apagada).
@@ -386,6 +411,17 @@ impl Conta {
 }
 
 impl App {
+    /// Saiu da janela: manda o que mudou desde o último envio, sem esperar os 5 min.
+    pub(crate) fn enviar_conta_se_mudou(&mut self) {
+        if !self.conta.logado() || self.conta.sincronizando || self.conta.ultimo_enviado.is_empty() {
+            return;
+        }
+        let pacote = self.pacote_de_dados();
+        if pacote.to_string() != self.conta.ultimo_enviado {
+            self.conta.enviar(pacote);
+        }
+    }
+
     /// Sincronizar agora (o botão da janela).
     pub(crate) fn sincronizar_conta_agora(&mut self) {
         if self.conta.logado() && !self.conta.sincronizando {
@@ -488,16 +524,19 @@ impl App {
         if !self.conta.logado() || self.conta.sincronizando {
             return;
         }
-        // A cada 10 minutos (só baixa), logo depois de entrar, e quando algo mudou
-        // aqui: o pacote é comparado a cada 30 s com o último enviado e vai direto
-        // (PUT), no máximo a cada 2 min (assistindo, o ponto muda o tempo todo).
+        // A cada 15 minutos com a janela em foco (só baixa), logo depois de entrar,
+        // e quando algo mudou aqui: o pacote é comparado a cada 30 s com o último
+        // enviado e vai direto (PUT), no máximo a cada 5 min (assistindo, o ponto
+        // muda o tempo todo); sair da janela ou fechar o app manda na hora.
         let agora = Instant::now();
-        if agora >= self.conta.proxima_sync {
+        if agora >= self.conta.proxima_sync && !self.conta.janela_em_foco {
+            // Fora de foco: deixa para quando voltar.
+        } else if agora >= self.conta.proxima_sync {
             self.conta.baixar();
         } else if agora.duration_since(self.conta.ultima_olhada) > Duration::from_secs(30) {
             self.conta.ultima_olhada = agora;
             let passou = agora_ms() - self.conta.sessao.sincronizada_em;
-            if !self.conta.ultimo_enviado.is_empty() && passou >= 120_000 {
+            if !self.conta.ultimo_enviado.is_empty() && passou >= 300_000 {
                 let pacote = self.pacote_de_dados();
                 if pacote.to_string() != self.conta.ultimo_enviado {
                     self.conta.enviar(pacote);

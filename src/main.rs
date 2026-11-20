@@ -2812,6 +2812,12 @@ impl App {
     }
 
     fn cuidar_dos_recados(&mut self, ctx: &egui::Context) {
+        let focada = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        if self.conta.janela_em_foco && !focada {
+            // Foi para outro programa: o que mudou (ex.: o ponto do filme) vai já.
+            self.enviar_conta_se_mudou();
+        }
+        self.conta.janela_em_foco = focada;
         self.passo_da_conta();
         let mut chegou_algo = false;
         while let Ok(recado) = self.recados.try_recv() {
@@ -5240,6 +5246,11 @@ impl eframe::App for App {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.guardar_progresso(true);
+        // Fechou o app com mudança não enviada: manda antes de sair (no máximo 5 s).
+        if self.conta.logado() {
+            let pacote = self.pacote_de_dados();
+            self.conta.enviar_ao_fechar(pacote);
+        }
         telemetria::fechando();
         diagnostico::encerrar();
     }
