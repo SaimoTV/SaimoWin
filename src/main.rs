@@ -9,6 +9,7 @@
 // Sem console preto atrás da janela quando alguém abre pelo Explorer.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod acessibilidade;
 mod abertura;
 mod diagnostico;
 mod atualizacao;

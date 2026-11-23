@@ -70,6 +70,10 @@ pub fn forte(tamanho: f32) -> FontId {
 }
 
 pub fn normal(tamanho: f32) -> FontId {
+    // Acessibilidade > Texto em negrito: o texto comum usa a letra mais grossa.
+    if crate::acessibilidade::atual().negrito {
+        return FontId::new(tamanho, egui::FontFamily::Name("forte".into()));
+    }
     FontId::proportional(tamanho)
 }
 
@@ -165,7 +169,10 @@ fn ajustar_escala(ctx: &egui::Context) {
     let nativo = ctx.native_pixels_per_point().unwrap_or(1.0).max(0.5);
     let fisico = ctx.content_rect().width() * ctx.pixels_per_point();
     let largura = fisico / nativo;
-    let alvo = ((largura / 1280.0).clamp(0.9, 1.6) * 20.0).round() / 20.0;
+    // Vezes o tamanho escolhido na Acessibilidade, sem passar do ponto em que o
+    // menu do topo (pensado para 1280) deixaria de caber: 1050 pontos no mínimo.
+    let escolhido = (largura / 1280.0).clamp(0.9, 1.6) * crate::acessibilidade::escala();
+    let alvo = ((escolhido.min(largura / 1050.0).max(0.9)) * 20.0).round() / 20.0;
     if (ctx.zoom_factor() - alvo).abs() > 0.01 {
         ctx.set_zoom_factor(alvo);
     }
@@ -401,6 +408,12 @@ pub fn moldura_de_foco(pintor: &egui::Painter, rect: Rect, t: f32, cantos: f32) 
         return;
     }
     pintor.rect_filled(rect, cantos, branco((38.0 * t) as u8));
+    if crate::acessibilidade::atual().foco_forte {
+        // Foco reforçado: amarelo grosso com uma faixa escura por fora.
+        pintor.rect_stroke(rect.expand(4.0), cantos + 4.0, Stroke::new(9.0, Color32::from_black_alpha((210.0 * t) as u8)), egui::StrokeKind::Outside);
+        pintor.rect_stroke(rect.expand(2.0), cantos + 2.0, Stroke::new(5.0, Color32::from_rgb(255, 212, 0).gamma_multiply(t)), egui::StrokeKind::Outside);
+        return;
+    }
     pintor.rect_stroke(rect, cantos, Stroke::new(3.0, acento().gamma_multiply(t)), egui::StrokeKind::Inside);
 }
 

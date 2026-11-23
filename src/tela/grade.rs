@@ -320,174 +320,224 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(direita.width().min(760.0));
             ui.add_space(34.0);
-            if !crate::perfis::kids_ativo() {
-                rotulo_de_secao(ui, "Conta Saimo");
+            // Os grupos: a tela abre com a lista deles; Esc volta à lista.
+            let id_grupo = egui::Id::new("ajustes.grupo");
+            let mut grupo: Option<u8> = ui.ctx().data(|d| d.get_temp(id_grupo)).flatten();
+            if grupo.is_some() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                grupo = None;
+            }
+            const GRUPOS: [(&str, &str); 8] = [
+                ("Listas e conteúdo", "Endereços, Minhas listas, addons e Debrid"),
+                ("Reprodução", "Preencher, nitidez, volume, atraso e velocidade"),
+                ("Legendas", "Idioma, tamanho, cor, posição e fundo"),
+                ("Aparência e acessibilidade", "Tamanho da tela, negrito, foco reforçado, cor e brilho"),
+                ("Perfis e estatísticas", "Trocar, gerenciar, seu tempo e episódios novos"),
+                ("Saimo Connect", "Controle pelo celular"),
+                ("Aplicativo", "Atualização, atalhos e tela cheia"),
+                ("Controle parental", "Conteúdo adulto e senha"),
+            ];
+            match grupo {
+                None => {
+                    if !crate::perfis::kids_ativo() {
+                        let sem_conta = !app.conta.logado();
+                        let r = egui::Frame::NONE
+                            .stroke(if sem_conta { egui::Stroke::new(2.0, acento()) } else { egui::Stroke::NONE })
+                            .corner_radius(14.0)
+                            .show(ui, |ui| linha(ui, "Conta Saimo", &app.conta.resumo(), Icone::Mais))
+                            .inner;
+                        if std::mem::take(&mut app.focar_primeira_linha) {
+                            r.request_focus();
+                        }
+                        if r.clicked() {
+                            acao = Some(40);
+                        }
+                        ui.add_space(6.0);
+                    }
+                    for (n, (nome, sobre)) in GRUPOS.iter().enumerate() {
+                        if n == 7 && crate::perfis::kids_ativo() {
+                            continue;
+                        }
+                        let sobre = if n == 3 { format!("{} · agora: {}", sobre, crate::acessibilidade::resumo()) } else { sobre.to_string() };
+                        let r = linha(ui, nome, &sobre, Icone::Mais);
+                        if crate::perfis::kids_ativo() && n == 0 && std::mem::take(&mut app.focar_primeira_linha) {
+                            r.request_focus();
+                        }
+                        if r.clicked() {
+                            grupo = Some(n as u8);
+                            app.focar_primeira_linha = true;
+                        }
+                    }
+                }
+                Some(g) => {
+                    let voltar = linha(ui, &format!("‹  {}", GRUPOS[g as usize].0), "Voltar à lista de ajustes (Esc)", Icone::Fechar);
+                    if std::mem::take(&mut app.focar_primeira_linha) {
+                        voltar.request_focus();
+                    }
+                    if voltar.clicked() {
+                        grupo = None;
+                    }
+                    ui.add_space(14.0);
+                }
+            }
+            if grupo == Some(0) {
+                rotulo_de_secao(ui, "Listas");
                 ui.add_space(4.0);
-                // Sem conta: a primeira opção fica em destaque.
-                let sem_conta = !app.conta.logado();
-                let clicou = egui::Frame::NONE
-                    .stroke(if sem_conta { egui::Stroke::new(2.0, acento()) } else { egui::Stroke::NONE })
-                    .corner_radius(14.0)
-                    .show(ui, |ui| linha(ui, "Conta Saimo", &app.conta.resumo(), Icone::Mais).clicked())
-                    .inner;
-                if clicou {
-                    acao = Some(40);
+                let mostra = |l: Option<String>| l.unwrap_or_else(|| "Desligada".to_string());
+                if linha(ui, "Lista de canais", &mostra(crate::listas::canais()), Icone::Link)
+                    .on_hover_text("Ver, editar ou apagar o endereço")
+                    .clicked()
+                {
+                    acao = Some(9);
+                }
+                if linha(ui, "Lista de filmes e séries", &mostra(crate::listas::filmes()), Icone::Link)
+                    .on_hover_text("Ver, editar ou apagar o endereço")
+                    .clicked()
+                {
+                    acao = Some(9);
                 }
                 ui.add_space(18.0);
+                rotulo_de_secao(ui, "Minhas listas");
+                ui.add_space(4.0);
+                let resumo = match app.minhas_meta.len() {
+                    0 => "Cole o link de uma lista .m3u. Ela fica só neste aparelho.".to_string(),
+                    1 => format!("1 lista · {} canais", app.minhas_meta[0].canais),
+                    n => format!("{n} listas · {} canais", app.minhas_meta.iter().map(|l| l.canais).sum::<usize>()),
+                };
+                if linha(ui, "Minhas listas", &resumo, Icone::Link).on_hover_text("Adicionar, atualizar ou remover listas .m3u").clicked() {
+                    acao = Some(12);
+                }
+                ui.add_space(18.0);
+                rotulo_de_secao(ui, "Addons e Debrid (Stremio)");
+                ui.add_space(4.0);
+                let qtd_addons = crate::addons::todos().len();
+                let ativos_addons = crate::addons::ativos().len();
+                let debrid_ativo = crate::debrid::config().tem_ativo();
+                let resumo_addons = match (qtd_addons, debrid_ativo) {
+                    (0, false) => "Nenhum addon instalado · clique para configurar ou escanear QR Code".to_string(),
+                    (0, true) => "Debrid configurado · adicione um addon Stremio (/manifest.json)".to_string(),
+                    (n, false) => format!("{ativos_addons} de {n} addons ativos · clique para gerenciar"),
+                    (n, true) => format!("{ativos_addons} de {n} addons ativos · Debrid ligado"),
+                };
+                if linha(ui, "Addons e Debrid", &resumo_addons, Icone::Mais)
+                    .on_hover_text("Instalar addons Stremio por URL/QR Code e configurar chaves TorBox / Real-Debrid / AllDebrid / Premiumize")
+                    .clicked()
+                {
+                    acao = Some(13);
+                }
             }
-            rotulo_de_secao(ui, "Perfis");
-            ui.add_space(4.0);
-            let ativo = crate::perfis::ativo();
-            let resumo = format!("{}{} · {} perfil(is)", ativo.nome, if ativo.kids { " (Kids)" } else { "" }, crate::perfis::todos().len());
-            if linha(ui, "Trocar de perfil", &resumo, Icone::Mais).clicked() {
-                acao = Some(20);
+            if grupo == Some(1) {
+                rotulo_de_secao(ui, "Reprodução");
+                ui.add_space(4.0);
+                let primeira = linha(ui, "Preencher a tela", if app.preencher { "Ligado: corta as bordas, sem faixas pretas" } else { "Desligado: o vídeo inteiro, com faixas se preciso" }, Icone::Preencher);
+                if primeira.clicked() {
+                    acao = Some(0);
+                }
+                if linha(ui, "Super Resolução (Upscaling)", &app.rotulo_upscaling(), Icone::TelaCheia).clicked() {
+                    acao = Some(7);
+                }
+                if linha(ui, "Áudio Inteligente", if app.audio_inteligente { "Ligado: normaliza e equilibra o volume de todos os canais" } else { "Desligado: áudio original da transmissão" }, Icone::Som).clicked() {
+                    acao = Some(10);
+                }
+                if linha(ui, "Zero Delay (Menor Atraso)", &app.rotulo_zero_delay(), Icone::Velocidade).clicked() {
+                    acao = Some(11);
+                }
+                if linha(ui, "Velocidade dos filmes e séries", &format!("{}×", app.velocidade), Icone::Velocidade).clicked() {
+                    acao = Some(1);
+                }
+                if linha(ui, "Som", &if app.mudo { "Sem som".to_string() } else { format!("Volume {}%", app.volume) }, if app.mudo { Icone::Mudo } else { Icone::Som }).clicked() {
+                    acao = Some(2);
+                }
             }
-            if linha(ui, "Gerenciar perfis", "Criar, editar, avatares e perfil Kids (até 10)", Icone::Mais).clicked() {
-                acao = Some(21);
+            if grupo == Some(2) {
+                rotulo_de_secao(ui, "Legendas");
+                ui.add_space(4.0);
+                let idioma = legendas::idioma_guardado();
+                if linha(ui, "Idioma preferido", nome_do_idioma(&idioma), Icone::Legendas).on_hover_text("Liga sozinha a primeira legenda deste idioma").clicked() {
+                    acao = Some(3);
+                }
+                let est = crate::estilo_legenda::estilo();
+                if linha(ui, "Tamanho da legenda", crate::estilo_legenda::TAMANHOS[est.tamanho].0, Icone::Teclado).clicked() {
+                    crate::estilo_legenda::proximo_tamanho();
+                }
+                if linha(ui, "Cor da legenda", crate::estilo_legenda::CORES[est.cor].0, Icone::Estrela).clicked() {
+                    crate::estilo_legenda::proxima_cor();
+                }
+                if linha(ui, "Posição da legenda", crate::estilo_legenda::POSICOES[est.posicao].0, Icone::Ajustes).clicked() {
+                    crate::estilo_legenda::proxima_posicao();
+                }
+                if linha(ui, "Fundo da legenda", if est.fundo { "Com fundo" } else { "Sem fundo" }, Icone::Tocar).clicked() {
+                    crate::estilo_legenda::alternar_fundo();
+                }
             }
-            ui.add_space(18.0);
-            rotulo_de_secao(ui, "Reprodução");
-            ui.add_space(4.0);
-            let primeira = linha(ui, "Preencher a tela", if app.preencher { "Ligado: corta as bordas, sem faixas pretas" } else { "Desligado: o vídeo inteiro, com faixas se preciso" }, Icone::Preencher);
-            if std::mem::take(&mut app.focar_primeira_linha) {
-                primeira.request_focus();
+            if grupo == Some(3) {
+                acessibilidade(ui);
+                ui.add_space(18.0);
+                rotulo_de_secao(ui, "Aparência");
+                ui.add_space(4.0);
+                if linha(ui, "Cor do app", crate::tema::CORES[crate::tema::indice()].0, Icone::Estrela).clicked() {
+                    crate::tema::proximo();
+                }
+                let b = crate::brilho::valor();
+                let desc = if b >= 100 { "100% (normal) · clique diminui 25%".to_string() } else { format!("{b}% · clique muda · em 0% qualquer tecla volta") };
+                if linha(ui, "Brilho do app", &desc, Icone::TelaCheia).clicked() {
+                    acao = Some(24);
+                }
             }
-            if primeira.clicked() {
-                acao = Some(0);
+            if grupo == Some(4) {
+                rotulo_de_secao(ui, "Perfis");
+                ui.add_space(4.0);
+                let ativo = crate::perfis::ativo();
+                let resumo = format!("{}{} · {} perfil(is)", ativo.nome, if ativo.kids { " (Kids)" } else { "" }, crate::perfis::todos().len());
+                if linha(ui, "Trocar de perfil", &resumo, Icone::Mais).clicked() {
+                    acao = Some(20);
+                }
+                if linha(ui, "Gerenciar perfis", "Criar, editar, avatares e perfil Kids (até 10)", Icone::Mais).clicked() {
+                    acao = Some(21);
+                }
+                ui.add_space(18.0);
+                rotulo_de_secao(ui, "Estatísticas");
+                ui.add_space(4.0);
+                linha(ui, "Seu tempo no Saimo", &crate::estatisticas::resumo(), Icone::Estrela);
+                if linha(ui, "Séries favoritas com episódio novo", &crate::novos_episodios::resumo(), Icone::Estrela).clicked() {
+                    crate::novos_episodios::dispensar_todos();
+                }
             }
-            if linha(ui, "Super Resolução (Upscaling)", &app.rotulo_upscaling(), Icone::TelaCheia).clicked() {
-                acao = Some(7);
+            if grupo == Some(5) {
+                rotulo_de_secao(ui, "Saimo Connect");
+                ui.add_space(4.0);
+                let onde = match (crate::connect::ativo(), crate::connect::ip_local()) {
+                    (true, Some(ip)) => format!("No ar em {ip}:{}: o app Saimo do celular acha este computador na mesma rede", crate::connect::porta()),
+                    (true, None) => "No ar, mas sem rede local: ligue o computador ao Wi-Fi ou ao cabo".to_string(),
+                    (false, _) => format!("Fora do ar: a porta {} está ocupada por outro programa", crate::connect::porta()),
+                };
+                linha(ui, "Controle pelo celular", &onde, Icone::Cast).on_hover_text(
+                    "Se o Windows perguntar sobre o Firewall, permita em redes privadas: sem isso o celular não acha o computador",
+                );
+                let autorizados = crate::connect::quantos_autorizados();
+                let resumo = match autorizados {
+                    0 => "Nenhum celular autorizado".to_string(),
+                    1 => "1 celular autorizado · clique para esquecer".to_string(),
+                    n => format!("{n} celulares autorizados · clique para esquecer"),
+                };
+                if linha(ui, "Esquecer todos os celulares", &resumo, Icone::Fechar).clicked() {
+                    acao = Some(8);
+                }
             }
-            if linha(ui, "Áudio Inteligente", if app.audio_inteligente { "Ligado: normaliza e equilibra o volume de todos os canais" } else { "Desligado: áudio original da transmissão" }, Icone::Som).clicked() {
-                acao = Some(10);
+            if grupo == Some(6) {
+                rotulo_de_secao(ui, "Aplicativo");
+                ui.add_space(4.0);
+                if linha(ui, "Procurar atualização", &format!("Você está na versão {}", crate::VERSAO), Icone::Baixar).clicked() {
+                    acao = Some(4);
+                }
+                if linha(ui, "Atalhos do teclado", "H ou F1 mostra todos", Icone::Teclado).clicked() {
+                    acao = Some(5);
+                }
+                if linha(ui, "Tela cheia", "F ou F11 · Esc sai", Icone::TelaCheia).clicked() {
+                    acao = Some(6);
+                }
             }
-            if linha(ui, "Zero Delay (Menor Atraso)", &app.rotulo_zero_delay(), Icone::Velocidade).clicked() {
-                acao = Some(11);
-            }
-            if linha(ui, "Velocidade dos filmes e séries", &format!("{}×", app.velocidade), Icone::Velocidade).clicked() {
-                acao = Some(1);
-            }
-            if linha(ui, "Som", &if app.mudo { "Sem som".to_string() } else { format!("Volume {}%", app.volume) }, if app.mudo { Icone::Mudo } else { Icone::Som }).clicked() {
-                acao = Some(2);
-            }
-            ui.add_space(18.0);
-            rotulo_de_secao(ui, "Listas");
-            ui.add_space(4.0);
-            let mostra = |l: Option<String>| l.unwrap_or_else(|| "Desligada".to_string());
-            if linha(ui, "Lista de canais", &mostra(crate::listas::canais()), Icone::Link)
-                .on_hover_text("Ver, editar ou apagar o endereço")
-                .clicked()
-            {
-                acao = Some(9);
-            }
-            if linha(ui, "Lista de filmes e séries", &mostra(crate::listas::filmes()), Icone::Link)
-                .on_hover_text("Ver, editar ou apagar o endereço")
-                .clicked()
-            {
-                acao = Some(9);
-            }
-            ui.add_space(18.0);
-            rotulo_de_secao(ui, "Minhas listas");
-            ui.add_space(4.0);
-            let resumo = match app.minhas_meta.len() {
-                0 => "Cole o link de uma lista .m3u. Ela fica só neste aparelho.".to_string(),
-                1 => format!("1 lista · {} canais", app.minhas_meta[0].canais),
-                n => format!("{n} listas · {} canais", app.minhas_meta.iter().map(|l| l.canais).sum::<usize>()),
-            };
-            if linha(ui, "Minhas listas", &resumo, Icone::Link).on_hover_text("Adicionar, atualizar ou remover listas .m3u").clicked() {
-                acao = Some(12);
-            }
-            ui.add_space(18.0);
-            rotulo_de_secao(ui, "Addons e Debrid (Stremio)");
-            ui.add_space(4.0);
-            let qtd_addons = crate::addons::todos().len();
-            let ativos_addons = crate::addons::ativos().len();
-            let debrid_ativo = crate::debrid::config().tem_ativo();
-            let resumo_addons = match (qtd_addons, debrid_ativo) {
-                (0, false) => "Nenhum addon instalado · clique para configurar ou escanear QR Code".to_string(),
-                (0, true) => "Debrid configurado · adicione um addon Stremio (/manifest.json)".to_string(),
-                (n, false) => format!("{ativos_addons} de {n} addons ativos · clique para gerenciar"),
-                (n, true) => format!("{ativos_addons} de {n} addons ativos · Debrid ligado"),
-            };
-            if linha(ui, "Addons e Debrid", &resumo_addons, Icone::Mais)
-                .on_hover_text("Instalar addons Stremio por URL/QR Code e configurar chaves TorBox / Real-Debrid / AllDebrid / Premiumize")
-                .clicked()
-            {
-                acao = Some(13);
-            }
-            ui.add_space(18.0);
-            rotulo_de_secao(ui, "Legendas");
-            ui.add_space(4.0);
-            let idioma = legendas::idioma_guardado();
-            if linha(ui, "Idioma preferido", nome_do_idioma(&idioma), Icone::Legendas).on_hover_text("Liga sozinha a primeira legenda deste idioma").clicked() {
-                acao = Some(3);
-            }
-            ui.add_space(18.0);
-            rotulo_de_secao(ui, "Saimo Connect");
-            ui.add_space(4.0);
-            let onde = match (crate::connect::ativo(), crate::connect::ip_local()) {
-                (true, Some(ip)) => format!("No ar em {ip}:{}: o app Saimo do celular acha este computador na mesma rede", crate::connect::porta()),
-                (true, None) => "No ar, mas sem rede local: ligue o computador ao Wi-Fi ou ao cabo".to_string(),
-                (false, _) => format!("Fora do ar: a porta {} está ocupada por outro programa", crate::connect::porta()),
-            };
-            linha(ui, "Controle pelo celular", &onde, Icone::Cast).on_hover_text(
-                "Se o Windows perguntar sobre o Firewall, permita em redes privadas: sem isso o celular não acha o computador",
-            );
-            let autorizados = crate::connect::quantos_autorizados();
-            let resumo = match autorizados {
-                0 => "Nenhum celular autorizado".to_string(),
-                1 => "1 celular autorizado · clique para esquecer".to_string(),
-                n => format!("{n} celulares autorizados · clique para esquecer"),
-            };
-            if linha(ui, "Esquecer todos os celulares", &resumo, Icone::Fechar).clicked() {
-                acao = Some(8);
-            }
-            ui.add_space(18.0);
-            rotulo_de_secao(ui, "Estatísticas");
-            ui.add_space(4.0);
-            linha(ui, "Seu tempo no Saimo", &crate::estatisticas::resumo(), Icone::Estrela);
-            if linha(ui, "Séries favoritas com episódio novo", &crate::novos_episodios::resumo(), Icone::Estrela).clicked() {
-                crate::novos_episodios::dispensar_todos();
-            }
-            ui.add_space(18.0);
-            rotulo_de_secao(ui, "Aplicativo");
-            ui.add_space(4.0);
-            if linha(ui, "Procurar atualização", &format!("Você está na versão {}", crate::VERSAO), Icone::Baixar).clicked() {
-                acao = Some(4);
-            }
-            if linha(ui, "Atalhos do teclado", "H ou F1 mostra todos", Icone::Teclado).clicked() {
-                acao = Some(5);
-            }
-            if linha(ui, "Tela cheia", "F ou F11 · Esc sai", Icone::TelaCheia).clicked() {
-                acao = Some(6);
-            }
-            let b = crate::brilho::valor();
-            let desc = if b >= 100 { "100% (normal) · clique diminui 25%".to_string() } else { format!("{b}% · clique muda · em 0% qualquer tecla volta") };
-            if linha(ui, "Brilho do app", &desc, Icone::TelaCheia).clicked() {
-                acao = Some(24);
-            }
-            ui.add_space(18.0);
-            rotulo_de_secao(ui, "Aparência e legenda");
-            ui.add_space(4.0);
-            if linha(ui, "Cor do app", crate::tema::CORES[crate::tema::indice()].0, Icone::Estrela).clicked() {
-                crate::tema::proximo();
-            }
-            ui.add_space(4.0);
-            let est = crate::estilo_legenda::estilo();
-            if linha(ui, "Tamanho da legenda", crate::estilo_legenda::TAMANHOS[est.tamanho].0, Icone::Teclado).clicked() {
-                crate::estilo_legenda::proximo_tamanho();
-            }
-            if linha(ui, "Cor da legenda", crate::estilo_legenda::CORES[est.cor].0, Icone::Estrela).clicked() {
-                crate::estilo_legenda::proxima_cor();
-            }
-            if linha(ui, "Posição da legenda", crate::estilo_legenda::POSICOES[est.posicao].0, Icone::Ajustes).clicked() {
-                crate::estilo_legenda::proxima_posicao();
-            }
-            if linha(ui, "Fundo da legenda", if est.fundo { "Com fundo" } else { "Sem fundo" }, Icone::Tocar).clicked() {
-                crate::estilo_legenda::alternar_fundo();
-            }
+            if grupo == Some(7) && !crate::perfis::kids_ativo() {
             // Controle parental: no fim, separado e discreto. No Kids não aparece.
-            if !crate::perfis::kids_ativo() {
                 ui.add_space(30.0);
                 ui.scope(|ui| {
                     ui.set_opacity(0.7);
@@ -504,6 +554,7 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
                     parental(app, ui);
                 });
             }
+            ui.ctx().data_mut(|d| d.insert_temp(id_grupo, grupo));
             ui.add_space(40.0);
         });
     });
@@ -557,6 +608,66 @@ pub fn ajustes(app: &mut App, ui: &mut egui::Ui) {
         }
         _ => {}
     }
+}
+
+/// Acessibilidade com prévia: as escolhas mudam só o exemplo; "Aplicar" leva ao app.
+fn acessibilidade(ui: &mut egui::Ui) {
+    let id = egui::Id::new("acess.rascunho");
+    let aplicado = crate::acessibilidade::atual();
+    let mut r: crate::acessibilidade::Escolha = ui.ctx().data(|d| d.get_temp(id)).unwrap_or(aplicado);
+    rotulo_de_secao(ui, "Acessibilidade");
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new("Escolha e veja no exemplo. Nada muda no app até Aplicar.").font(normal(14.0)).color(SECUNDARIO));
+    ui.add_space(6.0);
+    if linha(ui, "Tamanho da tela", &format!("{} · clique troca", crate::acessibilidade::NOMES[r.nivel]), Icone::TelaCheia).clicked() {
+        r.nivel = (r.nivel + 1) % crate::acessibilidade::ESCALAS.len();
+    }
+    if linha(ui, "Texto em negrito", if r.negrito { "Ligado · letras mais grossas" } else { "Desligado" }, Icone::Teclado).clicked() {
+        r.negrito = !r.negrito;
+    }
+    if linha(ui, "Foco reforçado", if r.foco_forte { "Ligado · contorno amarelo onde o controle está" } else { "Desligado" }, Icone::Estrela).clicked() {
+        r.foco_forte = !r.foco_forte;
+    }
+    // A prévia: tamanhos relativos ao que a tela já usa.
+    let k = crate::acessibilidade::ESCALAS[r.nivel] / crate::acessibilidade::escala();
+    let fonte = |n: f32| if r.negrito { forte(n * k) } else { egui::FontId::proportional(n * k) };
+    ui.add_space(8.0);
+    egui::Frame::NONE.fill(egui::Color32::from_black_alpha(90)).stroke(egui::Stroke::new(1.0, super::APAGADO)).corner_radius(14.0).inner_margin(16.0).show(ui, |ui| {
+        ui.label(egui::RichText::new("PRÉVIA").font(forte(12.0 * k)).color(acento()));
+        ui.label(egui::RichText::new("Filmes em alta").font(forte(22.0 * k)).color(TEXTO));
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            for (i, (nome, sub)) in [("A Odisseia", "2026 · Aventura"), ("Série do domingo", "T2 · E5")].iter().enumerate() {
+                ui.vertical(|ui| {
+                    ui.set_width(150.0 * k);
+                    let (capa, _) = ui.allocate_exact_size(egui::vec2(150.0 * k, 84.0 * k), egui::Sense::hover());
+                    ui.painter().rect_filled(capa, 8.0, egui::Color32::from_rgb(110, 90, 230));
+                    if i == 0 {
+                        let cor = if r.foco_forte { egui::Color32::from_rgb(255, 212, 0) } else { acento() };
+                        ui.painter().rect_stroke(capa.expand(3.0), 10.0, egui::Stroke::new(if r.foco_forte { 5.0 } else { 3.0 }, cor), egui::StrokeKind::Outside);
+                    }
+                    ui.label(egui::RichText::new(*nome).font(fonte(15.0)).color(TEXTO));
+                    ui.label(egui::RichText::new(*sub).font(fonte(12.0)).color(SECUNDARIO));
+                });
+                ui.add_space(14.0);
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("Clique para abrir · botão direito para favoritar").font(fonte(13.0)).color(SECUNDARIO));
+    });
+    ui.add_space(8.0);
+    let mudou = r != aplicado;
+    if linha(ui, "Aplicar", if mudou { "Leva estas escolhas para o app inteiro" } else { "Nada mudou ainda" }, Icone::Tocar).clicked() && mudou {
+        crate::tela::aplicar_estilo(ui.ctx());
+        crate::acessibilidade::aplicar(ui.ctx(), r);
+    }
+    if linha(ui, "Desfazer", "Volta ao que está aplicado", Icone::Fechar).clicked() {
+        r = crate::acessibilidade::atual();
+    }
+    if linha(ui, "Voltar ao padrão", "Normal, sem negrito, foco comum", Icone::Fechar).clicked() {
+        r = crate::acessibilidade::Escolha::default();
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(id, r));
 }
 
 /// Faixas de ano do filtro: os três últimos anos, as décadas e antes de 1990.
