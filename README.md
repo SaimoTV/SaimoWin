@@ -515,3 +515,7 @@ Remoções (3.3.3): o que sai do Continue assistindo (a série sai inteira), dos
 - **Janelas no meio da tela** (`tela::janelas::area_central`): posição fixa pela altura medida e rolagem quando não cabe. Antes, ancoradas no centro, cortavam embaixo (boas-vindas e Minhas listas com muitas listas sem o botão de salvar). `SAIMO_FOTO_TELA=boas-vindas` fotografa a de boas-vindas.
 - **Setas no player**: no filme, esquerda/direita mexem no tempo só na barra (nada em foco); seta para baixo leva aos botões, onde esquerda/direita andam entre eles; seta para cima volta. No ao vivo com a lista fechada: cima/baixo trocam de canal, esquerda abre a lista, direita o guia (o padrão da TV Box).
 - **On Demand**: as fileiras abrem do disco na hora e são conferidas a cada entrada (no máximo 1x por minuto); só trocam se o arquivo mudou (`destaques::novidades`).
+
+## Licença
+
+Código aberto sob a licença MIT (arquivo `LICENSE`). Bibliotecas de terceiros seguem as licenças delas.
