@@ -408,6 +408,9 @@ cargo check --target x86_64-pc-windows-gnu   # confere o alvo de verdade
 `SAIMO_MPV` aponta para outra biblioteca do mpv e `SAIMO_SEM_TELEMETRIA=1`
 impede que o teste vire aparelho no painel.
 
+Foto de uma tela num tamanho de janela: `SAIMO_FOTO=saida.png SAIMO_FOTO_TELA=boas-vindas SAIMO_FOTO_TAMANHO=800x480 cargo run`.
+A janela abre com 1280×720 pontos e, se não couber na tela (notebook de 1366×768 com escala de 125–150%), maximiza no primeiro quadro (`janela_cabe_na_tela`). Nas boas-vindas, com os cartões um embaixo do outro, "Entrar sem login" vem primeiro: embaixo do cartão da conta ele ficava fora da tela.
+
 ## Telemetria por amostra
 
 O monitor é cobrado por pedido, então só uma fatia estável dos aparelhos fala

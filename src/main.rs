@@ -140,6 +140,13 @@ fn main() -> eframe::Result<()> {
     if std::env::var("SAIMO_FOTO").is_ok() {
         // Foto de teste: abre sem tomar o foco de quem está usando a máquina.
         janela = janela.with_active(false);
+        // SAIMO_FOTO_TAMANHO=LxA: fotografa a janela nesse tamanho (telas pequenas).
+        if let Some((l, a)) = std::env::var("SAIMO_FOTO_TAMANHO").ok().and_then(|v| {
+            let (l, a) = v.split_once('x')?;
+            Some((l.parse::<f32>().ok()?, a.parse::<f32>().ok()?))
+        }) {
+            janela = janela.with_inner_size([l, a]).with_min_inner_size([l.min(800.0), a.min(480.0)]);
+        }
     }
     let opcoes = eframe::NativeOptions {
         viewport: janela,
@@ -5147,6 +5154,27 @@ fn gravar_lista(nome: &str, itens: &[String]) {
     let _ = std::fs::write(perfis::caminho(nome), itens.join("\n"));
 }
 
+/// A janela abre com 1280×720 pontos; num notebook de 1366×768 com escala de
+/// 125% ou 150% isso passa do tamanho da tela e a parte de baixo (onde ficam os
+/// botões) some para fora. Nos primeiros quadros, se não couber, maximiza.
+fn janela_cabe_na_tela(ctx: &egui::Context) {
+    static FEITO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    static QUADROS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if FEITO.load(std::sync::atomic::Ordering::Relaxed) || std::env::var("SAIMO_FOTO").is_ok() {
+        return;
+    }
+    let n = QUADROS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let (monitor, janela) = ctx.input(|i| (i.viewport().monitor_size, i.viewport().outer_rect));
+    if let (Some(m), Some(j)) = (monitor, janela) {
+        FEITO.store(true, std::sync::atomic::Ordering::Relaxed);
+        if j.width() > m.x || j.height() > m.y - 40.0 || j.min.y < 0.0 || j.max.y > m.y {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
+    } else if n > 30 {
+        FEITO.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 impl eframe::App for App {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         for key in self.teclas_do_celular.drain(..) {
@@ -5178,6 +5206,7 @@ impl eframe::App for App {
                 diagnostico::etapa("primeiro quadro desenhado");
             }
         }
+        janela_cabe_na_tela(ctx);
         brilho::antes_do_quadro(ctx);
         self.cuidar_dos_recados(ctx);
         self.cuidar_dos_addons();

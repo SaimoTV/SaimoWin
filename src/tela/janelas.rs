@@ -572,10 +572,13 @@ pub fn boas_vindas(app: &mut App, ctx: &egui::Context) {
                 cartao_sem_login(ui, &mut sem_login);
             });
         } else {
+            // Empilhados, o "Entrar sem login" (curto) vem primeiro: embaixo do
+            // cartão da conta, com o QR, ele ficava fora da tela em janela baixa
+            // (escala de 125–150% no Windows ou texto ampliado) e ninguém achava.
             ui.vertical_centered(|ui| {
-                cartao_conta(ui, &mut app.conta);
-                ui.add_space(16.0);
                 cartao_sem_login(ui, &mut sem_login);
+                ui.add_space(16.0);
+                cartao_conta(ui, &mut app.conta);
             });
         }
     });
